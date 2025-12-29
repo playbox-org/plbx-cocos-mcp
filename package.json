@@ -9,7 +9,10 @@
   },
   "scripts": {
     "start": "node src/index.js",
-    "cli": "node bin/scene-minifier.js"
+    "cli": "node bin/scene-minifier.js",
+    "test": "node --test test/**/*.test.js",
+    "test:watch": "node --test --watch test/**/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage test/**/*.test.js"
   },
   "keywords": [
     "mcp",

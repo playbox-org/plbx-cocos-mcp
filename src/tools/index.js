@@ -2,10 +2,12 @@
  * Tool registry - exports all available tools
  */
 
-export { BaseTool } from './BaseTool.js';
-export { QuerySceneGraph } from './QuerySceneGraph.js';
-export { ListSceneScripts } from './ListSceneScripts.js';
-export { FindSceneNodes } from './FindSceneNodes.js';
+import { BaseTool } from './BaseTool.js';
+import { QuerySceneGraph } from './QuerySceneGraph.js';
+import { ListSceneScripts } from './ListSceneScripts.js';
+import { FindSceneNodes } from './FindSceneNodes.js';
+
+export { BaseTool, QuerySceneGraph, ListSceneScripts, FindSceneNodes };
 
 /**
  * Create all tool instances
