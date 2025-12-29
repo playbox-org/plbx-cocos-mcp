@@ -1,0 +1,32 @@
+{
+  "name": "plbx-cocos-mcp",
+  "version": "1.0.0",
+  "description": "PLBX Cocos MCP Server - Scene graph extraction for AI coding assistants",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "plbx-scene": "./bin/scene-minifier.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "cli": "node bin/scene-minifier.js"
+  },
+  "keywords": [
+    "mcp",
+    "cocos",
+    "cocos-creator",
+    "ai",
+    "llm",
+    "scene-graph",
+    "claude",
+    "cursor"
+  ],
+  "author": "Playbox",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

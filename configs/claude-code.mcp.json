@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy to project root as .mcp.json, replace YOUR_PROJECT_PATH",
+  "mcpServers": {
+    "plbx-cocos": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["YOUR_PROJECT_PATH/node_modules/plbx-cocos-mcp/src/index.js"],
+      "env": {
+        "COCOS_PROJECT_ROOT": "YOUR_PROJECT_PATH"
+      }
+    }
+  }
+}
