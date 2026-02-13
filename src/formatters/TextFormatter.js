@@ -53,6 +53,12 @@ export class TextFormatter extends Formatter {
             }
         }
 
+        // Trimmed indicator
+        if (node.trimmed) {
+            const childPrefix = this.#indentStr.repeat(indent + 1);
+            lines.push(`${childPrefix}[+${node.trimmed.nodes} hidden nodes, depth ${node.trimmed.depth}]`);
+        }
+
         return lines.join('\n');
     }
 

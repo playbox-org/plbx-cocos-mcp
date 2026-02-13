@@ -60,6 +60,14 @@ export class SceneParser {
     }
 
     findSceneRoot() {
-        return this.#objects.find(obj => obj.__type__ === 'cc.Scene');
+        const scene = this.#objects.find(obj => obj.__type__ === 'cc.Scene');
+        if (scene) return scene;
+
+        // Prefab files: cc.Prefab.data points to root cc.Node
+        const prefab = this.#objects.find(obj => obj.__type__ === 'cc.Prefab');
+        if (prefab?.data?.__id__ !== undefined) {
+            return this.getObject(prefab.data.__id__);
+        }
+        return null;
     }
 }

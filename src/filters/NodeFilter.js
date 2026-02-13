@@ -16,6 +16,7 @@ const BONE_PATTERNS = [
 export class NodeFilter {
     #maxDepth = 10;
     #boneMaxDepth = 3;
+    #filterNestedBones = true;
     #customFilters = [];
 
     /**
@@ -24,6 +25,7 @@ export class NodeFilter {
     configure(options = {}) {
         if (options.maxDepth) this.#maxDepth = options.maxDepth;
         if (options.boneMaxDepth) this.#boneMaxDepth = options.boneMaxDepth;
+        if (options.filterNestedBones !== undefined) this.#filterNestedBones = options.filterNestedBones;
         return this;
     }
 
@@ -46,7 +48,7 @@ export class NodeFilter {
         // Bone filtering
         const isBone = this.#isBone(node._name);
         if (isBone && depth > this.#boneMaxDepth) return true;
-        if (parentIsBone && isBone) return true;
+        if (this.#filterNestedBones && parentIsBone && isBone) return true;
 
         // Custom filters
         for (const filter of this.#customFilters) {

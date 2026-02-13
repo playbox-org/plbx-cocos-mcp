@@ -44,7 +44,8 @@ export class SceneMinifier {
             this.#sceneParser,
             this.#scriptResolver,
             this.#typeFilter,
-            this.#nodeFilter
+            this.#nodeFilter,
+            { detailed: options.detailed }
         );
     }
 
@@ -146,6 +147,56 @@ export class SceneMinifier {
         }
 
         return matches;
+    }
+
+    /**
+     * Build full subtree for a specific node (no depth filtering)
+     * @param {number} nodeId - Node index in scene array
+     * @returns {object|null}
+     */
+    inspectNode(nodeId) {
+        const noLimitFilter = new NodeFilter().configure({
+            maxDepth: 999, boneMaxDepth: 999, filterNestedBones: false
+        });
+        const builder = new NodeTreeBuilder(
+            this.#sceneParser,
+            this.#scriptResolver,
+            this.#typeFilter,
+            noLimitFilter,
+            { detailed: true }
+        );
+        return builder.buildFrom(nodeId);
+    }
+
+    /**
+     * Find nodes by name, returning id and parent path for disambiguation
+     * @param {string} name - Exact node name
+     * @returns {{id: number, name: string, path: string}[]}
+     */
+    resolveNodeId(name) {
+        const matches = [];
+
+        for (const [id, node] of this.#sceneParser.nodes) {
+            if (node._name === name) {
+                matches.push({
+                    id,
+                    name: node._name,
+                    path: this.#getNodePath(node)
+                });
+            }
+        }
+
+        return matches;
+    }
+
+    #getNodePath(node) {
+        const parts = [];
+        let current = node;
+        while (current?._parent?.__id__ !== undefined) {
+            current = this.#sceneParser.getObject(current._parent.__id__);
+            if (current?._name) parts.unshift(current._name);
+        }
+        return parts.join('/');
     }
 
     #getComponentTypes(node) {

@@ -57,4 +57,20 @@ describe('SceneParser', () => {
             /ENOENT|Cannot read/
         );
     });
+
+    it('should find prefab root via cc.Prefab.data', () => {
+        const parser = new SceneParser(join(FIXTURES, 'real-prefabs/Car.prefab'));
+        const root = parser.findSceneRoot();
+
+        assert.ok(root, 'should find prefab root');
+        assert.strictEqual(root.__type__, 'cc.Node');
+        assert.strictEqual(root._name, 'Car');
+    });
+
+    it('should index prefab nodes and components', () => {
+        const parser = new SceneParser(join(FIXTURES, 'real-prefabs/Car.prefab'));
+
+        assert.ok(parser.nodes.size > 0, 'should have nodes');
+        assert.ok(parser.components.size > 0, 'should have components');
+    });
 });

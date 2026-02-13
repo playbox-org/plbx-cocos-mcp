@@ -107,6 +107,37 @@ describe('TextFormatter', () => {
             assert.ok(level3Line.indexOf('●') > level2Line.indexOf('●'));
         });
 
+        it('should show trimmed node indicator', () => {
+            const graph = {
+                name: 'Scene',
+                active: true,
+                children: [
+                    {
+                        name: 'Armature',
+                        active: true,
+                        trimmed: { nodes: 33, depth: 12 },
+                        children: []
+                    }
+                ]
+            };
+
+            const result = formatter.format(graph);
+            assert.ok(result.includes('[+33 hidden nodes, depth 12]'), 'should show trimmed indicator');
+        });
+
+        it('should not show trimmed indicator when no nodes are trimmed', () => {
+            const graph = {
+                name: 'Scene',
+                active: true,
+                children: [
+                    { name: 'Child', active: true, children: [] }
+                ]
+            };
+
+            const result = formatter.format(graph);
+            assert.ok(!result.includes('hidden'), 'should not have trimmed indicator');
+        });
+
         it('should mark prefab root nodes', () => {
             const graph = {
                 name: 'Scene',
