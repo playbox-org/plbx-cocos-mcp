@@ -24,3 +24,6 @@ coverage/
 
 # Local config (contains absolute paths)
 .mcp.json
+
+# Claude Code local settings
+.claude/
