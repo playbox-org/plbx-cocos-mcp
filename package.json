@@ -25,7 +25,7 @@
     "cursor"
   ],
   "author": "Playbox",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
