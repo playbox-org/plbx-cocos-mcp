@@ -104,6 +104,21 @@ const TEMPLATES = {
         }
     }),
 
+    'cc.UIOpacity': () => ({
+        component: {
+            ...head('cc.UIOpacity'),
+            _opacity: 255,
+            _id: ''
+        }
+    }),
+
+    'cc.RenderRoot2D': () => ({
+        component: {
+            ...head('cc.RenderRoot2D'),
+            _id: ''
+        }
+    }),
+
     'cc.Button': () => ({
         component: {
             ...head('cc.Button'),

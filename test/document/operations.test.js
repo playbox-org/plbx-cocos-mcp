@@ -290,6 +290,30 @@ describe('add_component', () => {
         assertValid(doc);
     });
 
+    test('RenderRoot2D + UIOpacity build the 2D-in-3D pattern', () => {
+        const doc = loadPrefab();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'RenderRoot', layer: 'ui_3d', rotation: { x: -90, y: 0, z: 0 }, scale: { x: 0.01, y: 0.01, z: 0.01 } },
+            { op: 'add_component', node: 'RenderRoot', type: 'UITransform' },
+            { op: 'add_component', node: 'RenderRoot', type: 'RenderRoot2D' },
+            { op: 'add_node', parent: 'RenderRoot', name: 'Icon', layer: 'ui_3d' },
+            { op: 'add_component', node: 'RenderRoot/Icon', type: 'UITransform' },
+            { op: 'add_component', node: 'RenderRoot/Icon', type: 'Sprite' },
+            { op: 'add_component', node: 'RenderRoot/Icon', type: 'UIOpacity', properties: { opacity: 128 } }
+        ]);
+        const rootNode = doc.getObject(doc.resolveNode('RenderRoot'));
+        assert.strictEqual(rootNode._layer, 1 << 23);
+        const rr2d = doc.getObject(doc.componentIndices(doc.resolveNode('RenderRoot'))
+            .find(i => doc.getObject(i).__type__ === 'cc.RenderRoot2D'));
+        assert.strictEqual(rr2d._enabled, true);
+        assert.strictEqual(doc.getObject(rr2d.__prefab.__id__).__type__, 'cc.CompPrefabInfo');
+        const opacity = doc.getObject(doc.componentIndices(doc.resolveNode('RenderRoot/Icon'))
+            .find(i => doc.getObject(i).__type__ === 'cc.UIOpacity'));
+        assert.strictEqual(opacity._opacity, 128);
+        doc.renumber();
+        assertValid(doc);
+    });
+
     test('scene component gets an _id, Button targets its own node', () => {
         const doc = loadScene();
         applyOperations(doc, [
