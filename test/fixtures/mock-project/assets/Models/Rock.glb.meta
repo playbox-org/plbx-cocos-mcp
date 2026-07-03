@@ -1,0 +1,34 @@
+{
+  "ver": "2.3.12",
+  "importer": "gltf",
+  "imported": true,
+  "uuid": "aaaabbbb-cccc-4ddd-8eee-ffff00001111",
+  "files": [],
+  "subMetas": {
+    "11111": {
+      "importer": "gltf-mesh",
+      "uuid": "aaaabbbb-cccc-4ddd-8eee-ffff00001111@11111",
+      "displayName": "Rock.mesh",
+      "id": "11111",
+      "name": "Rock.mesh",
+      "userData": {},
+      "ver": "1.1.0",
+      "imported": true,
+      "files": [".json", ".bin"],
+      "subMetas": {}
+    },
+    "22222": {
+      "importer": "gltf-scene",
+      "uuid": "aaaabbbb-cccc-4ddd-8eee-ffff00001111@22222",
+      "displayName": "Rock.prefab",
+      "id": "22222",
+      "name": "Rock.prefab",
+      "userData": {},
+      "ver": "1.1.0",
+      "imported": true,
+      "files": [".json"],
+      "subMetas": {}
+    }
+  },
+  "userData": {}
+}

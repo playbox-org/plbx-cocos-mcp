@@ -8,8 +8,14 @@ import { ListSceneScripts } from './ListSceneScripts.js';
 import { FindSceneNodes } from './FindSceneNodes.js';
 import { QueryPrefabGraph } from './QueryPrefabGraph.js';
 import { InspectNode } from './InspectNode.js';
+import { GetProjectInfo } from './GetProjectInfo.js';
+import { GetAssetInfo } from './GetAssetInfo.js';
+import { ListAssets } from './ListAssets.js';
 
-export { BaseTool, QuerySceneGraph, ListSceneScripts, FindSceneNodes, QueryPrefabGraph, InspectNode };
+export {
+    BaseTool, QuerySceneGraph, ListSceneScripts, FindSceneNodes, QueryPrefabGraph,
+    InspectNode, GetProjectInfo, GetAssetInfo, ListAssets
+};
 
 /**
  * Create all tool instances
@@ -21,6 +27,9 @@ export function createTools() {
         new ListSceneScripts(),
         new FindSceneNodes(),
         new QueryPrefabGraph(),
-        new InspectNode()
+        new InspectNode(),
+        new GetProjectInfo(),
+        new GetAssetInfo(),
+        new ListAssets()
     ];
 }

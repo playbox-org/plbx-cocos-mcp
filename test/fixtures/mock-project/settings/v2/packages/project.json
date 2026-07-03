@@ -1,0 +1,23 @@
+{
+  "__version__": "1.0.6",
+  "general": {
+    "designResolution": {
+      "height": 1280,
+      "width": 720,
+      "fitHeight": true,
+      "fitWidth": false
+    }
+  },
+  "layer": [
+    { "name": "GROUND", "value": 1 },
+    { "name": "ENEMY", "value": 2 }
+  ],
+  "physics": {
+    "gravity": { "x": 0, "y": -10, "z": 0 },
+    "collisionGroups": [
+      { "index": 1, "name": "PLAYER" },
+      { "index": 2, "name": "BULLET" }
+    ],
+    "collisionMatrix": { "0": 7, "1": 5, "2": 1 }
+  }
+}

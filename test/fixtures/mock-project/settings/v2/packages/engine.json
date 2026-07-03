@@ -1,0 +1,17 @@
+{
+  "__version__": "1.0.12",
+  "modules": {
+    "configs": {
+      "defaultConfig": {
+        "name": "DEFAULT CONFIG",
+        "cache": {
+          "2d": { "_value": true },
+          "3d": { "_value": true },
+          "physics": { "_value": true, "_option": "physics-ammo" },
+          "physics-2d": { "_value": false, "_option": "physics-2d-box2d" },
+          "particle": { "_value": false }
+        }
+      }
+    }
+  }
+}
