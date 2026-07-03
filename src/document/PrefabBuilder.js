@@ -1,13 +1,13 @@
 /**
  * PrefabBuilder - compile a compact spec into a full .prefab document
  *
- * The spec (~30 lines) expands deterministically into correct 3.8.x JSON
- * (ROADMAP decision 4). Compilation reuses the semantic operations layer:
+ * The spec (~30 lines) expands deterministically into correct 3.8.x JSON.
+ * Compilation reuses the semantic operations layer:
  * the spec becomes an add_node/add_component/set_asset_ref batch applied to
  * a minimal prefab skeleton, so build_prefab and apply_edits share one
  * serialization path.
  *
- * Wrapper convention (decision 7): `visual` puts the renderer on a child
+ * Wrapper convention: `visual` puts the renderer on a child
  * node, keeping the root clean for logic/tweens/colliders.
  *
  * Spec shape:
@@ -28,7 +28,7 @@
 
 import { randomUUID } from 'crypto';
 import { SceneDocument } from './SceneDocument.js';
-import { applyOperations, OperationError } from './operations.js';
+import { applyOperations, OperationError, LAYERS } from './operations.js';
 import { generateFileId } from '../utils/fileId.js';
 
 export class PrefabBuildError extends Error {}
@@ -47,7 +47,7 @@ export class PrefabBuilder {
      * Compile a spec into an in-memory SceneDocument (renumbered, unsaved).
      * @param {object} spec
      * @param {string} defaultName - Used when spec.name is absent
-     * @returns {{doc: SceneDocument, ops: object[]}}
+     * @returns {{doc: SceneDocument, ops: object[], notes: string[]}}
      */
     compile(spec, defaultName) {
         const name = spec.name ?? defaultName;
@@ -95,7 +95,7 @@ export class PrefabBuilder {
                 _lrot: { __type__: 'cc.Quat', x: 0, y: 0, z: 0, w: 1 },
                 _lscale: { __type__: 'cc.Vec3', x: 1, y: 1, z: 1 },
                 _mobility: 0,
-                _layer: 1 << 30,
+                _layer: LAYERS.default,
                 _euler: { __type__: 'cc.Vec3', x: 0, y: 0, z: 0 },
                 _id: ''
             },

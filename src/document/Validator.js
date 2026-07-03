@@ -46,6 +46,7 @@ export class Validator {
             this.#checkReachability(warnings);
             this.#checkRotations(warnings);
             this.#checkWrapperRule(warnings);
+            this.#checkInstanceRegistry(warnings);
             if (this.#assetIndex) this.#checkAssetRefs(warnings);
         }
         return { errors, warnings };
@@ -212,6 +213,34 @@ export class Validator {
                     `Visual child (renderer with import scale), so tweens/colliders stay independent`
                 );
             }
+        }
+    }
+
+    /**
+     * Every collapsed instance stub must be listed in the document's
+     * registry: cc.Scene._prefab / prefab-root PrefabInfo →
+     * nestedPrefabInstanceRoots (the editor keeps these in sync).
+     */
+    #checkInstanceRegistry(warnings) {
+        const doc = this.#doc;
+        const rootNode = doc.root.node;
+        const registry = isRef(rootNode._prefab) ? doc.getObject(rootNode._prefab.__id__) : null;
+        const listed = new Set(
+            (Array.isArray(registry?.nestedPrefabInstanceRoots) ? registry.nestedPrefabInstanceRoots : [])
+                .filter(isRef)
+                .map(r => r.__id__)
+        );
+        const missing = [];
+        doc.objects.forEach((obj, idx) => {
+            if (!doc.isNode(obj) || idx === doc.root.idx) return;
+            if (doc.isInstanceStub(idx) && !listed.has(idx)) missing.push(idx);
+        });
+        if (missing.length > 0) {
+            warnings.push(
+                `${missing.length} prefab instance(s) missing from the ` +
+                `${doc.isScene ? 'scene' : 'prefab root'} registry (nestedPrefabInstanceRoots), ` +
+                `e.g. "${doc.nodePath(missing[0])}"`
+            );
         }
     }
 

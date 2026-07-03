@@ -2,7 +2,7 @@
  * MiniTree - minified subtree rendering for apply_edits responses
  *
  * After each operation the model needs to see the result without re-reading
- * the scene (~100-300 tokens per affected area, ROADMAP decision 5).
+ * the scene (~100-300 tokens per affected area).
  */
 
 import { isRef } from './SceneDocument.js';

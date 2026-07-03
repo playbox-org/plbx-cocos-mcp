@@ -95,6 +95,18 @@ describe('set_node_property', () => {
             applyOperations(doc, [{ op: 'set_node_property', node: 'Coin', property: 'active', value: false }]),
             /prefab instance/);
     });
+
+    test('position/rotation/scale on the scene root are rejected', () => {
+        const doc = loadScene();
+        for (const property of ['position', 'rotation', 'scale']) {
+            assert.throws(() =>
+                applyOperations(doc, [{ op: 'set_node_property', node: '/', property, value: { x: 5 } }]),
+                /cc\.Scene.*has no transform/);
+        }
+        // Non-transform properties still work on the scene root
+        applyOperations(doc, [{ op: 'set_node_property', node: '/', property: 'name', value: 'Renamed' }]);
+        assert.strictEqual(doc.root.node._name, 'Renamed');
+    });
 });
 
 describe('add_node', () => {
@@ -366,6 +378,54 @@ describe('set_component_property / set_asset_ref', () => {
             __uuid__: '11112222-3333-4444-8555-666677778888@f9941',
             __expectedType__: 'cc.SpriteFrame'
         });
+    });
+
+    test('componentIndex out of range for a matched type is rejected', () => {
+        const doc = loadPrefab();
+        assert.throws(() =>
+            applyOperations(doc, [{
+                op: 'set_component_property', node: 'Table',
+                component: 'cc.MeshRenderer', componentIndex: 2,
+                property: 'shadowCastingMode', value: 1
+            }]),
+            /componentIndex 2 out of range.*1 "cc\.MeshRenderer"/);
+    });
+
+    test('$node forms nested inside plain objects are resolved', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Btn', layer: 'ui_2d' },
+            { op: 'add_component', node: 'Btn', type: 'UITransform' },
+            { op: 'add_component', node: 'Btn', type: 'Button' },
+            {
+                op: 'set_component_property', node: 'Btn', component: 'Button',
+                property: 'clickEvents', value: [{
+                    __type__: 'cc.ClickEvent', target: { $node: 'Btn' },
+                    component: '', _componentId: '', handler: 'onClick', customEventData: ''
+                }]
+            }
+        ]);
+        const btn = doc.getObject(doc.componentIndices(doc.resolveNode('Btn'))
+            .find(i => doc.getObject(i).__type__ === 'cc.Button'));
+        assert.deepStrictEqual(btn.clickEvents[0].target, { __id__: doc.resolveNode('Btn') });
+        assert.strictEqual(btn.clickEvents[0].handler, 'onClick');
+    });
+
+    test('dotted numeric segments behave like bracket indices', () => {
+        const doc = loadPrefab();
+        applyOperations(doc, [{
+            op: 'set_asset_ref', node: 'Table', component: 'MeshRenderer',
+            property: 'materials.0', asset: 'assets/Materials/Dynamite.mtl'
+        }], { assetIndex });
+        const comp = doc.getObject(doc.componentIndices(doc.resolveNode('Table'))[0]);
+        assert.strictEqual(comp._materials[0].__uuid__, '7650cf04-45c9-4325-91b7-0b3bd68e4a08');
+        // Out-of-bounds guard must fire for the dotted form too (no sparse arrays)
+        assert.throws(() =>
+            applyOperations(doc, [{
+                op: 'set_asset_ref', node: 'Table', component: 'MeshRenderer',
+                property: 'materials.5', asset: 'assets/Materials/Dynamite.mtl'
+            }], { assetIndex }),
+            /out of bounds/);
     });
 
     test('set_asset_ref on array elements', () => {

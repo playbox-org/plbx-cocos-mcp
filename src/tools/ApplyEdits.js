@@ -28,9 +28,13 @@ const OPS_DOC = `Operations (applied in order, all-or-nothing):
 - set_component_property {node, component?, componentIndex?, property, value}
   value forms: raw JSON | {x?,y?,..} merged into typed values | {"$node": "path"} | {"$asset": "path|uuid", "$type"?} | {"$component": {node, type}}
 - set_asset_ref {node, component?, componentIndex?, property, asset, expectedType?} (asset: project path, UUID or "uuid@subId"; null clears)
+- instantiate_prefab {parent, prefab, name?, position?, rotation?, scale?, index?} (prefab: .prefab path/UUID, or a model file / "model.fbx@subId" for its gltf-scene prefab; creates a collapsed instance stub)
+- set_instance_property {node, target?, component?, componentIndex?, property, value}
+  node = the instance stub in this file; target = node path INSIDE the source prefab ("" = its root). Without component: name|active|layer|mobility|position|rotation|scale. With component: any field (value forms as in set_component_property). Stored as propertyOverrides; same target+property updates in place
+- remove_instance_override {node, target?, component?, componentIndex?, property} (reverts an override back to the source prefab value)
 
 Node addressing: "Canvas/Panel/BuyBtn" path from root, "/" = root, node _id, "Name[i]" or "[i]" disambiguate same-named/positional siblings.
-Prefab instances inside scenes are collapsed stubs: only remove_node/reparent of the whole instance work; edit the source .prefab for anything else.`;
+Prefab instances inside scenes are collapsed stubs: their internals are not in the file. Override properties with set_instance_property, remove/reparent the whole instance, or edit the source .prefab; anything else is rejected.`;
 
 export class ApplyEdits extends BaseTool {
     get name() {
@@ -69,6 +73,9 @@ export class ApplyEdits extends BaseTool {
 
     async execute(args, projectRoot) {
         const filePath = path.resolve(projectRoot, args.filePath);
+        if (!filePath.startsWith(path.resolve(projectRoot) + path.sep)) {
+            return this.error('filePath must stay inside the project root');
+        }
         if (!fs.existsSync(filePath)) {
             return this.error(`File not found: ${filePath}`);
         }
@@ -80,8 +87,8 @@ export class ApplyEdits extends BaseTool {
             return this.error(`Cannot parse ${args.filePath}: ${err.message}`);
         }
 
-        const assetIndex = this.#tryAssetIndex(projectRoot);
-        const ctx = { assetIndex, scriptNameByCompressed: this.#scriptNames(assetIndex) };
+        const assetIndex = new AssetIndex(projectRoot);
+        const ctx = { assetIndex, projectRoot, scriptNameByCompressed: this.#scriptNames(assetIndex) };
 
         let results;
         try {
@@ -107,17 +114,8 @@ export class ApplyEdits extends BaseTool {
         return this.success(this.#report({ args, doc, results, warnings, dropped, dryRun, ctx }));
     }
 
-    #tryAssetIndex(projectRoot) {
-        try {
-            return new AssetIndex(projectRoot);
-        } catch {
-            return null;
-        }
-    }
-
     /** compressed script UUID → readable name, for subtree rendering */
     #scriptNames(assetIndex) {
-        if (!assetIndex) return null;
         const map = new Map();
         for (const entry of assetIndex.list({ type: 'script' })) {
             map.set(compressUuid(entry.uuid), entry.name.replace(/\.[jt]s$/, ''));

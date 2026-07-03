@@ -37,6 +37,38 @@ after(() => {
 
 const text = (result) => result.content[0].text;
 
+describe('apply_edits tool — prefab instances (Phase 2)', () => {
+    test('instantiate_prefab + set_instance_property end-to-end', async () => {
+        const result = await new ApplyEdits().execute({
+            filePath: 'assets/Prefabs/TableCash.prefab',
+            ops: [
+                {
+                    op: 'instantiate_prefab', parent: 'Table',
+                    prefab: 'Prefabs/Gold.prefab', name: 'Reward', position: { y: 1 }
+                },
+                {
+                    op: 'set_instance_property', node: 'Table/Reward',
+                    property: 'scale', value: { x: 0.5, y: 0.5, z: 0.5 }
+                }
+            ]
+        }, projectRoot);
+
+        assert.ok(!result.isError, text(result));
+        assert.match(text(result), /instantiated assets\/Prefabs\/Gold\.prefab/);
+        assert.match(text(result), /Reward \[prefab instance\]/); // MiniTree stub rendering
+
+        // Written file: stub + overrides present, valid, resolvable by name
+        const doc = SceneDocument.load(path.join(projectRoot, 'assets/Prefabs/TableCash.prefab'));
+        const stubIdx = doc.resolveNode('Table/Reward');
+        assert.ok(doc.isInstanceStub(stubIdx));
+
+        const validation = await new ValidateDocument().execute({
+            filePath: 'assets/Prefabs/TableCash.prefab'
+        }, projectRoot);
+        assert.match(text(validation), /No errors/i);
+    });
+});
+
 describe('apply_edits tool', () => {
     test('dryRun previews without writing', async () => {
         const target = path.join(projectRoot, 'assets/Prefabs/TableCash.prefab');

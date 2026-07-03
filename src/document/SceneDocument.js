@@ -4,7 +4,7 @@
  * Unlike the lossy read pipeline (SceneParser → NodeTreeBuilder), this class
  * keeps every object byte-equivalent: unknown fields pass through untouched.
  *
- * Serialization contract (verified on real 3.8.7 files, see ROADMAP §3):
+ * Serialization contract (verified on real 3.8.7 files, notes in README):
  * - file = flat JSON array, `{"__id__": N}` = index into that array
  * - object order = depth-first first-visit order over the whole reference
  *   graph starting at index 0, following properties in key order
@@ -29,7 +29,6 @@ export function isRef(value) {
 export class SceneDocument {
     #objects;
     #filePath;
-    #indexMap = null; // lazy Map<object, index>
 
     /**
      * @param {object[]} objects - Parsed flat JSON array
@@ -83,20 +82,9 @@ export class SceneDocument {
         return this.#objects[idx];
     }
 
-    /** Index of an object currently in the document (O(1) after first call) */
-    indexOf(obj) {
-        if (!this.#indexMap || this.#indexMap.size !== this.#objects.length) {
-            this.#indexMap = new Map(this.#objects.map((o, i) => [o, i]));
-        }
-        const idx = this.#indexMap.get(obj);
-        if (idx === undefined) throw new Error('Object is not part of this document');
-        return idx;
-    }
-
     /** Append a new object, returns its index */
     addObject(obj) {
         this.#objects.push(obj);
-        if (this.#indexMap) this.#indexMap.set(obj, this.#objects.length - 1);
         return this.#objects.length - 1;
     }
 
@@ -405,7 +393,6 @@ export class SceneDocument {
 
         const dropped = oldObjects.length - newObjects.length;
         this.#objects = newObjects;
-        this.#indexMap = null;
         return { dropped };
     }
 

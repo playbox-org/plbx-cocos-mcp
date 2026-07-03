@@ -2,17 +2,21 @@
  * Semantic edit operations over a SceneDocument
  *
  * Ops never touch raw __id__ values from the caller's side: nodes are
- * addressed by path or stable _id (ROADMAP decision 3). New objects are
+ * addressed by path or stable _id — never by __id__. New objects are
  * appended; canonical order is restored by doc.renumber() before save.
  *
  * Prefab-instance stubs (collapsed instances) are guarded: their content
- * lives in the source prefab, so Phase 1 only allows removing/reparenting
- * the whole instance. Property overrides are Phase 2.
+ * lives in the source prefab. Whole-instance remove/reparent work directly;
+ * per-property edits go through set_instance_property (overrides).
  *
- * SOLID: S - semantic mutations only; document mechanics live in SceneDocument
+ * SOLID: S - semantic mutations only; document mechanics live in SceneDocument,
+ * instance machinery in instances.js
  */
 
 import { isRef } from './SceneDocument.js';
+import {
+    instantiatePrefab, setInstanceProperty, removeInstanceOverride, sortInstanceRegistry
+} from './instances.js';
 import {
     createComponent, createScriptComponent, resolveTemplateType, templateTypes
 } from './ComponentTemplates.js';
@@ -21,7 +25,7 @@ import { eulerToQuat } from '../utils/math3d.js';
 import { compressUuid, isCompressedUuid } from '../utils/uuid.js';
 
 /** Builtin engine layers (cocos/scene-graph/layers.ts) */
-const LAYERS = {
+export const LAYERS = {
     ignore_raycast: 1 << 20,
     gizmos: 1 << 21,
     editor: 1 << 22,
@@ -88,7 +92,10 @@ const HANDLERS = {
     reparent: reparent,
     add_component: addComponent,
     set_component_property: setComponentProperty,
-    set_asset_ref: setAssetRef
+    set_asset_ref: setAssetRef,
+    instantiate_prefab: instantiatePrefab,
+    set_instance_property: setInstanceProperty,
+    remove_instance_override: removeInstanceOverride
 };
 
 export function applyOperation(doc, op, ctx = {}) {
@@ -103,26 +110,26 @@ export function applyOperation(doc, op, ctx = {}) {
 
 // ---------------------------------------------------------------- helpers
 
-function requireString(op, field) {
+export function requireString(op, field) {
     if (typeof op[field] !== 'string') {
         throw new OperationError(`"${field}" (string) is required`);
     }
     return op[field];
 }
 
-function resolveEditableNode(doc, ref, { allowStub = false } = {}) {
+export function resolveEditableNode(doc, ref, { allowStub = false } = {}) {
     const idx = doc.resolveNode(ref);
     if (!allowStub && doc.isInstanceStub(idx)) {
         throw new OperationError(
             `"${doc.nodePath(idx)}" is a prefab instance (collapsed stub). ` +
-            `Phase 1 cannot edit instance internals — edit the source .prefab asset instead ` +
-            `(instance overrides arrive in Phase 2). remove_node/reparent of the whole instance are allowed.`
+            `Use set_instance_property to override its properties, or edit the source ` +
+            `.prefab asset. remove_node/reparent of the whole instance are also allowed.`
         );
     }
     return idx;
 }
 
-function resolveLayer(value) {
+export function resolveLayer(value) {
     if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
     if (typeof value === 'string') {
         const bit = LAYERS[value.toLowerCase()];
@@ -134,7 +141,7 @@ function resolveLayer(value) {
 }
 
 /** Merge a plain {x,y,..} object into a serialized value-type, keeping __type__ */
-function mergeTyped(existing, given, what) {
+export function mergeTyped(existing, given, what) {
     if (given === null || typeof given !== 'object' || Array.isArray(given)) return given;
     if (given.__type__) return given; // caller provided a full serialized value
     if (existing === null || typeof existing !== 'object' || !existing.__type__) return given;
@@ -151,12 +158,13 @@ function mergeTyped(existing, given, what) {
 }
 
 /** Parse "a.b[0].c" / "materials.0" into path segments */
-function parsePropertyPath(path) {
+export function parsePropertyPath(path) {
     const segments = [];
     for (const part of String(path).split('.')) {
         const m = part.match(/^([^[\]]*)((?:\[\d+\])*)$/);
         if (!m) throw new OperationError(`Bad property path "${path}"`);
-        if (m[1] !== '') segments.push(m[1]);
+        // "materials.0" ≡ "materials[0]": bare numeric segments index arrays
+        if (m[1] !== '') segments.push(/^\d+$/.test(m[1]) ? Number(m[1]) : m[1]);
         for (const idxMatch of m[2].matchAll(/\[(\d+)\]/g)) {
             segments.push(Number(idxMatch[1]));
         }
@@ -203,7 +211,7 @@ function locateProperty(component, path, { allowCreate = false } = {}) {
 }
 
 /** Find a component on a node by type/script name or positional index */
-function findComponent(doc, nodeIdx, compRef, componentIndex, ctx) {
+export function findComponent(doc, nodeIdx, compRef, componentIndex, ctx) {
     const compIndices = doc.componentIndices(nodeIdx);
     if (compRef === undefined && componentIndex === undefined) {
         throw new OperationError('"component" (type/script name) or "componentIndex" is required');
@@ -237,10 +245,16 @@ function findComponent(doc, nodeIdx, compRef, componentIndex, ctx) {
             `Node has ${matches.length} "${compRef}" components — disambiguate with componentIndex`
         );
     }
-    return matches[componentIndex ?? 0] ?? matches[0];
+    if (componentIndex !== undefined && (componentIndex < 0 || componentIndex >= matches.length)) {
+        throw new OperationError(
+            `componentIndex ${componentIndex} out of range — node "${doc.nodePath(nodeIdx)}" has ` +
+            `${matches.length} "${compRef}" component(s)`
+        );
+    }
+    return matches[componentIndex ?? 0];
 }
 
-function describeComponentType(type, ctx) {
+export function describeComponentType(type, ctx) {
     if (type.startsWith('cc.')) return type;
     const name = ctx.scriptNameByCompressed?.get?.(type);
     return name ? `${name} (script)` : type;
@@ -281,7 +295,7 @@ function resolveAssetValue(ctx, ref, expectedType) {
  * {"$node": ref} → node reference, {"$component": {node, type}} → component
  * reference, {"$asset": ref, "$type"?} → asset uuid object.
  */
-function transformValue(doc, value, ctx) {
+export function transformValue(doc, value, ctx) {
     if (value === null || typeof value !== 'object') return value;
     if (Array.isArray(value)) return value.map(v => transformValue(doc, v, ctx));
     if ('$node' in value) {
@@ -295,7 +309,57 @@ function transformValue(doc, value, ctx) {
     if ('$asset' in value) {
         return resolveAssetValue(ctx, value.$asset, value.$type);
     }
-    return value;
+    // Plain object (e.g. a cc.ClickEvent literal): $-forms may hide inside
+    const out = {};
+    for (const [key, v] of Object.entries(value)) out[key] = transformValue(doc, v, ctx);
+    return out;
+}
+
+/**
+ * Shared validation/normalization for node-property writes, used by both
+ * set_node_property and instance overrides: maps a semantic property to its
+ * serialized field write(s). `base` is the current serialized value merged
+ * into for position/rotation/scale (the node's field, or an existing
+ * override); rotation expands into paired _euler/_lrot writes.
+ *
+ * @param {string} property - name|active|layer|mobility|position|rotation|scale
+ * @param {*} value - raw op value
+ * @param {object} [base] - current _lpos/_euler/_lscale for value-type merges
+ * @returns {Array<{field: string, value: *}>}
+ */
+export function normalizeNodeProperty(property, value, base) {
+    switch (property) {
+        case 'name':
+            if (typeof value !== 'string' || value === '') {
+                throw new OperationError('name must be a non-empty string');
+            }
+            return [{ field: '_name', value }];
+        case 'active':
+            if (typeof value !== 'boolean') throw new OperationError('active must be a boolean');
+            return [{ field: '_active', value }];
+        case 'layer':
+            return [{ field: '_layer', value: resolveLayer(value) }];
+        case 'mobility':
+            if (![0, 1, 2].includes(value)) throw new OperationError('mobility must be 0, 1 or 2');
+            return [{ field: '_mobility', value }];
+        case 'position':
+            return [{ field: '_lpos', value: mergeTyped(base, value, 'position') }];
+        case 'scale':
+            return [{ field: '_lscale', value: mergeTyped(base, value, 'scale') }];
+        case 'rotation': {
+            const euler = mergeTyped(base, value, 'rotation (euler degrees)');
+            // _lrot is what the runtime reads — always derive it from euler
+            return [
+                { field: '_euler', value: euler },
+                { field: '_lrot', value: { __type__: 'cc.Quat', ...eulerToQuat(euler) } }
+            ];
+        }
+        default:
+            throw new OperationError(
+                `Unknown node property "${property}". ` +
+                `Supported: name, active, layer, mobility, position, rotation, scale`
+            );
+    }
 }
 
 // ------------------------------------------------------------- operations
@@ -306,48 +370,20 @@ function setNodeProperty(doc, op, ctx) {
     const property = requireString(op, 'property');
     const value = op.value;
 
-    switch (property) {
-        case 'name': {
-            if (typeof value !== 'string' || value === '') {
-                throw new OperationError('name must be a non-empty string');
-            }
-            node._name = value;
-            // Keep prefab asset name in sync when renaming the prefab root
-            if (doc.isPrefab && idx === doc.root.idx) doc.getObject(0)._name = value;
-            break;
-        }
-        case 'active': {
-            if (typeof value !== 'boolean') throw new OperationError('active must be a boolean');
-            node._active = value;
-            break;
-        }
-        case 'layer': {
-            node._layer = resolveLayer(value);
-            break;
-        }
-        case 'mobility': {
-            if (![0, 1, 2].includes(value)) throw new OperationError('mobility must be 0, 1 or 2');
-            node._mobility = value;
-            break;
-        }
-        case 'position':
-            node._lpos = mergeTyped(node._lpos, value, 'position');
-            break;
-        case 'scale':
-            node._lscale = mergeTyped(node._lscale, value, 'scale');
-            break;
-        case 'rotation': {
-            const euler = mergeTyped(node._euler, value, 'rotation (euler degrees)');
-            node._euler = euler;
-            // _lrot is what the runtime reads — always derive it from euler
-            node._lrot = { __type__: 'cc.Quat', ...eulerToQuat(euler) };
-            break;
-        }
-        default:
-            throw new OperationError(
-                `Unknown node property "${property}". ` +
-                `Supported: name, active, layer, mobility, position, rotation, scale`
-            );
+    if (node.__type__ === 'cc.Scene' && ['position', 'rotation', 'scale'].includes(property)) {
+        throw new OperationError(
+            `The scene root is a cc.Scene and has no transform — cannot set "${property}". ` +
+            `Target a child node instead.`
+        );
+    }
+
+    const base = { position: node._lpos, rotation: node._euler, scale: node._lscale }[property];
+    for (const write of normalizeNodeProperty(property, value, base)) {
+        node[write.field] = write.value;
+    }
+    // Keep prefab asset name in sync when renaming the prefab root
+    if (property === 'name' && doc.isPrefab && idx === doc.root.idx) {
+        doc.getObject(0)._name = value;
     }
 
     const path = doc.nodePath(idx);
@@ -509,6 +545,10 @@ function reparent(doc, op) {
     newParent._children.splice(at, 0, { __id__: idx });
     node._parent = { __id__: newParentIdx };
 
+    // The instance registry (nestedPrefabInstanceRoots) mirrors hierarchy DFS
+    // order — restore it when the moved subtree carries instance stubs.
+    if (subtreeHasInstanceStub(doc, idx)) sortInstanceRegistry(doc);
+
     const newPath = doc.nodePath(idx);
     return {
         op: 'reparent',
@@ -516,6 +556,17 @@ function reparent(doc, op) {
         summary: `moved "${oldPath}" → "${newPath}"`,
         nodeIdx: idx
     };
+}
+
+/** True when the node or any of its descendants is a collapsed instance stub */
+function subtreeHasInstanceStub(doc, nodeIdx) {
+    const stack = [nodeIdx];
+    while (stack.length) {
+        const idx = stack.pop();
+        if (doc.isInstanceStub(idx)) return true;
+        stack.push(...doc.childIndices(idx));
+    }
+    return false;
 }
 
 function addComponent(doc, op, ctx) {

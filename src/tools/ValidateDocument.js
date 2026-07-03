@@ -50,11 +50,7 @@ export class ValidateDocument extends BaseTool {
             return this.error(`Cannot parse ${args.filePath}: ${err.message}`);
         }
 
-        let assetIndex = null;
-        try {
-            assetIndex = new AssetIndex(projectRoot);
-        } catch { /* asset checks become no-ops */ }
-
+        const assetIndex = new AssetIndex(projectRoot);
         const { errors, warnings } = new Validator(doc, assetIndex).validate();
 
         const lines = [`# Validation: ${args.filePath}`, ''];

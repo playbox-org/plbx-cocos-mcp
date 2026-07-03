@@ -66,11 +66,7 @@ export class BuildPrefab extends BaseTool {
             return this.error(`${args.outputPath} already exists — pass overwrite: true to replace it`);
         }
 
-        let assetIndex = null;
-        try {
-            assetIndex = new AssetIndex(projectRoot);
-        } catch { /* mesh/sprite specs will fail with a clear message */ }
-
+        const assetIndex = new AssetIndex(projectRoot);
         const defaultName = path.basename(outputPath, '.prefab');
         let doc;
         let notes;
@@ -91,21 +87,28 @@ export class BuildPrefab extends BaseTool {
             );
         }
 
-        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-        doc.save(outputPath);
-
-        // Meta: create only when absent so overwrites keep the existing UUID
+        // Meta: reuse an existing one so overwrites keep the UUID; resolve it
+        // BEFORE writing the prefab so a corrupt .meta aborts with nothing written
         const metaPath = `${outputPath}.meta`;
         let uuid;
-        let metaCreated = false;
+        let newMeta = null;
         if (fs.existsSync(metaPath)) {
-            uuid = JSON.parse(fs.readFileSync(metaPath, 'utf-8')).uuid;
+            try {
+                uuid = JSON.parse(fs.readFileSync(metaPath, 'utf-8')).uuid;
+            } catch (err) {
+                return this.error(`Cannot parse existing ${args.outputPath}.meta: ${err.message}\n\nNothing was written.`);
+            }
         } else {
-            const meta = PrefabBuilder.createMeta(doc.getObject(0)._name);
-            fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
-            uuid = meta.uuid;
-            metaCreated = true;
+            newMeta = PrefabBuilder.createMeta(doc.getObject(0)._name);
+            uuid = newMeta.uuid;
         }
+
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        doc.save(outputPath);
+        if (newMeta) {
+            fs.writeFileSync(metaPath, JSON.stringify(newMeta, null, 2), 'utf-8');
+        }
+        const metaCreated = newMeta !== null;
 
         const lines = [
             `# Built ${args.outputPath}`,
