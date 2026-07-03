@@ -14,11 +14,14 @@ import { ListAssets } from './ListAssets.js';
 import { ApplyEdits } from './ApplyEdits.js';
 import { ValidateDocument } from './ValidateDocument.js';
 import { BuildPrefab } from './BuildPrefab.js';
+import { GetNodeBounds } from './GetNodeBounds.js';
+import { ComputeFitScale } from './ComputeFitScale.js';
 
 export {
     BaseTool, QuerySceneGraph, ListSceneScripts, FindSceneNodes, QueryPrefabGraph,
     InspectNode, GetProjectInfo, GetAssetInfo, ListAssets,
-    ApplyEdits, ValidateDocument, BuildPrefab
+    ApplyEdits, ValidateDocument, BuildPrefab,
+    GetNodeBounds, ComputeFitScale
 };
 
 /**
@@ -37,6 +40,8 @@ export function createTools() {
         new ListAssets(),
         new ApplyEdits(),
         new ValidateDocument(),
-        new BuildPrefab()
+        new BuildPrefab(),
+        new GetNodeBounds(),
+        new ComputeFitScale()
     ];
 }
