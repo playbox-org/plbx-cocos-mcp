@@ -18,7 +18,7 @@ export class TextFormatter extends Formatter {
      * Configure formatting options
      */
     configure(options = {}) {
-        if (options.indent) this.#indentStr = options.indent;
+        if (options.indent !== undefined) this.#indentStr = options.indent;
         return this;
     }
 
@@ -36,7 +36,7 @@ export class TextFormatter extends Formatter {
         // Node header
         let header = `${prefix}${marker} ${node.name}`;
         if (node.pos) header += ` @(${node.pos.join(',')})`;
-        if (node.prefab) header += ' [P]';
+        if (node.prefab) header += node.prefabSource ? ` [P→${node.prefabSource}]` : ' [P]';
         lines.push(header);
 
         // Components

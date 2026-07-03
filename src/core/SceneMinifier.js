@@ -7,6 +7,7 @@
 
 import { SceneParser } from './SceneParser.js';
 import { ScriptResolver } from './ScriptResolver.js';
+import { AssetIndex } from './AssetIndex.js';
 import { NodeTreeBuilder } from './NodeTreeBuilder.js';
 import { TypeFilter } from '../filters/TypeFilter.js';
 import { NodeFilter } from '../filters/NodeFilter.js';
@@ -20,6 +21,8 @@ export class SceneMinifier {
     #typeFilter;
     #nodeFilter;
     #treeBuilder;
+    #projectRoot;
+    #assetIndex; // lazy: only built when a prefab-instance stub needs its asset name
 
     /**
      * Create a new SceneMinifier
@@ -29,6 +32,7 @@ export class SceneMinifier {
      */
     constructor(scenePath, projectRoot, options = {}) {
         // Create dependencies
+        this.#projectRoot = projectRoot;
         this.#sceneParser = new SceneParser(scenePath);
         this.#scriptResolver = new ScriptResolver(projectRoot);
         this.#typeFilter = options.typeFilter || new TypeFilter();
@@ -45,8 +49,34 @@ export class SceneMinifier {
             this.#scriptResolver,
             this.#typeFilter,
             this.#nodeFilter,
-            { detailed: options.detailed }
+            { detailed: options.detailed, assetNameResolver: (uuid) => this.#assetName(uuid) }
         );
+    }
+
+    /** Asset file name ("Gold.prefab") by UUID, or null */
+    #assetName(uuid) {
+        if (this.#assetIndex === undefined) {
+            try {
+                this.#assetIndex = new AssetIndex(this.#projectRoot);
+            } catch {
+                this.#assetIndex = null;
+            }
+        }
+        return this.#assetIndex?.resolve(uuid)?.entry.name ?? null;
+    }
+
+    /**
+     * Name as the editor shows it: _name, or for collapsed prefab instances
+     * the _name override / source asset name.
+     */
+    #displayName(node) {
+        if (node._name) return node._name;
+        const info = this.#sceneParser.getInstanceInfo(node);
+        if (!info) return node._name;
+        return info.nameOverride
+            ?? (info.assetUuid
+                ? this.#assetName(info.assetUuid)?.replace(/\.[^.]+$/, '') ?? null
+                : null);
     }
 
     /**
@@ -140,9 +170,10 @@ export class SceneMinifier {
         const matches = [];
 
         for (const [_, node] of this.#sceneParser.nodes) {
-            if (node._name && regex.test(node._name)) {
+            const name = this.#displayName(node);
+            if (name && regex.test(name)) {
                 matches.push({
-                    name: node._name,
+                    name,
                     active: node._active !== false,
                     components: this.#getComponentTypes(node)
                 });
@@ -166,7 +197,7 @@ export class SceneMinifier {
             this.#scriptResolver,
             this.#typeFilter,
             noLimitFilter,
-            { detailed: true }
+            { detailed: true, assetNameResolver: (uuid) => this.#assetName(uuid) }
         );
         return builder.buildFrom(nodeId);
     }
@@ -180,10 +211,10 @@ export class SceneMinifier {
         const matches = [];
 
         for (const [id, node] of this.#sceneParser.nodes) {
-            if (node._name === name) {
+            if (this.#displayName(node) === name) {
                 matches.push({
                     id,
-                    name: node._name,
+                    name,
                     path: this.#getNodePath(node)
                 });
             }

@@ -62,6 +62,35 @@ export class SceneParser {
         return this.#nodesById.get(id);
     }
 
+    /**
+     * Collapsed prefab-instance info for a node, or null for regular nodes.
+     * Instance stubs keep _name empty: the editor stores the visible name as a
+     * CCPropertyOverrideInfo on the source root (localID = [PrefabInfo.fileId]).
+     * @param {object} node
+     * @returns {{nameOverride: string|null, assetUuid: string|null}|null}
+     */
+    getInstanceInfo(node) {
+        const prefabInfo = node?._prefab?.__id__ !== undefined
+            ? this.getObject(node._prefab.__id__) : null;
+        const instance = prefabInfo?.instance?.__id__ !== undefined
+            ? this.getObject(prefabInfo.instance.__id__) : null;
+        if (!instance) return null;
+
+        let nameOverride = null;
+        for (const ref of instance.propertyOverrides ?? []) {
+            const override = ref?.__id__ !== undefined ? this.getObject(ref.__id__) : ref;
+            if (!override?.propertyPath || override.propertyPath.length !== 1) continue;
+            if (override.propertyPath[0] !== '_name') continue;
+            const target = override.targetInfo?.__id__ !== undefined
+                ? this.getObject(override.targetInfo.__id__) : override.targetInfo;
+            if (target?.localID?.length === 1 && target.localID[0] === prefabInfo.fileId) {
+                nameOverride = override.value;
+                break;
+            }
+        }
+        return { nameOverride, assetUuid: prefabInfo.asset?.__uuid__ ?? null };
+    }
+
     findSceneRoot() {
         const scene = this.#objects.find(obj => obj.__type__ === 'cc.Scene');
         if (scene) return scene;
