@@ -5,6 +5,7 @@
  */
 
 import * as fs from 'fs';
+import { VALUE_TYPES } from '../filters/TypeFilter.js';
 
 export class SceneParser {
     #objects = [];
@@ -17,6 +18,9 @@ export class SceneParser {
     constructor(scenePath) {
         const content = fs.readFileSync(scenePath, 'utf-8');
         this.#objects = JSON.parse(content);
+        if (!Array.isArray(this.#objects)) {
+            throw new Error('Not a Cocos scene/prefab: expected a JSON array');
+        }
         this.#indexObjects();
     }
 
@@ -35,8 +39,7 @@ export class SceneParser {
 
     #isValueType(type) {
         // Value types are inlined and don't need separate tracking
-        return ['cc.Vec3', 'cc.Vec2', 'cc.Vec4', 'cc.Quat',
-                'cc.Color', 'cc.Size', 'cc.Rect'].includes(type);
+        return VALUE_TYPES.has(type);
     }
 
     get objects() {

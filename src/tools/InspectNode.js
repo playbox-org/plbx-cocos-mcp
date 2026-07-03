@@ -83,7 +83,7 @@ export class InspectNode extends BaseTool {
             return this.error(`Node #${args.nodeId} not found or has no content`);
         }
 
-        return this.#formatResult(minifier, graph, args);
+        return this.#formatResult(graph, args.nodeId, args.format);
     }
 
     #inspectByName(minifier, args) {
@@ -114,19 +114,16 @@ export class InspectNode extends BaseTool {
             return this.error(`Node "${args.nodeName}"#${matches[0].id} has no content`);
         }
 
-        return this.#formatResult(minifier, graph, args);
+        return this.#formatResult(graph, matches[0].id, args.format);
     }
 
-    #formatResult(minifier, graph, args) {
-        const format = args.format || 'text';
-        const header = `# Node: ${graph.name}#${args.nodeId ?? ''}`;
-
+    #formatResult(graph, nodeId, format) {
         if (format === 'json') {
             const formatter = new JsonFormatter().configure({ pretty: true });
             return this.success(formatter.format(graph));
         }
 
         const formatter = new TextFormatter();
-        return this.success(`${header}\n\n${formatter.format(graph)}`);
+        return this.success(`# Node: ${graph.name}#${nodeId}\n\n${formatter.format(graph)}`);
     }
 }

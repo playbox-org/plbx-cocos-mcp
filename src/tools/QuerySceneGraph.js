@@ -1,15 +1,10 @@
 /**
  * QuerySceneGraph - MCP tool for scene graph extraction
- *
- * SOLID: S - Single tool, single purpose
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
-import { BaseTool } from './BaseTool.js';
-import { SceneMinifier } from '../core/SceneMinifier.js';
+import { GraphQueryTool } from './GraphQueryTool.js';
 
-export class QuerySceneGraph extends BaseTool {
+export class QuerySceneGraph extends GraphQueryTool {
     get name() {
         return 'query_scene_graph';
     }
@@ -19,55 +14,15 @@ export class QuerySceneGraph extends BaseTool {
                'Converts ~700KB scene files to ~20KB semantic representations.';
     }
 
-    get inputSchema() {
-        return {
-            type: 'object',
-            properties: {
-                scenePath: {
-                    type: 'string',
-                    description: "Path to scene file relative to project root (e.g., 'assets/Scenes/game.scene')"
-                },
-                format: {
-                    type: 'string',
-                    enum: ['text', 'json'],
-                    description: "Output format: 'text' for readable hierarchy, 'json' for structured data",
-                    default: 'text'
-                },
-                detailed: {
-                    type: 'boolean',
-                    description: 'When true, expands reference arrays to show individual names and extracts properties from built-in cc.* components',
-                    default: false
-                }
-            },
-            required: ['scenePath']
-        };
+    get pathParam() {
+        return 'scenePath';
     }
 
-    async execute(args, projectRoot) {
-        const scenePath = path.resolve(projectRoot, args.scenePath);
+    get kindLabel() {
+        return 'Scene';
+    }
 
-        if (!fs.existsSync(scenePath)) {
-            return this.error(`Scene file not found: ${scenePath}`);
-        }
-
-        try {
-            const minifier = new SceneMinifier(scenePath, projectRoot, {
-                detailed: args.detailed
-            });
-            const graph = minifier.minify();
-
-            if (!graph) {
-                return this.error('Could not parse scene');
-            }
-
-            const format = args.format || 'text';
-            const output = format === 'json'
-                ? minifier.toJson(graph)
-                : `# Scene: ${path.basename(args.scenePath)}\n\n${minifier.toText(graph)}`;
-
-            return this.success(output);
-        } catch (err) {
-            return this.error(err.message);
-        }
+    get pathDescription() {
+        return "Path to scene file relative to project root (e.g., 'assets/Scenes/game.scene')";
     }
 }

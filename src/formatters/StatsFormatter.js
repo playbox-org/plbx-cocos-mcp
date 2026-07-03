@@ -2,9 +2,12 @@
  * StatsFormatter - Statistics output
  *
  * SOLID: S - Only formats statistics
+ * SOLID: L - Substitutable for any Formatter
  */
 
-export class StatsFormatter {
+import { Formatter } from './Formatter.js';
+
+export class StatsFormatter extends Formatter {
     /**
      * Format scene statistics
      * @param {object} stats

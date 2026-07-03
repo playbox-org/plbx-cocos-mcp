@@ -5,13 +5,23 @@
  * SOLID: S - Only responsible for node visibility decisions
  */
 
-// Bone name patterns - skeleton nodes that add noise
-const BONE_PATTERNS = [
-    /^Root/i, /^Spine/i, /^Chest/i, /^Neck/i, /^Head/i,
-    /^Shoulder/i, /^Arm/i, /^Hand/i, /^Finger/i,
-    /^Hip/i, /^Leg/i, /^Foot/i, /^Toe/i,
-    /^Eye/i, /^Jaw/i, /^Pelvis/i, /^Clavicle/i
+// Bone name keywords - skeleton nodes that add noise
+const BONE_NAMES = [
+    'Root', 'Spine', 'Chest', 'Neck', 'Head',
+    'Shoulder', 'Arm', 'Hand', 'Finger',
+    'Hip', 'Leg', 'Foot', 'Toe',
+    'Eye', 'Jaw', 'Pelvis', 'Clavicle'
 ];
+
+// A name is a bone only when a keyword matches a whole "word": it may be
+// preceded by a separator (rig prefixes like "mixamorig:Head") and must be
+// followed by end-of-name, a separator, or a digit ("Head", "Head_L",
+// "Hand.R", "Spine1"). Plain continuations are not bones ("Header",
+// "Handle", "Armor", "RootNode").
+const SEPARATOR = '[\\s_\\-.:]';
+const BONE_PATTERNS = BONE_NAMES.map(name =>
+    new RegExp(`(?:^|${SEPARATOR})${name}(?=$|${SEPARATOR}|\\d)`, 'i')
+);
 
 export class NodeFilter {
     #maxDepth = 10;
@@ -23,8 +33,8 @@ export class NodeFilter {
      * Configure filter options
      */
     configure(options = {}) {
-        if (options.maxDepth) this.#maxDepth = options.maxDepth;
-        if (options.boneMaxDepth) this.#boneMaxDepth = options.boneMaxDepth;
+        if (options.maxDepth !== undefined) this.#maxDepth = options.maxDepth;
+        if (options.boneMaxDepth !== undefined) this.#boneMaxDepth = options.boneMaxDepth;
         if (options.filterNestedBones !== undefined) this.#filterNestedBones = options.filterNestedBones;
         return this;
     }

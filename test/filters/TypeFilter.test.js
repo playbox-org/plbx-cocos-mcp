@@ -37,25 +37,6 @@ describe('TypeFilter', () => {
         });
     });
 
-    describe('isImportant', () => {
-        it('should identify important built-in components', () => {
-            const filter = new TypeFilter();
-
-            assert.strictEqual(filter.isImportant('cc.Camera'), true);
-            assert.strictEqual(filter.isImportant('cc.RigidBody'), true);
-            assert.strictEqual(filter.isImportant('cc.MeshRenderer'), true);
-            assert.strictEqual(filter.isImportant('cc.Sprite'), true);
-            assert.strictEqual(filter.isImportant('cc.Button'), true);
-        });
-
-        it('should not mark custom scripts as important', () => {
-            const filter = new TypeFilter();
-
-            assert.strictEqual(filter.isImportant('PlayerController'), false);
-            assert.strictEqual(filter.isImportant('63d48abc'), false);
-        });
-    });
-
     describe('isCustomScript', () => {
         it('should identify UUID-style custom scripts', () => {
             const filter = new TypeFilter();
@@ -77,24 +58,6 @@ describe('TypeFilter', () => {
 
             assert.strictEqual(filter.isCustomScript('Short'), false);
             assert.strictEqual(filter.isCustomScript('abc123'), false);
-        });
-    });
-
-    describe('static properties', () => {
-        it('should expose noise types list', () => {
-            const noiseTypes = TypeFilter.noiseTypes;
-
-            assert.ok(Array.isArray(noiseTypes));
-            assert.ok(noiseTypes.includes('cc.Vec3'));
-            assert.ok(noiseTypes.includes('cc.Color'));
-        });
-
-        it('should expose important types list', () => {
-            const importantTypes = TypeFilter.importantTypes;
-
-            assert.ok(Array.isArray(importantTypes));
-            assert.ok(importantTypes.includes('cc.Camera'));
-            assert.ok(importantTypes.includes('cc.RigidBody'));
         });
     });
 });

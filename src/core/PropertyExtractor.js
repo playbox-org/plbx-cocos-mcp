@@ -29,7 +29,7 @@ export class PropertyExtractor {
         for (const [key, value] of Object.entries(component)) {
             if (this.#shouldSkip(key, value)) continue;
 
-            const extracted = this.#extractValue(key, value);
+            const extracted = this.#extractValue(value);
             if (extracted !== undefined) {
                 props[key] = extracted;
             }
@@ -114,7 +114,7 @@ export class PropertyExtractor {
         return null;
     }
 
-    #extractValue(key, value) {
+    #extractValue(value) {
         // Asset reference
         if (typeof value === 'object' && '__uuid__' in value) {
             return '<asset>';
@@ -125,9 +125,10 @@ export class PropertyExtractor {
             return this.#resolveRef(value.__id__) || undefined;
         }
 
-        // Array of references
+        // Array of references (may contain nulls anywhere, including the head)
         if (Array.isArray(value) && value.length > 0) {
-            if (value[0]?.__id__ !== undefined) {
+            const firstRef = value.find(v => v != null);
+            if (firstRef?.__id__ !== undefined) {
                 if (this.#detailed) {
                     return value.map(ref => {
                         if (ref == null) return '→null';

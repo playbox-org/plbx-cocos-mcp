@@ -212,6 +212,22 @@ describe('PropertyExtractor', () => {
             assert.deepStrictEqual(props.items, ['→Node1#1', '→null', '→Node1#1']);
         });
 
+        it('should not lose arrays with a leading null', () => {
+            const parser = new MockSceneParser();
+            parser.addObject(5, { _name: 'TargetNode' });
+
+            const component = {
+                __type__: 'Test',
+                items: [null, { __id__: 5 }]
+            };
+
+            const props = new PropertyExtractor(parser).extract(component);
+            assert.strictEqual(props.items, '[×1, null×1]');
+
+            const detailed = new PropertyExtractor(parser, { detailed: true }).extract(component);
+            assert.deepStrictEqual(detailed.items, ['→null', '→TargetNode#5']);
+        });
+
         it('should show null count in default mode arrays', () => {
             const parser = new MockSceneParser();
 

@@ -98,6 +98,9 @@ export class SceneMinifier {
         for (const obj of this.#sceneParser.objects) {
             const type = obj.__type__;
 
+            // Only real components carry a back-reference to their node;
+            // skip helper objects (cc.PrefabInfo, cc.SceneGlobals, ...)
+            if (obj.node?.__id__ === undefined) continue;
             if (this.#typeFilter.isNoise(type)) continue;
 
             if (this.#typeFilter.isCustomScript(type)) {

@@ -37,7 +37,7 @@
     "_enabled": true
   },
   {
-    "__type__": "63d48",
+    "__type__": "63d48q8EjRWeJq83vASNFZ4",
     "node": { "__id__": 4 },
     "_enabled": true,
     "moveSpeed": 5,
@@ -65,7 +65,7 @@
     "_components": []
   },
   {
-    "__type__": "a1b2c",
+    "__type__": "a1b2cNFZ4mrze8BI0VniQq8",
     "node": { "__id__": 8 },
     "_enabled": true,
     "health": 100,
