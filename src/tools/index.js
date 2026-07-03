@@ -13,11 +13,12 @@ import { GetAssetInfo } from './GetAssetInfo.js';
 import { ListAssets } from './ListAssets.js';
 import { ApplyEdits } from './ApplyEdits.js';
 import { ValidateDocument } from './ValidateDocument.js';
+import { BuildPrefab } from './BuildPrefab.js';
 
 export {
     BaseTool, QuerySceneGraph, ListSceneScripts, FindSceneNodes, QueryPrefabGraph,
     InspectNode, GetProjectInfo, GetAssetInfo, ListAssets,
-    ApplyEdits, ValidateDocument
+    ApplyEdits, ValidateDocument, BuildPrefab
 };
 
 /**
@@ -35,6 +36,7 @@ export function createTools() {
         new GetAssetInfo(),
         new ListAssets(),
         new ApplyEdits(),
-        new ValidateDocument()
+        new ValidateDocument(),
+        new BuildPrefab()
     ];
 }

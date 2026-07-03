@@ -1,5 +1,5 @@
 /**
- * ApplyEdits / ValidateDocument tool tests
+ * ApplyEdits / ValidateDocument / BuildPrefab tool tests
  *
  * Runs against a disposable copy of the mock project with a golden prefab
  * inside, so writes never touch fixtures.
@@ -13,6 +13,7 @@ import * as os from 'os';
 import { fileURLToPath } from 'url';
 import { ApplyEdits } from '../../src/tools/ApplyEdits.js';
 import { ValidateDocument } from '../../src/tools/ValidateDocument.js';
+import { BuildPrefab } from '../../src/tools/BuildPrefab.js';
 import { SceneDocument } from '../../src/document/SceneDocument.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -112,3 +113,53 @@ describe('validate_document tool', () => {
     });
 });
 
+describe('build_prefab tool', () => {
+    test('builds prefab + meta from a spec with a mesh visual', async () => {
+        const result = await new BuildPrefab().execute({
+            outputPath: 'assets/Prefabs/RockProp.prefab',
+            spec: {
+                visual: { mesh: 'assets/Models/Rock.glb', scale: 2 },
+                root: { components: [{ type: 'BoxCollider' }] }
+            }
+        }, projectRoot);
+
+        assert.ok(!result.isError, text(result));
+        assert.match(text(result), /UUID: [0-9a-f-]{36}/);
+        assert.match(text(result), /Visual scale\(2,2,2\) \[MeshRenderer\]/);
+
+        const prefabPath = path.join(projectRoot, 'assets/Prefabs/RockProp.prefab');
+        assert.ok(fs.existsSync(prefabPath));
+        assert.ok(fs.existsSync(`${prefabPath}.meta`));
+
+        const doc = SceneDocument.load(prefabPath);
+        assert.strictEqual(doc.getObject(0)._name, 'RockProp');
+    });
+
+    test('refuses to overwrite without the flag, keeps UUID with it', async () => {
+        const denied = await new BuildPrefab().execute({
+            outputPath: 'assets/Prefabs/RockProp.prefab',
+            spec: {}
+        }, projectRoot);
+        assert.ok(denied.isError);
+        assert.match(text(denied), /already exists/);
+
+        const metaBefore = JSON.parse(
+            fs.readFileSync(path.join(projectRoot, 'assets/Prefabs/RockProp.prefab.meta'), 'utf-8'));
+        const replaced = await new BuildPrefab().execute({
+            outputPath: 'assets/Prefabs/RockProp.prefab',
+            spec: {},
+            overwrite: true
+        }, projectRoot);
+        assert.ok(!replaced.isError, text(replaced));
+        assert.match(text(replaced), new RegExp(metaBefore.uuid));
+    });
+
+    test('rejects paths outside assets/', async () => {
+        const result = await new BuildPrefab().execute({
+            outputPath: 'settings/Evil.prefab',
+            spec: {}
+        }, projectRoot);
+        assert.ok(result.isError);
+        assert.match(text(result), /assets\//);
+    });
+});

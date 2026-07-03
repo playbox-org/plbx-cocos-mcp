@@ -1,0 +1,128 @@
+/**
+ * BuildPrefab - MCP tool: compile a compact spec into a full .prefab asset
+ *
+ * ~30 spec lines expand deterministically into correct Cocos 3.8.x JSON
+ * plus a .meta with a fresh UUID, so the prefab is immediately referencable.
+ * Enforces the wrapper convention: `visual` renderers land on a child node,
+ * never the root.
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import { BaseTool } from './BaseTool.js';
+import { PrefabBuilder, PrefabBuildError } from '../document/PrefabBuilder.js';
+import { Validator } from '../document/Validator.js';
+import { renderSubtree } from '../document/MiniTree.js';
+import { AssetIndex } from '../core/AssetIndex.js';
+
+export class BuildPrefab extends BaseTool {
+    get name() {
+        return 'build_prefab';
+    }
+
+    get description() {
+        return 'Create a new Cocos Creator .prefab (plus .meta with a fresh UUID) from a compact spec. ' +
+               'Wrapper convention built in: use spec.visual for the model/sprite — it becomes a Visual ' +
+               'child node, keeping the root clean for logic/tweens/colliders. ' +
+               'Spec: {name?, layer? (number|"default"|"ui_2d"|...), ' +
+               'visual?: {mesh: "path[@subId]"| sprite: "path.png", material?, scale?: number|{x,y,z}, position?, rotation?}, ' +
+               'root?: {components?: [{type, properties?}], children?: [{name, position?, rotation?, scale?, layer?, active?, ' +
+               'mesh?, sprite?, material?, components?, children?}]}}. ' +
+               'Component types: cc.* templates (UITransform, Sprite, Label, Button, Widget, MeshRenderer, ' +
+               'BoxCollider, SphereCollider, CapsuleCollider, RigidBody, Animation) or custom script names.';
+    }
+
+    get inputSchema() {
+        return {
+            type: 'object',
+            properties: {
+                outputPath: {
+                    type: 'string',
+                    description: 'Target .prefab path relative to project root, e.g. "assets/Prefabs/Crate.prefab"'
+                },
+                spec: {
+                    type: 'object',
+                    description: 'Prefab spec (see tool description)'
+                },
+                overwrite: {
+                    type: 'boolean',
+                    description: 'Allow replacing an existing .prefab (its .meta/UUID is preserved)',
+                    default: false
+                }
+            },
+            required: ['outputPath', 'spec']
+        };
+    }
+
+    async execute(args, projectRoot) {
+        const outputPath = path.resolve(projectRoot, args.outputPath);
+        if (!outputPath.endsWith('.prefab')) {
+            return this.error('outputPath must end with .prefab');
+        }
+        if (!outputPath.startsWith(path.resolve(projectRoot, 'assets') + path.sep)) {
+            return this.error('outputPath must be inside the project\'s assets/ directory');
+        }
+        if (fs.existsSync(outputPath) && !args.overwrite) {
+            return this.error(`${args.outputPath} already exists — pass overwrite: true to replace it`);
+        }
+
+        let assetIndex = null;
+        try {
+            assetIndex = new AssetIndex(projectRoot);
+        } catch { /* mesh/sprite specs will fail with a clear message */ }
+
+        const defaultName = path.basename(outputPath, '.prefab');
+        let doc;
+        let notes;
+        try {
+            ({ doc, notes } = new PrefabBuilder(assetIndex).compile(args.spec, defaultName));
+        } catch (err) {
+            if (err instanceof PrefabBuildError || err.name === 'OperationError') {
+                return this.error(`${err.message}\n\nNothing was written.`);
+            }
+            throw err;
+        }
+
+        const { errors, warnings } = new Validator(doc, assetIndex).validate();
+        if (errors.length > 0) {
+            return this.error(
+                `Compiled prefab failed validation — nothing was written:\n` +
+                errors.map(e => `- ${e}`).join('\n')
+            );
+        }
+
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        doc.save(outputPath);
+
+        // Meta: create only when absent so overwrites keep the existing UUID
+        const metaPath = `${outputPath}.meta`;
+        let uuid;
+        let metaCreated = false;
+        if (fs.existsSync(metaPath)) {
+            uuid = JSON.parse(fs.readFileSync(metaPath, 'utf-8')).uuid;
+        } else {
+            const meta = PrefabBuilder.createMeta(doc.getObject(0)._name);
+            fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+            uuid = meta.uuid;
+            metaCreated = true;
+        }
+
+        const lines = [
+            `# Built ${args.outputPath}`,
+            '',
+            `UUID: ${uuid}${metaCreated ? ' (new .meta written)' : ' (existing .meta kept)'}`,
+            `Objects: ${doc.objects.length}`,
+            '',
+            '## Structure',
+            '',
+            renderSubtree(doc, doc.root.idx, { maxDepth: 4 })
+        ];
+        if (notes.length || warnings.length) {
+            lines.push('', '## Warnings');
+            notes.forEach(n => lines.push(`- ${n}`));
+            warnings.forEach(w => lines.push(`- ${w}`));
+        }
+        lines.push('', 'Open the project in Cocos Creator (or its asset-db refresh) to import the new asset.');
+        return this.success(lines.join('\n'));
+    }
+}
