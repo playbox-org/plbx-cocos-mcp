@@ -11,10 +11,13 @@ import { InspectNode } from './InspectNode.js';
 import { GetProjectInfo } from './GetProjectInfo.js';
 import { GetAssetInfo } from './GetAssetInfo.js';
 import { ListAssets } from './ListAssets.js';
+import { ApplyEdits } from './ApplyEdits.js';
+import { ValidateDocument } from './ValidateDocument.js';
 
 export {
     BaseTool, QuerySceneGraph, ListSceneScripts, FindSceneNodes, QueryPrefabGraph,
-    InspectNode, GetProjectInfo, GetAssetInfo, ListAssets
+    InspectNode, GetProjectInfo, GetAssetInfo, ListAssets,
+    ApplyEdits, ValidateDocument
 };
 
 /**
@@ -30,6 +33,8 @@ export function createTools() {
         new InspectNode(),
         new GetProjectInfo(),
         new GetAssetInfo(),
-        new ListAssets()
+        new ListAssets(),
+        new ApplyEdits(),
+        new ValidateDocument()
     ];
 }

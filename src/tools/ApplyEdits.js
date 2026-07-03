@@ -1,0 +1,180 @@
+/**
+ * ApplyEdits - MCP tool: batch semantic edits on a .scene/.prefab file
+ *
+ * LLMs must never Edit/Write scene files directly (700KB, fragile __id__
+ * indexing) — this tool is the only sanctioned write path. Operations are
+ * applied in memory, the document is renumbered and validated, and only a
+ * fully valid result is written (atomically). dryRun previews everything
+ * without touching disk.
+ */
+
+import * as fs from 'fs';
+import * as path from 'path';
+import { BaseTool } from './BaseTool.js';
+import { SceneDocument } from '../document/SceneDocument.js';
+import { applyOperations } from '../document/operations.js';
+import { Validator } from '../document/Validator.js';
+import { renderSubtree } from '../document/MiniTree.js';
+import { AssetIndex } from '../core/AssetIndex.js';
+import { compressUuid } from '../utils/uuid.js';
+
+const OPS_DOC = `Operations (applied in order, all-or-nothing):
+- set_node_property {node, property: name|active|layer|mobility|position|rotation|scale, value}
+  position/scale take {x?,y?,z?} (merged), rotation takes euler degrees {x?,y?,z?} (quaternion derived automatically)
+- add_node {parent, name, position?, rotation?, scale?, layer?, active?, index?}
+- remove_node {node, force?} (force nulls external references into the subtree)
+- reparent {node, newParent, index?}
+- add_component {node, type, properties?} (type: cc.* template or custom script name)
+- set_component_property {node, component?, componentIndex?, property, value}
+  value forms: raw JSON | {x?,y?,..} merged into typed values | {"$node": "path"} | {"$asset": "path|uuid", "$type"?} | {"$component": {node, type}}
+- set_asset_ref {node, component?, componentIndex?, property, asset, expectedType?} (asset: project path, UUID or "uuid@subId"; null clears)
+
+Node addressing: "Canvas/Panel/BuyBtn" path from root, "/" = root, node _id, "Name[i]" or "[i]" disambiguate same-named/positional siblings.
+Prefab instances inside scenes are collapsed stubs: only remove_node/reparent of the whole instance work; edit the source .prefab for anything else.`;
+
+export class ApplyEdits extends BaseTool {
+    get name() {
+        return 'apply_edits';
+    }
+
+    get description() {
+        return 'Apply a batch of semantic edit operations to a Cocos Creator .scene or .prefab file. ' +
+               'Validates invariants and writes atomically; use dryRun to preview. ' +
+               'Returns the minified subtree around every change. ' + OPS_DOC;
+    }
+
+    get inputSchema() {
+        return {
+            type: 'object',
+            properties: {
+                filePath: {
+                    type: 'string',
+                    description: 'Path to .scene or .prefab file relative to project root'
+                },
+                ops: {
+                    type: 'array',
+                    description: 'Operations to apply in order (see tool description for shapes)',
+                    items: { type: 'object' },
+                    minItems: 1
+                },
+                dryRun: {
+                    type: 'boolean',
+                    description: 'Preview: apply + validate in memory, report, but do not write',
+                    default: false
+                }
+            },
+            required: ['filePath', 'ops']
+        };
+    }
+
+    async execute(args, projectRoot) {
+        const filePath = path.resolve(projectRoot, args.filePath);
+        if (!fs.existsSync(filePath)) {
+            return this.error(`File not found: ${filePath}`);
+        }
+
+        let doc;
+        try {
+            doc = SceneDocument.load(filePath);
+        } catch (err) {
+            return this.error(`Cannot parse ${args.filePath}: ${err.message}`);
+        }
+
+        const assetIndex = this.#tryAssetIndex(projectRoot);
+        const ctx = { assetIndex, scriptNameByCompressed: this.#scriptNames(assetIndex) };
+
+        let results;
+        try {
+            results = applyOperations(doc, args.ops, ctx);
+        } catch (err) {
+            return this.error(`${err.message}\n\nNothing was written.`);
+        }
+
+        const { dropped } = doc.renumber();
+        const { errors, warnings } = new Validator(doc, assetIndex).validate();
+        if (errors.length > 0) {
+            return this.error(
+                `Edits produced an invalid document — nothing was written:\n` +
+                errors.map(e => `- ${e}`).join('\n')
+            );
+        }
+
+        const dryRun = args.dryRun === true;
+        if (!dryRun) {
+            doc.save(filePath);
+        }
+
+        return this.success(this.#report({ args, doc, results, warnings, dropped, dryRun, ctx }));
+    }
+
+    #tryAssetIndex(projectRoot) {
+        try {
+            return new AssetIndex(projectRoot);
+        } catch {
+            return null;
+        }
+    }
+
+    /** compressed script UUID → readable name, for subtree rendering */
+    #scriptNames(assetIndex) {
+        if (!assetIndex) return null;
+        const map = new Map();
+        for (const entry of assetIndex.list({ type: 'script' })) {
+            map.set(compressUuid(entry.uuid), entry.name.replace(/\.[jt]s$/, ''));
+        }
+        return map;
+    }
+
+    #report({ args, doc, results, warnings, dropped, dryRun, ctx }) {
+        const lines = [];
+        lines.push(dryRun
+            ? `# DRY RUN — ${args.filePath} NOT modified`
+            : `# Applied ${results.length} op(s) to ${args.filePath}`);
+        lines.push('');
+        results.forEach((r, i) => lines.push(`${i + 1}. [${r.op}] ${r.summary}`));
+        if (dropped > 0) lines.push(`\nGarbage-collected ${dropped} unreachable object(s).`);
+
+        // One subtree per distinct affected area (indices are valid post-renumber
+        // only via re-resolution, so resolve by recorded path)
+        const shown = new Set();
+        const covered = (anchor) =>
+            shown.has(anchor) ||
+            [...shown].some(s => s === '/' || anchor.startsWith(`${s}/`));
+        const trees = [];
+        for (const r of results) {
+            const anchor = r.target === '/' ? '/' : r.target;
+            if (covered(anchor)) continue;
+            shown.add(anchor);
+            try {
+                const idx = doc.resolveNode(anchor);
+                trees.push(renderSubtree(doc, idx, {
+                    maxDepth: 2,
+                    scriptNames: ctx.scriptNameByCompressed ?? undefined
+                }));
+            } catch {
+                // Node was removed — show its parent instead
+                const parentPath = anchor.includes('/') ? anchor.slice(0, anchor.lastIndexOf('/')) : '/';
+                if (!shown.has(parentPath)) {
+                    shown.add(parentPath);
+                    try {
+                        const idx = doc.resolveNode(parentPath);
+                        trees.push(renderSubtree(doc, idx, { maxDepth: 1, scriptNames: ctx.scriptNameByCompressed ?? undefined }));
+                    } catch { /* root always resolves; ignore */ }
+                }
+            }
+        }
+        if (trees.length) {
+            lines.push('', '## Result subtrees', '');
+            lines.push(trees.join('\n---\n'));
+        }
+
+        if (warnings.length) {
+            lines.push('', '## Warnings');
+            warnings.forEach(w => lines.push(`- ${w}`));
+        }
+        if (dryRun) {
+            lines.push('', 'Re-run with dryRun: false to write.');
+        }
+        return lines.join('\n');
+    }
+}
