@@ -75,7 +75,7 @@ export class McpServer {
             }
 
             try {
-                return await tool.execute(args, this.#projectRoot);
+                return await tool.execute(args ?? {}, this.#projectRoot);
             } catch (error) {
                 return {
                     content: [{ type: 'text', text: `Error: ${error.message}` }],

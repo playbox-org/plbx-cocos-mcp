@@ -3,10 +3,15 @@
   "version": "1.1.0",
   "description": "PLBX Cocos MCP Server - Scene graph extraction for AI coding assistants",
   "type": "module",
-  "main": "src/index.js",
+  "main": "src/lib.js",
   "bin": {
+    "plbx-cocos-mcp": "./src/index.js",
     "plbx-scene": "./bin/scene-minifier.js"
   },
+  "files": [
+    "src",
+    "bin"
+  ],
   "scripts": {
     "start": "node src/index.js",
     "cli": "node bin/scene-minifier.js",
