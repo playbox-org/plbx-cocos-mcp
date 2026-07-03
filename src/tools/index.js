@@ -16,12 +16,13 @@ import { ValidateDocument } from './ValidateDocument.js';
 import { BuildPrefab } from './BuildPrefab.js';
 import { GetNodeBounds } from './GetNodeBounds.js';
 import { ComputeFitScale } from './ComputeFitScale.js';
+import { LintAssets } from './LintAssets.js';
 
 export {
     BaseTool, QuerySceneGraph, ListSceneScripts, FindSceneNodes, QueryPrefabGraph,
     InspectNode, GetProjectInfo, GetAssetInfo, ListAssets,
     ApplyEdits, ValidateDocument, BuildPrefab,
-    GetNodeBounds, ComputeFitScale
+    GetNodeBounds, ComputeFitScale, LintAssets
 };
 
 /**
@@ -42,6 +43,7 @@ export function createTools() {
         new ValidateDocument(),
         new BuildPrefab(),
         new GetNodeBounds(),
-        new ComputeFitScale()
+        new ComputeFitScale(),
+        new LintAssets()
     ];
 }
