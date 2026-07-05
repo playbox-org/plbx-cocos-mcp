@@ -44,6 +44,15 @@ export function normalizeArgs(args, schema, aliases = {}) {
         problems.push(`unknown parameter "${key}"${hint ? ` — did you mean "${hint}"?` : ''}`);
     }
 
+    // Some MCP clients serialize scalar arguments as strings — coerce
+    // unambiguous cases instead of failing the type check
+    for (const [key, value] of Object.entries(normalized)) {
+        const prop = props[key];
+        if (prop && value !== undefined) {
+            normalized[key] = coerceScalar(value, prop);
+        }
+    }
+
     for (const key of required) {
         if (normalized[key] === undefined) {
             problems.push(`missing required parameter "${key}"`);
@@ -65,6 +74,24 @@ export function normalizeArgs(args, schema, aliases = {}) {
         error: `Invalid arguments: ${problems.join('; ')}.\n` +
                `Valid parameters: ${describeParams(props, required)}`
     };
+}
+
+function coerceScalar(value, prop) {
+    if (typeof value !== 'string') return value;
+    if (prop.type === 'boolean') {
+        if (value === 'true') return true;
+        if (value === 'false') return false;
+    }
+    if (prop.type === 'number' || prop.type === 'integer') {
+        const n = Number(value);
+        if (value.trim() !== '' && Number.isFinite(n)) return n;
+    }
+    if (prop.enum && !prop.enum.includes(value)) {
+        const relaxed = prop.enum.find(e =>
+            typeof e === 'string' && e.toLowerCase() === value.toLowerCase());
+        if (relaxed !== undefined) return relaxed;
+    }
+    return value;
 }
 
 function checkValue(key, value, prop) {

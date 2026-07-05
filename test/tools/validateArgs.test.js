@@ -87,6 +87,29 @@ describe('normalizeArgs', () => {
         assert.match(badItem.error, /"ops\[0\]" must be of type object/);
     });
 
+    it('coerces stringified scalars from lenient MCP clients', () => {
+        const { args, error } = normalizeArgs(
+            { scenePath: 'a.scene', detailed: 'true' }, SCHEMA
+        );
+        assert.strictEqual(error, null);
+        assert.strictEqual(args.detailed, true);
+
+        const num = normalizeArgs(
+            { filePath: 'a.scene', nodeId: '42' },
+            { type: 'object', properties: { filePath: { type: 'string' }, nodeId: { type: 'number' } }, required: ['filePath'] }
+        );
+        assert.strictEqual(num.error, null);
+        assert.strictEqual(num.args.nodeId, 42);
+    });
+
+    it('accepts enum values case-insensitively', () => {
+        const { args, error } = normalizeArgs(
+            { scenePath: 'a.scene', format: 'JSON' }, SCHEMA
+        );
+        assert.strictEqual(error, null);
+        assert.strictEqual(args.format, 'json');
+    });
+
     it('collects multiple problems in one error', () => {
         const { error } = normalizeArgs({ prefab: 'x', format: 'yaml' }, SCHEMA);
         assert.match(error, /unknown parameter "prefab"/);
