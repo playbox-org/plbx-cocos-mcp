@@ -686,6 +686,26 @@ function addComponent(doc, op, ctx) {
     };
 }
 
+/**
+ * Fields the engine serializes twice as a getter/setter pair — a write to one
+ * must mirror into the other (verified on the golden scene's
+ * cc.animation.AnimationController: _graph and graph always match).
+ */
+const PAIRED_FIELDS = {
+    'cc.animation.AnimationController': { _graph: 'graph', graph: '_graph' }
+};
+
+function syncPairedField(component, container, key, value) {
+    if (container !== component) return;
+    const twin = PAIRED_FIELDS[component.__type__]?.[key];
+    if (!twin) return;
+    // Deep-copy: the twins must not alias one object (renumber rewrites
+    // every {__id__} it visits, and would hit a shared one twice)
+    component[twin] = value !== null && typeof value === 'object'
+        ? JSON.parse(JSON.stringify(value))
+        : value;
+}
+
 function setPropertyOnComponent(doc, component, property, rawValue, ctx, { isScript }) {
     const { container, key } = locateProperty(component, property, { allowCreate: isScript });
     const value = transformValue(doc, rawValue, ctx);
@@ -693,6 +713,7 @@ function setPropertyOnComponent(doc, component, property, rawValue, ctx, { isScr
     const isReference = value && typeof value === 'object' &&
         ('__id__' in value || '__uuid__' in value);
     container[key] = isReference ? value : mergeTyped(existing, value, property);
+    syncPairedField(component, container, key, container[key]);
 }
 
 function setComponentProperty(doc, op, ctx) {
@@ -726,6 +747,7 @@ function setAssetRef(doc, op, ctx) {
         allowCreate: !component.__type__.startsWith('cc.')
     });
     container[key] = value;
+    syncPairedField(component, container, key, value);
 
     const path = doc.nodePath(idx);
     return {

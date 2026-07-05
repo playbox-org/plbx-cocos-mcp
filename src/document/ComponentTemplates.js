@@ -300,6 +300,18 @@ const TEMPLATES = {
             _defaultClip: null,
             _id: ''
         }
+    }),
+
+    // Field order matches the editor-saved sample in the golden scene.
+    // The graph reference serializes TWICE (_graph + graph getter/setter pair);
+    // operations.js keeps the two in sync on every write.
+    'cc.animation.AnimationController': () => ({
+        component: {
+            ...head('cc.animation.AnimationController'),
+            _graph: null,
+            graph: null,
+            _id: ''
+        }
     })
 };
 
@@ -307,6 +319,9 @@ const TEMPLATES = {
 const ALIASES = new Map(
     Object.keys(TEMPLATES).map(full => [full.slice(3).toLowerCase(), full])
 );
+// cc.animation.* strip to "animation.animationcontroller" above — also accept
+// the bare class name
+ALIASES.set('animationcontroller', 'cc.animation.AnimationController');
 
 /**
  * Resolve a user-supplied component type to a template key, or null when

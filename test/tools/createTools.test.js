@@ -8,10 +8,10 @@ import assert from 'node:assert';
 import { createTools } from '../../src/tools/index.js';
 
 const EXPECTED_NAMES = [
-    'query_scene_graph', 'query_prefab_graph', 'list_scene_scripts',
+    'query_scene_graph', 'query_prefab_graph', 'query_animgraph', 'list_scene_scripts',
     'find_scene_nodes', 'inspect_node',
     'get_project_info', 'get_asset_info', 'list_assets',
-    'apply_edits', 'validate_document', 'build_prefab',
+    'apply_edits', 'validate_document', 'build_prefab', 'build_animgraph',
     'get_node_bounds', 'compute_fit_scale', 'lint_assets'
 ];
 

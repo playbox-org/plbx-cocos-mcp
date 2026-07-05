@@ -495,6 +495,105 @@ describe('set_component_property / set_asset_ref', () => {
     });
 });
 
+describe('cc.animation.AnimationController', () => {
+    const GRAPH_UUID = '0e51b40e-aaaa-4bbb-8ccc-0123456789ab';
+    const GRAPH_REF = { __uuid__: GRAPH_UUID, __expectedType__: 'cc.animation.AnimationGraph' };
+
+    test('template matches the golden-scene component shape (both graph fields)', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Skeleton' },
+            { op: 'add_component', node: 'Skeleton', type: 'AnimationController' }
+        ]);
+        const comp = doc.getObject(doc.componentIndices(doc.resolveNode('Skeleton'))[0]);
+        assert.strictEqual(comp.__type__, 'cc.animation.AnimationController');
+        // Key order verified against the editor-saved controller in the golden scene
+        const goldenSample = doc.objects.find(o =>
+            o.__type__ === 'cc.animation.AnimationController' && o._id === 'e6Zmhz5ctPR75SXku43LFz');
+        assert.ok(goldenSample, 'golden scene should contain the reference controller');
+        assert.deepStrictEqual(Object.keys(comp), Object.keys(goldenSample));
+        assert.strictEqual(comp._graph, null);
+        assert.strictEqual(comp.graph, null);
+    });
+
+    test('type aliases resolve with and without the cc.animation prefix', () => {
+        for (const alias of ['AnimationController', 'animationcontroller',
+            'cc.AnimationController', 'cc.animation.AnimationController']) {
+            const doc = loadScene();
+            applyOperations(doc, [
+                { op: 'add_node', parent: '/', name: 'N' },
+                { op: 'add_component', node: 'N', type: alias }
+            ]);
+            const comp = doc.getObject(doc.componentIndices(doc.resolveNode('N'))[0]);
+            assert.strictEqual(comp.__type__, 'cc.animation.AnimationController', alias);
+        }
+    });
+
+    test('set_asset_ref graph writes BOTH _graph and graph (no aliasing)', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Skeleton' },
+            { op: 'add_component', node: 'Skeleton', type: 'AnimationController' },
+            {
+                op: 'set_asset_ref', node: 'Skeleton', component: 'AnimationController',
+                property: 'graph', asset: 'assets/Anims/Empty.animgraph'
+            }
+        ], { assetIndex });
+        const comp = doc.getObject(doc.componentIndices(doc.resolveNode('Skeleton'))[0]);
+        assert.deepStrictEqual(comp._graph, GRAPH_REF);
+        assert.deepStrictEqual(comp.graph, GRAPH_REF);
+        assert.notStrictEqual(comp._graph, comp.graph, 'twins must be separate objects');
+    });
+
+    test('writing _graph (or via set_component_property/add properties) mirrors too', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'A' },
+            { op: 'add_component', node: 'A', type: 'AnimationController' },
+            {
+                op: 'set_asset_ref', node: 'A', component: 'AnimationController',
+                property: '_graph', asset: GRAPH_UUID
+            },
+            { op: 'add_node', parent: '/', name: 'B' },
+            {
+                op: 'add_component', node: 'B', type: 'AnimationController',
+                properties: { graph: { $asset: GRAPH_UUID } }
+            }
+        ], { assetIndex });
+        for (const name of ['A', 'B']) {
+            const comp = doc.getObject(doc.componentIndices(doc.resolveNode(name))[0]);
+            assert.deepStrictEqual(comp._graph, GRAPH_REF, name);
+            assert.deepStrictEqual(comp.graph, GRAPH_REF, name);
+        }
+        // Clearing follows the same pairing
+        applyOperations(doc, [{
+            op: 'set_asset_ref', node: 'A', component: 'AnimationController',
+            property: 'graph', asset: null
+        }], { assetIndex });
+        const cleared = doc.getObject(doc.componentIndices(doc.resolveNode('A'))[0]);
+        assert.strictEqual(cleared._graph, null);
+        assert.strictEqual(cleared.graph, null);
+    });
+
+    test('controller edit keeps the canonical fixed point and validates clean', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Skeleton' },
+            { op: 'add_component', node: 'Skeleton', type: 'AnimationController' },
+            {
+                op: 'set_asset_ref', node: 'Skeleton', component: 'AnimationController',
+                property: 'graph', asset: 'assets/Anims/Empty.animgraph'
+            }
+        ], { assetIndex });
+        doc.renumber();
+        assertValid(doc);
+        const first = doc.serialize();
+        const reloaded = new SceneDocument(JSON.parse(first));
+        reloaded.renumber();
+        assert.strictEqual(reloaded.serialize(), first);
+    });
+});
+
 describe('canonical fixed point after editing', () => {
     test('edited prefab survives load→renumber→serialize unchanged', () => {
         const doc = loadPrefab();
