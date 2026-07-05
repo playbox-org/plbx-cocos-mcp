@@ -20,7 +20,13 @@ export class InspectNode extends BaseTool {
     get description() {
         return 'Drill into a specific node in a Cocos Creator scene or prefab. ' +
                'Returns the full unfiltered subtree with all properties. ' +
-               'Use nodeId (from #N in detailed mode) for precision, or nodeName to search.';
+               'Use nodeId (from #N in detailed mode) for precision, or nodeName to search. ' +
+               'Args: {filePath (required), nodeId? | nodeName?, format?: "text"|"json"} — ' +
+               'nodeName accepts a plain name ("BuyBtn") or a path ("Canvas/Panel/BuyBtn").';
+    }
+
+    get aliases() {
+        return { node: 'nodeName' };
     }
 
     get inputSchema() {
@@ -37,7 +43,7 @@ export class InspectNode extends BaseTool {
                 },
                 nodeName: {
                     type: 'string',
-                    description: "Node name to search for. If multiple matches, returns a disambiguation list."
+                    description: "Node name to search for, or a path like 'Canvas/Panel/BuyBtn'. If multiple matches, returns a disambiguation list."
                 },
                 format: {
                     type: 'string',
@@ -87,10 +93,25 @@ export class InspectNode extends BaseTool {
     }
 
     #inspectByName(minifier, args) {
-        const matches = minifier.resolveNodeId(args.nodeName);
+        const ref = args.nodeName;
+        const slash = ref.lastIndexOf('/');
+        const leaf = slash === -1 ? ref : ref.slice(slash + 1);
+        const candidates = minifier.resolveNodeId(leaf);
+        const matches = slash === -1
+            ? candidates
+            : filterByPath(candidates, ref.slice(0, slash));
 
         if (matches.length === 0) {
-            return this.error(`No node named "${args.nodeName}" found`);
+            if (candidates.length > 0) {
+                const list = candidates.map(m =>
+                    `- ${m.name}#${m.id} (${m.path || 'root'})`
+                ).join('\n');
+                return this.error(
+                    `No node at path "${ref}". Nodes named "${leaf}" exist at:\n${list}\n` +
+                    `Use the full path or nodeId.`
+                );
+            }
+            return this.error(`No node named "${leaf}" found`);
         }
 
         // Multiple matches — return disambiguation list
@@ -100,7 +121,7 @@ export class InspectNode extends BaseTool {
             ).join('\n');
 
             return this.success(
-                `# Multiple nodes named "${args.nodeName}"\n\n` +
+                `# Multiple nodes named "${ref}"\n\n` +
                 `Found: ${matches.length}\n\n` +
                 `${list}\n\n` +
                 `Use nodeId parameter to inspect a specific one.`
@@ -126,4 +147,16 @@ export class InspectNode extends BaseTool {
         const formatter = new TextFormatter();
         return this.success(`# Node: ${graph.name}#${nodeId}\n\n${formatter.format(graph)}`);
     }
+}
+
+/**
+ * Match candidates whose parent path equals the requested prefix. Read-side
+ * paths start at the scene root (its name included), while callers usually
+ * write paths the way apply_edits addresses nodes — so an exact match wins,
+ * otherwise a suffix match on a segment boundary is accepted.
+ */
+function filterByPath(candidates, prefix) {
+    const exact = candidates.filter(m => m.path === prefix);
+    if (exact.length > 0) return exact;
+    return candidates.filter(m => m.path.endsWith(`/${prefix}`));
 }

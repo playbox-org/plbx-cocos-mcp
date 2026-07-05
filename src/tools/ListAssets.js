@@ -19,7 +19,12 @@ export class ListAssets extends BaseTool {
         return 'List assets of a Cocos Creator project with optional filters. ' +
                'Returns path, name and UUID for each asset. ' +
                'Types: sprite, image, model, prefab, scene, material, script, audio, font, animation ' +
-               '(or a raw importer name like fbx, gltf, typescript).';
+               '(or a raw importer name like fbx, gltf, typescript). ' +
+               'Args: {type?, folder?, pattern?, format?} — these are the only filter keys.';
+    }
+
+    get aliases() {
+        return { query: 'pattern' };
     }
 
     get inputSchema() {

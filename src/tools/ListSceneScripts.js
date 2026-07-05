@@ -15,7 +15,12 @@ export class ListSceneScripts extends BaseTool {
     }
 
     get description() {
-        return 'List all custom TypeScript scripts used in a Cocos Creator scene';
+        return 'List all custom TypeScript scripts used in a Cocos Creator scene. ' +
+               'Args: {scenePath (required)}.';
+    }
+
+    get aliases() {
+        return { filePath: 'scenePath' };
     }
 
     get inputSchema() {

@@ -16,7 +16,7 @@ export class GetProjectInfo extends BaseTool {
     get description() {
         return 'Get Cocos Creator project configuration: engine version, design resolution, ' +
                'custom layers, physics engine and collision groups, enabled engine modules (2D/3D). ' +
-               'Call this first when starting work on a project.';
+               'Call this first when starting work on a project. Args: {format?: "text"|"json"}.';
     }
 
     get inputSchema() {

@@ -30,7 +30,8 @@ export class ComputeFitScale extends BaseTool {
         return 'Measure an asset (mesh/model, sprite, prefab) or a node subtree and compute the uniform ' +
                'scale factor to hit a target size. Pass targetWidth/targetHeight/targetDepth in world units ' +
                '(UI: pixels); with several targets the factor fits inside all of them. Without targets it ' +
-               'just reports the measured size. Use instead of doing scale arithmetic by hand.';
+               'just reports the measured size. Use instead of doing scale arithmetic by hand. ' +
+               'Args: {asset} OR {filePath + node}, plus targetWidth?/targetHeight?/targetDepth? (numbers).';
     }
 
     get inputSchema() {

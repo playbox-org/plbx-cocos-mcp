@@ -5,6 +5,8 @@
  * SOLID: O - New tools extend without modifying existing
  */
 
+import { normalizeArgs } from './validateArgs.js';
+
 export class BaseTool {
     /**
      * Tool name
@@ -31,6 +33,15 @@ export class BaseTool {
     }
 
     /**
+     * Accepted argument aliases: {aliasKey: canonicalKey}. Applied before
+     * validation; the canonical key wins when both are present.
+     * @returns {Record<string, string>}
+     */
+    get aliases() {
+        return {};
+    }
+
+    /**
      * Execute the tool
      * @param {object} args - Tool arguments
      * @param {string} projectRoot - Project root path
@@ -38,6 +49,23 @@ export class BaseTool {
      */
     async execute(args, projectRoot) {
         throw new Error('Subclass must implement execute()');
+    }
+
+    /**
+     * MCP entry point: normalize aliases and validate args against
+     * inputSchema, then execute. Keeps execute() as the raw implementation
+     * hook; a bad call gets a self-explanatory error instead of an internal
+     * crash (e.g. path.resolve's "paths[1] ... Received undefined").
+     * @param {object} args - Raw tool arguments
+     * @param {string} projectRoot - Project root path
+     * @returns {Promise<{content: Array, isError?: boolean}>}
+     */
+    async run(args, projectRoot) {
+        const { args: normalized, error } = normalizeArgs(args ?? {}, this.inputSchema, this.aliases);
+        if (error) {
+            return this.error(error);
+        }
+        return this.execute(normalized, projectRoot);
     }
 
     /**

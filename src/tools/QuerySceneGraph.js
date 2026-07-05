@@ -11,7 +11,8 @@ export class QuerySceneGraph extends GraphQueryTool {
 
     get description() {
         return 'Get a minified, LLM-friendly scene graph from a Cocos Creator scene file. ' +
-               'Converts ~700KB scene files to ~20KB semantic representations.';
+               'Converts ~700KB scene files to ~20KB semantic representations. ' +
+               'Args: {scenePath (required), format?: "text"|"json", detailed?: boolean}.';
     }
 
     get pathParam() {

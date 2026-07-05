@@ -21,7 +21,8 @@ export class ValidateDocument extends BaseTool {
         return 'Validate a Cocos Creator .scene or .prefab file: reference integrity, ' +
                'parent/children and component/node bidirectional invariants, _id/fileId uniqueness, ' +
                'referenced asset existence, euler/quaternion sync, prefab wrapper convention. ' +
-               'Run after external changes or before/after apply_edits batches.';
+               'Run after external changes or before/after apply_edits batches. ' +
+               'Args: {filePath (required)}.';
     }
 
     get inputSchema() {

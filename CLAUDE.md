@@ -52,7 +52,7 @@ Never edit `.scene`/`.prefab` files with text edits — always go through `apply
 
 ### MCP Tools
 
-Each tool extends `BaseTool` (abstract with `name`, `description`, `inputSchema`, `execute`). Tools are registered in `src/tools/index.js:createTools()` and receive `projectRoot` from the server. The server (`McpServer`) uses `@modelcontextprotocol/sdk` with stdio transport.
+Each tool extends `BaseTool` (abstract with `name`, `description`, `inputSchema`, `execute`; optional `aliases` maps courtesy argument keys onto canonical ones, e.g. `filePath`→`scenePath`). The server calls `BaseTool.run()`, which normalizes aliases and validates args against `inputSchema` (`src/tools/validateArgs.js`: unknown-key rejection with a did-you-mean hint, required/type/enum checks) before delegating to `execute()` — a bad call gets a self-explanatory error, never an internal crash like `paths[1] ... undefined`. Tools are registered in `src/tools/index.js:createTools()` and receive `projectRoot` from the server. The server (`McpServer`) uses `@modelcontextprotocol/sdk` with stdio transport.
 
 ### Key Convention: COCOS_PROJECT_ROOT
 

@@ -44,4 +44,11 @@ describe('ListAssets tool', () => {
         assert.ok(parsed.total >= 1);
         assert.ok(parsed.items.every(i => i.uuid && i.path));
     });
+
+    it('should accept query as an alias for pattern via run()', async () => {
+        const aliased = await tool.run({ query: 'Coin*' }, PROJECT);
+        const canonical = await tool.execute({ pattern: 'Coin*' }, PROJECT);
+        assert.ok(!aliased.isError);
+        assert.strictEqual(aliased.content[0].text, canonical.content[0].text);
+    });
 });

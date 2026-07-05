@@ -11,7 +11,8 @@ export class QueryPrefabGraph extends GraphQueryTool {
 
     get description() {
         return 'Get a minified, LLM-friendly node graph from a Cocos Creator prefab file. ' +
-               'Same compression as query_scene_graph but for .prefab files.';
+               'Same compression as query_scene_graph but for .prefab files. ' +
+               'Args: {prefabPath (required), format?: "text"|"json", detailed?: boolean}.';
     }
 
     get pathParam() {

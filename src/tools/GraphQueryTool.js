@@ -26,6 +26,11 @@ export class GraphQueryTool extends BaseTool {
         throw new Error('Subclass must implement pathDescription getter');
     }
 
+    /** The generic write/measure-layer key is accepted as a courtesy alias */
+    get aliases() {
+        return { filePath: this.pathParam };
+    }
+
     get inputSchema() {
         return {
             type: 'object',

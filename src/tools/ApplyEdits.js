@@ -44,7 +44,8 @@ export class ApplyEdits extends BaseTool {
     get description() {
         return 'Apply a batch of semantic edit operations to a Cocos Creator .scene or .prefab file. ' +
                'Validates invariants and writes atomically; use dryRun to preview. ' +
-               'Returns the minified subtree around every change. ' + OPS_DOC;
+               'Returns the minified subtree around every change. ' +
+               'Args: {filePath (required), ops (required array), dryRun?: boolean}. ' + OPS_DOC;
     }
 
     get inputSchema() {

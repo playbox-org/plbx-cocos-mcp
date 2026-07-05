@@ -40,7 +40,8 @@ export class LintAssets extends BaseTool {
         return 'Lint project assets: cryptic auto-generated names (mesh_001, Sprite(2) — renaming is safe, ' +
                'the UUID lives in .meta), model import sizes scattered more than N× apart, and prefabs ' +
                'violating the wrapper convention (renderer or non-identity scale on the prefab ROOT). ' +
-               'Checks: names, scales, wrappers (default: all).';
+               'Checks: names, scales, wrappers (default: all). ' +
+               'Args: {checks?: array of "names"|"scales"|"wrappers", folder?, scaleRatio?: number}.';
     }
 
     get inputSchema() {

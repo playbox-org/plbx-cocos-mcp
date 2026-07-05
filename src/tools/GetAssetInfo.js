@@ -18,7 +18,8 @@ export class GetAssetInfo extends BaseTool {
         return 'Get detailed info about a Cocos Creator asset by path or UUID (full, compressed, ' +
                'or "<uuid>@<subId>" sub-asset form). Sprites: rect/trim/raw size/9-slice borders. ' +
                'Models (fbx/glb): meshes with AABB and size, materials, prefab sub-asset. ' +
-               'Prefabs: structure summary. Materials: effect and defines.';
+               'Prefabs: structure summary. Materials: effect and defines. ' +
+               'Args: {asset (required), format?: "text"|"json"}.';
     }
 
     get inputSchema() {

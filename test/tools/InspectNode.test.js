@@ -106,6 +106,50 @@ describe('InspectNode', () => {
         });
     });
 
+    describe('execute with nodeName as a path', () => {
+        it('should resolve a parent-path prefix (apply_edits style)', async () => {
+            const result = await tool.execute(
+                { filePath: 'sample-scene.json', nodeName: 'Level/Player' },
+                FIXTURES
+            );
+
+            assert.ok(!result.isError, 'should not be error');
+            assert.ok(result.content[0].text.includes('Player'));
+        });
+
+        it('should resolve a full path including the scene root name', async () => {
+            const result = await tool.execute(
+                { filePath: 'sample-scene.json', nodeName: 'TestScene/Level/Enemy/EnemyChild' },
+                FIXTURES
+            );
+
+            assert.ok(!result.isError, 'should not be error');
+            assert.ok(result.content[0].text.includes('EnemyChild'));
+        });
+
+        it('should list same-named candidates when the path is wrong', async () => {
+            const result = await tool.execute(
+                { filePath: 'sample-scene.json', nodeName: 'WrongParent/Player' },
+                FIXTURES
+            );
+
+            assert.ok(result.isError, 'should be error');
+            const text = result.content[0].text;
+            assert.ok(text.includes('No node at path'), 'should mention the path');
+            assert.ok(text.includes('Player#4'), 'should list existing candidates');
+        });
+
+        it('should accept node as an alias for nodeName via run()', async () => {
+            const result = await tool.run(
+                { filePath: 'sample-scene.json', node: 'Level/Player' },
+                FIXTURES
+            );
+
+            assert.ok(!result.isError, 'should not be error');
+            assert.ok(result.content[0].text.includes('Player'));
+        });
+    });
+
     describe('validation', () => {
         it('should error when neither nodeId nor nodeName provided', async () => {
             const result = await tool.execute(

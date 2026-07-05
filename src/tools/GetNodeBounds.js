@@ -23,7 +23,8 @@ export class GetNodeBounds extends BaseTool {
                'Merges mesh AABBs (MeshRenderer/SkinnedMeshRenderer), UITransform rects and collapsed ' +
                'prefab-instance contents. Returns `local` (the node\'s own frame, its own transform excluded — ' +
                'use as BoxCollider center/size on that node) and `world` (document space). ' +
-               '3D sizes are in world units; UITransform contributions are in UI pixels.';
+               '3D sizes are in world units; UITransform contributions are in UI pixels. ' +
+               'Args: {filePath (required), node (required: "Canvas/Panel/BuyBtn" path, _id, or "/")}.';
     }
 
     get inputSchema() {

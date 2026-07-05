@@ -22,6 +22,7 @@ export class BuildPrefab extends BaseTool {
 
     get description() {
         return 'Create a new Cocos Creator .prefab (plus .meta with a fresh UUID) from a compact spec. ' +
+               'Args: {outputPath (required), spec (required object), overwrite?: boolean}. ' +
                'Wrapper convention built in: use spec.visual for the model/sprite — it becomes a Visual ' +
                'child node, keeping the root clean for logic/tweens/colliders. ' +
                'Spec: {name?, layer? (number|"default"|"ui_2d"|...), ' +

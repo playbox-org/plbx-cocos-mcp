@@ -15,7 +15,12 @@ export class FindSceneNodes extends BaseTool {
     }
 
     get description() {
-        return 'Find nodes in a Cocos Creator scene by name pattern (regex supported)';
+        return 'Find nodes in a Cocos Creator scene by name pattern (regex supported). ' +
+               'Args: {scenePath (required), pattern (required)}.';
+    }
+
+    get aliases() {
+        return { filePath: 'scenePath' };
     }
 
     get inputSchema() {
