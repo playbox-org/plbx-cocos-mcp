@@ -8,6 +8,7 @@
 export class PropertyExtractor {
     #sceneParser;
     #detailed;
+    #assetResolver;
     #skipKeys = new Set([
         '__type__', '__idx__', 'node', '_enabled', '_name',
         '_objFlags', '__editorExtras__', '__prefab', '_string'
@@ -16,6 +17,7 @@ export class PropertyExtractor {
     constructor(sceneParser, options = {}) {
         this.#sceneParser = sceneParser;
         this.#detailed = options.detailed || false;
+        this.#assetResolver = options.assetResolver || null;
     }
 
     /**
@@ -97,6 +99,11 @@ export class PropertyExtractor {
         return null;
     }
 
+    /** Asset name/label by uuid via the injected resolver, '<asset>' when unresolvable */
+    #assetLabel(uuid) {
+        return (typeof uuid === 'string' ? this.#assetResolver?.(uuid) : null) ?? '<asset>';
+    }
+
     /** Traverse prefab override chain to find _name */
     #resolvePrefabName(node) {
         const prefabInfo = this.#sceneParser.getObject(node._prefab?.__id__);
@@ -117,7 +124,7 @@ export class PropertyExtractor {
     #extractValue(value) {
         // Asset reference
         if (typeof value === 'object' && '__uuid__' in value) {
-            return '<asset>';
+            return this.#assetLabel(value.__uuid__);
         }
 
         // Node/component reference
@@ -134,6 +141,17 @@ export class PropertyExtractor {
                         if (ref == null) return '→null';
                         return this.#resolveRef(ref.__id__) || '→?';
                     });
+                }
+                const nullCount = value.filter(r => r == null).length;
+                if (nullCount > 0) {
+                    return `[×${value.length - nullCount}, null×${nullCount}]`;
+                }
+                return `[×${value.length}]`;
+            }
+            if (firstRef?.__uuid__ !== undefined) {
+                if (this.#detailed) {
+                    return value.map(ref =>
+                        ref == null ? 'null' : this.#assetLabel(ref.__uuid__));
                 }
                 const nullCount = value.filter(r => r == null).length;
                 if (nullCount > 0) {

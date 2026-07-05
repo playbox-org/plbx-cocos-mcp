@@ -133,12 +133,37 @@ describe('collapsed instance display in read pipeline', () => {
         assert.match(text(result), /● Reward/);
     });
 
-    test('inspect_node resolves an instance stub by display name', async () => {
+    test('inspect_node expands an instance stub into source internals + overrides', async () => {
         const result = await new InspectNode().execute(
             { filePath: PREFAB, nodeName: 'Reward' }, projectRoot);
 
         assert.ok(!result.isError, text(result));
-        assert.match(text(result), /● Reward \[P→Gold\.prefab\]/);
+        // Header names the stub and its source asset
+        assert.match(text(result), /Reward#\d+ — instance of assets\/Prefabs\/Gold\.prefab/);
+        // Override list resolves fileIds into target paths
+        assert.match(text(result), /## Overrides \(\d+\)/);
+        assert.match(text(result), /- "\/" \._name = "Reward"/);
+        // Source internals rendered read-only with usage instructions
+        assert.match(text(result), /set_instance_property \{node: "Table\/Reward"/);
+        assert.match(text(result), /## Source internals/);
+        assert.match(text(result), /● Gold/);
+    });
+
+    test('inspect_node instance expansion in json carries targets and overrides', async () => {
+        const result = await new InspectNode().execute(
+            { filePath: PREFAB, nodeName: 'Reward', format: 'json' }, projectRoot);
+
+        assert.ok(!result.isError, text(result));
+        const parsed = JSON.parse(text(result));
+        assert.strictEqual(parsed.name, 'Reward');
+        assert.strictEqual(parsed.instanceOf, 'assets/Prefabs/Gold.prefab');
+        assert.strictEqual(parsed.stubPath, 'Table/Reward');
+        assert.ok(Array.isArray(parsed.overrides));
+        assert.ok(parsed.overrides.some(o => o.target === '/' && o.property === '_name'));
+        assert.strictEqual(parsed.source.target, '/');
+        for (const child of parsed.source.children ?? []) {
+            assert.ok(typeof child.target === 'string' && child.target.length > 0);
+        }
     });
 
     test('inspect_node explains names hidden inside collapsed instances', async () => {

@@ -290,6 +290,26 @@ describe('add_component', () => {
         assertValid(doc);
     });
 
+    test('SkinnedMeshRenderer template wires bakeSettings and skinning fields', () => {
+        const doc = loadPrefab();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Visual' },
+            {
+                op: 'add_component', node: 'Visual', type: 'SkinnedMeshRenderer',
+                properties: { _skinningRoot: { $node: '/' } }
+            }
+        ]);
+        const idx = doc.componentIndices(doc.resolveNode('Visual'))[0];
+        const comp = doc.getObject(idx);
+        assert.strictEqual(comp.__type__, 'cc.SkinnedMeshRenderer');
+        assert.strictEqual(doc.getObject(comp.bakeSettings.__id__).__type__, 'cc.ModelBakeSettings');
+        assert.deepStrictEqual(comp._materials, []);
+        assert.strictEqual(comp._skeleton, null);
+        assert.strictEqual(comp._skinningRoot.__id__, doc.root.idx);
+        doc.renumber();
+        assertValid(doc);
+    });
+
     test('RenderRoot2D + UIOpacity build the 2D-in-3D pattern', () => {
         const doc = loadPrefab();
         applyOperations(doc, [

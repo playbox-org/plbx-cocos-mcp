@@ -68,6 +68,56 @@ describe('PropertyExtractor', () => {
             assert.strictEqual(props.prefab, '<asset>');
         });
 
+        it('should resolve asset references through assetResolver', () => {
+            const parser = new MockSceneParser();
+            const extractor = new PropertyExtractor(parser, {
+                assetResolver: (uuid) => uuid === 'abc-123' ? 'Gold.mtl' : null
+            });
+
+            const component = {
+                __type__: 'Test',
+                material: { __uuid__: 'abc-123' },
+                unknown: { __uuid__: 'zzz-999' }
+            };
+
+            const props = extractor.extract(component);
+            assert.strictEqual(props.material, 'Gold.mtl');
+            assert.strictEqual(props.unknown, '<asset>');
+        });
+
+        it('should collapse asset-ref arrays as count in default mode', () => {
+            const parser = new MockSceneParser();
+            const extractor = new PropertyExtractor(parser);
+
+            const component = {
+                __type__: 'Test',
+                _materials: [{ __uuid__: 'a' }, { __uuid__: 'b' }],
+                _clips: [{ __uuid__: 'a' }, null]
+            };
+
+            const props = extractor.extract(component);
+            assert.strictEqual(props._materials, '[×2]');
+            assert.strictEqual(props._clips, '[×1, null×1]');
+        });
+
+        it('should expand asset-ref arrays with labels in detailed mode', () => {
+            const parser = new MockSceneParser();
+            const labels = { 'mat-1': 'Zombie.mtl', 'mat-2': 'Model.fbx@a4098 (embedded)' };
+            const extractor = new PropertyExtractor(parser, {
+                detailed: true,
+                assetResolver: (uuid) => labels[uuid] ?? null
+            });
+
+            const component = {
+                __type__: 'cc.SkinnedMeshRenderer',
+                _materials: [{ __uuid__: 'mat-1' }, { __uuid__: 'mat-2' }, null]
+            };
+
+            const props = extractor.extract(component);
+            assert.deepStrictEqual(props._materials,
+                ['Zombie.mtl', 'Model.fbx@a4098 (embedded)', 'null']);
+        });
+
         it('should truncate long strings', () => {
             const parser = new MockSceneParser();
             const extractor = new PropertyExtractor(parser);

@@ -51,7 +51,11 @@ export class SceneMinifier {
             this.#scriptResolver,
             this.#typeFilter,
             this.#nodeFilter,
-            { detailed: options.detailed, assetNameResolver: (uuid) => this.#assetName(uuid) }
+            {
+                detailed: options.detailed,
+                assetNameResolver: (uuid) => this.#assetName(uuid),
+                assetRefResolver: (uuid) => this.#assetLabel(uuid)
+            }
         );
     }
 
@@ -69,6 +73,27 @@ export class SceneMinifier {
     /** Asset file name ("Gold.prefab") by UUID, or null */
     #assetName(uuid) {
         return this.#getAssetIndex()?.resolve(uuid)?.entry.name ?? null;
+    }
+
+    /**
+     * Property-value label for an asset reference ("Mat.mtl",
+     * "Model.fbx@subId (embedded)"). Null for UUIDs not in the project
+     * (engine built-ins).
+     */
+    #assetLabel(uuid) {
+        return this.#getAssetIndex()?.label(uuid) ?? null;
+    }
+
+    /**
+     * Collapsed prefab-instance info for a node id: {assetUuid, name},
+     * or null for regular nodes.
+     */
+    instanceStubInfo(nodeId) {
+        const node = this.#sceneParser.getNode(nodeId);
+        if (!node) return null;
+        const info = this.#sceneParser.getInstanceInfo(node);
+        if (!info?.assetUuid) return null;
+        return { assetUuid: info.assetUuid, name: this.#displayName(node) };
     }
 
     /**
@@ -203,7 +228,11 @@ export class SceneMinifier {
             this.#scriptResolver,
             this.#typeFilter,
             noLimitFilter,
-            { detailed: true, assetNameResolver: (uuid) => this.#assetName(uuid) }
+            {
+                detailed: true,
+                assetNameResolver: (uuid) => this.#assetName(uuid),
+                assetRefResolver: (uuid) => this.#assetLabel(uuid)
+            }
         );
         return builder.buildFrom(nodeId);
     }

@@ -147,6 +147,23 @@ export class AssetIndex {
         return subAsset ? { entry, subAsset } : null;
     }
 
+    /**
+     * Short human label for a reference: "Mat.mtl" for top-level assets,
+     * "Model.fbx@subId" for sub-assets — with " (embedded)" appended for
+     * materials baked into a model file (they usually should be replaced by a
+     * project material). Null when the reference is not in the project.
+     * @param {string} ref
+     * @returns {string|null}
+     */
+    label(ref) {
+        const resolved = this.resolve(ref);
+        if (!resolved) return null;
+        const { entry, subAsset } = resolved;
+        if (!subAsset) return entry.name;
+        const embedded = subAsset.importer === 'gltf-material' ? ' (embedded)' : '';
+        return `${entry.name}@${subAsset.id}${embedded}`;
+    }
+
     /** Friendly type names accepted by list()'s type filter */
     static get knownTypes() {
         return Object.keys(TYPE_ALIASES);

@@ -11,6 +11,7 @@ import assert from 'node:assert';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { SceneDocument, isRef } from '../../src/document/SceneDocument.js';
+import { loadSourcePrefab } from '../../src/document/instances.js';
 import { applyOperations, OperationError } from '../../src/document/operations.js';
 import { Validator } from '../../src/document/Validator.js';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
@@ -362,6 +363,45 @@ describe('set_instance_property', () => {
         assert.strictEqual(material.value.__expectedType__, 'cc.Material');
         assertValid(doc);
         assertFixedPoint(doc);
+    });
+
+    test('overrides an embedded material inside a model instance (editor shape)', () => {
+        const ctx = makeCtx();
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'instantiate_prefab', parent: '/', prefab: 'Models/Coin.fbx', name: 'Coin3D' },
+            {
+                op: 'set_instance_property', node: 'Coin3D', target: 'CoinLP',
+                component: 'cc.MeshRenderer', property: 'materials[0]',
+                value: { $asset: 'Materials/Dynamite.mtl' }
+            }
+        ], ctx);
+
+        // fileId of the renderer's CompPrefabInfo inside the compiled gltf-scene
+        const { doc: source } = loadSourcePrefab(ctx, 'Models/Coin.fbx');
+        const rendererIdx = source.componentIndices(source.resolveNode('CoinLP'))
+            .find(i => source.getObject(i).__type__ === 'cc.MeshRenderer');
+        const compFileId = source.getObject(source.getObject(rendererIdx).__prefab.__id__).fileId;
+
+        const { instance } = stubParts(doc, 'Coin3D');
+        const ov = overrides(doc, instance).find(o => o.path.join('.') === '_materials.0');
+        assert.deepStrictEqual(ov.path, ['_materials', '0']); // string segments, editor-style
+        assert.deepStrictEqual(ov.localID, [compFileId]);
+        assert.strictEqual(ov.value.__expectedType__, 'cc.Material');
+        assert.ok(!ov.value.__uuid__.includes('@'), 'project material, not an embedded sub-asset');
+        assertValid(doc);
+        assertFixedPoint(doc);
+    });
+
+    test('addressing instance internals as a path explains the override workflow', () => {
+        const ctx = makeCtx();
+        const doc = sceneWithDesk(ctx);
+        assert.throws(() =>
+            applyOperations(doc, [{
+                op: 'set_component_property', node: 'Desk/Table',
+                component: 'cc.MeshRenderer', property: 'shadowCastingMode', value: 1
+            }], ctx),
+            /collapsed prefab instance[\s\S]*inspect_node[\s\S]*set_instance_property/);
     });
 
     test('rejects non-stub nodes, unknown properties and multi-hop targets', () => {

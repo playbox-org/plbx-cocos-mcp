@@ -30,11 +30,11 @@ const OPS_DOC = `Operations (applied in order, all-or-nothing):
 - set_asset_ref {node, component?, componentIndex?, property, asset, expectedType?} (asset: project path, UUID or "uuid@subId"; null clears)
 - instantiate_prefab {parent, prefab, name?, position?, rotation?, scale?, index?} (prefab: .prefab path/UUID, or a model file / "model.fbx@subId" for its gltf-scene prefab; creates a collapsed instance stub)
 - set_instance_property {node, target?, component?, componentIndex?, property, value}
-  node = the instance stub in this file; target = node path INSIDE the source prefab ("" = its root). Without component: name|active|layer|mobility|position|rotation|scale. With component: any field (value forms as in set_component_property). Stored as propertyOverrides; same target+property updates in place
+  node = the instance stub in this file; target = node path INSIDE the source prefab ("" = its root; discover paths with inspect_node on the stub). Without component: name|active|layer|mobility|position|rotation|scale. With component: any field (value forms as in set_component_property) — e.g. replace an embedded model material: {node: "Zombie", target: "Mesh", component: "cc.SkinnedMeshRenderer", property: "materials[0]", value: {"$asset": "Materials/Zombie.mtl"}}. Stored as propertyOverrides; same target+property updates in place
 - remove_instance_override {node, target?, component?, componentIndex?, property} (reverts an override back to the source prefab value)
 
 Node addressing: "Canvas/Panel/BuyBtn" path from root, "/" = root, node _id, "Name[i]" or "[i]" disambiguate same-named/positional siblings.
-Prefab instances inside scenes are collapsed stubs: their internals are not in the file. Override properties with set_instance_property, remove/reparent the whole instance, or edit the source .prefab; anything else is rejected.`;
+Prefab instances inside scenes are collapsed stubs: their internals are not in the file. Inspect them with inspect_node (shows internals + target paths), override properties with set_instance_property, remove/reparent the whole instance, or edit the source .prefab; anything else is rejected.`;
 
 export class ApplyEdits extends BaseTool {
     get name() {

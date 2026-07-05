@@ -216,6 +216,14 @@ export class SceneDocument {
             }
 
             if (matches.length === 0) {
+                if (this.isInstanceStub(current)) {
+                    throw new Error(
+                        `Node not found: "${ref}" — "${walked.join('/') || '/'}" is a collapsed prefab ` +
+                        `instance; its internals are not addressable in this file. Run inspect_node on ` +
+                        `the instance to see internal target paths, then override with ` +
+                        `set_instance_property {node: "${walked.join('/') || '/'}", target: "...", ...}.`
+                    );
+                }
                 const available = children
                     .map((c, i) => `${this.nodeName(c) ?? '<unnamed>'}${this.isInstanceStub(c) ? ' (prefab instance)' : ''} [${i}]`)
                     .join(', ');

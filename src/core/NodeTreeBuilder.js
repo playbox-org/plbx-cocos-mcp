@@ -30,7 +30,12 @@ export class NodeTreeBuilder {
         this.#nodeFilter = nodeFilter;
         this.#detailed = options.detailed || false;
         this.#assetNameResolver = options.assetNameResolver || null;
-        this.#propExtractor = new PropertyExtractor(sceneParser, { detailed: this.#detailed });
+        this.#propExtractor = new PropertyExtractor(sceneParser, {
+            detailed: this.#detailed,
+            // Richer labels for property values ("file@subId (embedded)");
+            // #assetNameResolver stays plain-name for prefabSource display
+            assetResolver: options.assetRefResolver || null
+        });
     }
 
     /**

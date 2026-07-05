@@ -1,24 +1,30 @@
 /**
  * LintAssets - MCP tool: project hygiene checks
  *
- * Three checks (mechanics here, policy in the SKILL):
- * - names:    cryptic/auto-generated asset names (mesh_001, Sprite(2), …);
- *             renaming is safe — the UUID lives in .meta
- * - scales:   model import sizes scattered orders of magnitude apart
- *             (hints that per-node scale corrections are hiding everywhere)
- * - wrappers: prefabs whose ROOT carries a renderer or a non-identity scale
- *             (violates the Root → Visual wrapper convention)
+ * Four checks (mechanics here, policy in the SKILL):
+ * - names:     cryptic/auto-generated asset names (mesh_001, Sprite(2), …);
+ *              renaming is safe — the UUID lives in .meta
+ * - scales:    model import sizes scattered orders of magnitude apart
+ *              (hints that per-node scale corrections are hiding everywhere)
+ * - wrappers:  prefabs whose ROOT carries a renderer or a non-identity scale
+ *              (violates the Root → Visual wrapper convention)
+ * - materials: a renderer uses a material embedded in a model file while
+ *              another usage of the same mesh uses a project material — the
+ *              mesh renders (no missing-material warning) but doesn't match
+ *              the project's look; someone probably forgot to assign it
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
-import { SceneDocument } from '../document/SceneDocument.js';
+import { SceneDocument, isRef } from '../document/SceneDocument.js';
+import { loadSourcePrefabByUuid } from '../document/instances.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 import { AssetInspector } from '../core/AssetInspector.js';
 
-const CHECKS = ['names', 'scales', 'wrappers'];
+const CHECKS = ['names', 'scales', 'wrappers', 'materials'];
 const VISUAL_ROOT_TYPES = ['cc.MeshRenderer', 'cc.SkinnedMeshRenderer', 'cc.Sprite'];
+const MESH_RENDERERS = ['cc.MeshRenderer', 'cc.SkinnedMeshRenderer'];
 const NAMED_TYPES = ['fbx', 'gltf', 'image', 'prefab', 'material', 'audio-clip', 'scene'];
 
 /** Auto-generated / meaningless name patterns (checked against the basename without extension) */
@@ -38,10 +44,12 @@ export class LintAssets extends BaseTool {
 
     get description() {
         return 'Lint project assets: cryptic auto-generated names (mesh_001, Sprite(2) — renaming is safe, ' +
-               'the UUID lives in .meta), model import sizes scattered more than N× apart, and prefabs ' +
-               'violating the wrapper convention (renderer or non-identity scale on the prefab ROOT). ' +
-               'Checks: names, scales, wrappers (default: all). ' +
-               'Args: {checks?: array of "names"|"scales"|"wrappers", folder?, scaleRatio?: number}.';
+               'the UUID lives in .meta), model import sizes scattered more than N× apart, prefabs ' +
+               'violating the wrapper convention (renderer or non-identity scale on the prefab ROOT), ' +
+               'and material consistency (a mesh rendered with its embedded fbx material in one place ' +
+               'but a project material elsewhere — likely a forgotten assignment). ' +
+               'Checks: names, scales, wrappers, materials (default: all). ' +
+               'Args: {checks?: array of "names"|"scales"|"wrappers"|"materials", folder?, scaleRatio?: number}.';
     }
 
     get inputSchema() {
@@ -76,6 +84,7 @@ export class LintAssets extends BaseTool {
         if (checks.includes('names')) sections.push(this.#lintNames(index, folder));
         if (checks.includes('scales')) sections.push(this.#lintScales(index, inspector, folder, args.scaleRatio ?? 10));
         if (checks.includes('wrappers')) sections.push(this.#lintWrappers(index, projectRoot, folder));
+        if (checks.includes('materials')) sections.push(this.#lintMaterials(index, projectRoot, folder));
 
         const total = sections.reduce((n, s) => n + s.count, 0);
         const lines = [`# Asset lint — ${total} finding(s)`, ''];
@@ -172,6 +181,149 @@ export class LintAssets extends BaseTool {
         }
         if (!lines.length) lines.push('OK — all prefabs follow the wrapper convention.');
         return { title: 'Prefab wrapper rule', count: lines[0].startsWith('OK') ? 0 : lines.length, lines };
+    }
+
+    /**
+     * Collect every mesh-renderer usage across scenes and prefabs — plain
+     * nodes read directly, collapsed instances through their source prefab
+     * with _materials overrides applied — then flag meshes rendered with an
+     * embedded model material in one place but a project material in another.
+     */
+    #lintMaterials(index, projectRoot, folder) {
+        const ctx = { assetIndex: index, projectRoot };
+        const usages = []; // {meshUuid, materialUuid, file, where}
+
+        for (const type of ['scene', 'prefab']) {
+            for (const entry of this.#list(index, folder, type)) {
+                let doc;
+                try {
+                    doc = SceneDocument.load(path.join(projectRoot, entry.path));
+                } catch {
+                    continue; // unparsable files are reported by the wrappers check
+                }
+                this.#collectRendererUsages(doc, entry.path, ctx, usages);
+            }
+        }
+
+        // Group by mesh; a mesh is inconsistent when both kinds are present
+        const byMesh = new Map();
+        for (const u of usages) {
+            if (!u.meshUuid || !u.materialUuid) continue;
+            if (!byMesh.has(u.meshUuid)) byMesh.set(u.meshUuid, []);
+            byMesh.get(u.meshUuid).push(u);
+        }
+
+        const lines = [];
+        for (const [meshUuid, meshUsages] of byMesh) {
+            const embedded = meshUsages.filter(u => this.#isEmbeddedMaterial(index, u.materialUuid));
+            const project = meshUsages.filter(u => !this.#isEmbeddedMaterial(index, u.materialUuid));
+            if (!embedded.length || !project.length) continue;
+
+            const projectNames = [...new Set(project.map(u => index.label(u.materialUuid) ?? u.materialUuid))];
+            lines.push(
+                `- mesh ${index.label(meshUuid) ?? meshUuid}: rendered with the embedded model material at ` +
+                embedded.map(u => `${u.file} "${u.where}"`).join(', ') +
+                ` — but with project material ${projectNames.join(' / ')} at ` +
+                project.map(u => `${u.file} "${u.where}"`).join(', ') +
+                '. Probably a forgotten material assignment.'
+            );
+        }
+
+        if (!lines.length) lines.push('OK — no mesh mixes embedded and project materials.');
+        return {
+            title: 'Material consistency',
+            count: lines[0].startsWith('OK') ? 0 : lines.length,
+            lines
+        };
+    }
+
+    /** Renderer usages in a document: direct components + collapsed instances */
+    #collectRendererUsages(doc, file, ctx, usages) {
+        const walk = (docLike, nodeIdx, label) => {
+            for (const compIdx of docLike.componentIndices(nodeIdx)) {
+                const comp = docLike.getObject(compIdx);
+                if (!MESH_RENDERERS.includes(comp.__type__)) continue;
+                const meshUuid = comp._mesh?.__uuid__;
+                for (const mat of comp._materials ?? []) {
+                    usages.push({ meshUuid, materialUuid: mat?.__uuid__, file, where: label });
+                }
+            }
+        };
+
+        const enter = (nodeIdx, label) => {
+            if (doc.isInstanceStub(nodeIdx)) {
+                this.#collectInstanceUsages(doc, nodeIdx, label, file, ctx, usages);
+                return;
+            }
+            walk(doc, nodeIdx, label);
+            for (const childIdx of doc.childIndices(nodeIdx)) {
+                const childLabel = `${label === '/' ? '' : label}/${doc.nodeName(childIdx) ?? '<unnamed>'}`;
+                enter(childIdx, childLabel);
+            }
+        };
+        enter(doc.root.idx, '/');
+    }
+
+    /**
+     * Renderer usages inside a collapsed instance: source prefab values with
+     * this instance's single-hop _materials overrides applied. Stubs nested
+     * inside the source are skipped — their own asset file is scanned anyway.
+     */
+    #collectInstanceUsages(doc, stubIdx, label, file, ctx, usages) {
+        const info = doc.getObject(doc.getObject(stubIdx)._prefab.__id__);
+        if (typeof info.asset?.__uuid__ !== 'string') return;
+        let source;
+        try {
+            source = loadSourcePrefabByUuid(ctx, info.asset.__uuid__);
+        } catch {
+            return; // no library/ cache — nothing to inspect
+        }
+
+        // fileId → {propertyPath tail → value} for _materials overrides
+        const overrides = new Map();
+        const instance = doc.instanceOf(stubIdx);
+        for (const ref of instance?.propertyOverrides ?? []) {
+            if (!isRef(ref)) continue;
+            const o = doc.getObject(ref.__id__);
+            if (o?.__type__ !== 'CCPropertyOverrideInfo' || o.propertyPath?.[0] !== '_materials') continue;
+            const target = isRef(o.targetInfo) ? doc.getObject(o.targetInfo.__id__) : null;
+            if (target?.localID?.length !== 1) continue;
+            if (!overrides.has(target.localID[0])) overrides.set(target.localID[0], []);
+            overrides.get(target.localID[0]).push(o);
+        }
+
+        const sdoc = source.doc;
+        const walk = (nodeIdx, innerLabel) => {
+            if (sdoc.isInstanceStub(nodeIdx)) return;
+            for (const compIdx of sdoc.componentIndices(nodeIdx)) {
+                const comp = sdoc.getObject(compIdx);
+                if (!MESH_RENDERERS.includes(comp.__type__)) continue;
+                const compInfo = isRef(comp.__prefab) ? sdoc.getObject(comp.__prefab.__id__) : null;
+                const materials = (comp._materials ?? []).map(m => m?.__uuid__);
+                for (const o of overrides.get(compInfo?.fileId) ?? []) {
+                    // ["_materials", "N"] replaces one slot; ignore other shapes
+                    if (o.propertyPath.length === 2 && /^\d+$/.test(o.propertyPath[1])) {
+                        materials[Number(o.propertyPath[1])] = o.value?.__uuid__;
+                    }
+                }
+                for (const materialUuid of materials) {
+                    usages.push({
+                        meshUuid: comp._mesh?.__uuid__, materialUuid,
+                        file, where: innerLabel
+                    });
+                }
+            }
+            for (const childIdx of sdoc.childIndices(nodeIdx)) {
+                walk(childIdx, `${innerLabel}→${sdoc.nodeName(childIdx) ?? '<unnamed>'}`);
+            }
+        };
+        walk(sdoc.root.idx, label);
+    }
+
+    /** Material baked into a model file (gltf-material sub-asset) vs a project .mtl */
+    #isEmbeddedMaterial(index, materialUuid) {
+        if (!materialUuid?.includes('@')) return false;
+        return index.resolve(materialUuid)?.subAsset?.importer === 'gltf-material';
     }
 }
 

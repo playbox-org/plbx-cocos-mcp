@@ -199,6 +199,46 @@ const TEMPLATES = {
         }]
     }),
 
+    // Same field set as cc.MeshRenderer plus _skeleton/_skinningRoot
+    // (verified against editor-saved prefabs in project-example).
+    // _skinningRoot is typically wired to the model's skeleton root node
+    // via {"$node": ...} after adding.
+    'cc.SkinnedMeshRenderer': () => ({
+        component: {
+            ...head('cc.SkinnedMeshRenderer'),
+            _materials: [],
+            _visFlags: 0,
+            bakeSettings: { __ref__: 0 },
+            _mesh: null,
+            _shadowCastingMode: 0,
+            _shadowReceivingMode: 1,
+            _shadowBias: 0,
+            _shadowNormalBias: 0,
+            _reflectionProbeId: -1,
+            _reflectionProbeBlendId: -1,
+            _reflectionProbeBlendWeight: 0,
+            _enabledGlobalStandardSkinObject: false,
+            _enableMorph: true,
+            _skeleton: null,
+            _skinningRoot: null,
+            _id: ''
+        },
+        extras: [{
+            __type__: 'cc.ModelBakeSettings',
+            texture: null,
+            uvParam: { __type__: 'cc.Vec4', x: 0, y: 0, z: 0, w: 0 },
+            _bakeable: false,
+            _castShadow: false,
+            _receiveShadow: false,
+            _recieveShadow: false,
+            _lightmapSize: 64,
+            _useLightProbe: false,
+            _bakeToLightProbe: true,
+            _reflectionProbeType: 0,
+            _bakeToReflectionProbe: true
+        }]
+    }),
+
     'cc.BoxCollider': () => ({
         component: {
             ...head('cc.BoxCollider'),

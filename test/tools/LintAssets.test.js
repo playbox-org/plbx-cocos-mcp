@@ -6,11 +6,14 @@
  * scale 0.01), and a huge Coin-vs-Rock model size spread.
  */
 
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
+import * as fs from 'fs';
+import * as os from 'os';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { LintAssets } from '../../src/tools/LintAssets.js';
+import { ApplyEdits } from '../../src/tools/ApplyEdits.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = join(__dirname, '../fixtures/mock-project');
@@ -21,7 +24,7 @@ describe('LintAssets tool', () => {
     it('should have correct metadata', () => {
         assert.strictEqual(tool.name, 'lint_assets');
         assert.deepStrictEqual(tool.inputSchema.properties.checks.items.enum,
-            ['names', 'scales', 'wrappers']);
+            ['names', 'scales', 'wrappers', 'materials']);
     });
 
     it('flags cryptic names', async () => {
@@ -54,7 +57,51 @@ describe('LintAssets tool', () => {
         const text = result.content[0].text;
         assert.ok(text.includes('Cryptic names'));
         assert.ok(text.includes('Prefab wrapper rule'));
+        assert.ok(text.includes('Material consistency'));
         assert.ok(!text.includes('mesh_001'), 'outside the folder');
         assert.ok(text.startsWith('# Asset lint — 0 finding(s)'), text);
+    });
+
+    it('passes materials check on the untouched mock project', async () => {
+        const result = await tool.execute({ checks: ['materials'] }, PROJECT);
+        const text = result.content[0].text;
+        assert.ok(text.includes('OK — no mesh mixes embedded and project materials'), text);
+    });
+
+    describe('materials consistency finding', () => {
+        // Same mesh (Coin.fbx) twice: one instance re-materialed to a project
+        // .mtl, the other left on the embedded fbx material → one finding
+        let projectRoot;
+
+        before(async () => {
+            projectRoot = fs.mkdtempSync(join(os.tmpdir(), 'cocos-lint-materials-'));
+            fs.cpSync(PROJECT, projectRoot, { recursive: true });
+            const result = await new ApplyEdits().execute({
+                filePath: 'assets/Prefabs/TableCash.prefab',
+                ops: [
+                    { op: 'instantiate_prefab', parent: 'Table', prefab: 'Models/Coin.fbx', name: 'GoodCoin' },
+                    { op: 'instantiate_prefab', parent: 'Table', prefab: 'Models/Coin.fbx', name: 'BadCoin' },
+                    {
+                        op: 'set_instance_property', node: 'Table/GoodCoin', target: 'CoinLP',
+                        component: 'cc.MeshRenderer', property: 'materials[0]',
+                        value: { $asset: 'Materials/Dynamite.mtl' }
+                    }
+                ]
+            }, projectRoot);
+            assert.ok(!result.isError, result.content[0].text);
+        });
+
+        after(() => {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        });
+
+        it('flags the mesh that mixes embedded and project materials', async () => {
+            const result = await tool.execute({ checks: ['materials'] }, projectRoot);
+            const text = result.content[0].text;
+            assert.ok(text.includes('Material consistency (1)'), text);
+            assert.ok(text.includes('BadCoin'), text);
+            assert.ok(text.includes('Dynamite.mtl'), text);
+            assert.ok(text.includes('forgotten material assignment'), text);
+        });
     });
 });
