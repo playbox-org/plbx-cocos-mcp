@@ -5,6 +5,8 @@
  * Prefab: structure summary. Material: effect + defines.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 import { AssetInspector } from '../core/AssetInspector.js';
@@ -48,6 +50,14 @@ export class GetAssetInfo extends BaseTool {
             const info = inspector.inspect(args.asset);
 
             if (!info) {
+                const notImported = this.#unimportedFile(args.asset, projectRoot);
+                if (notImported) {
+                    return this.error(
+                        `"${notImported}" exists on disk but has no .meta — the editor has not ` +
+                        'imported it yet. Ask the user to open the project in Cocos Creator once, ' +
+                        'then retry.'
+                    );
+                }
                 return this.error(
                     `Asset not found: ${args.asset}. ` +
                     'Use list_assets to browse available assets.'
@@ -62,6 +72,23 @@ export class GetAssetInfo extends BaseTool {
         } catch (err) {
             return this.error(err.message);
         }
+    }
+
+    /**
+     * Path-form ref that resolves to a real file without a .meta means the
+     * asset is on disk but the editor has not imported it yet.
+     * @returns {string|null} Project-relative path when that is the case
+     */
+    #unimportedFile(ref, projectRoot) {
+        if (!ref.includes('/') && !ref.includes('.')) return null; // UUID-ish, not a path
+        const candidates = [ref, `assets/${ref}`];
+        for (const rel of candidates) {
+            const abs = path.resolve(projectRoot, rel);
+            if (fs.existsSync(abs) && fs.statSync(abs).isFile() && !fs.existsSync(`${abs}.meta`)) {
+                return rel.replaceAll('\\', '/');
+            }
+        }
+        return null;
     }
 
     #formatText(info) {

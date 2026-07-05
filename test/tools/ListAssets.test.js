@@ -38,6 +38,37 @@ describe('ListAssets tool', () => {
         assert.ok(result.content[0].text.includes('No assets match'));
     });
 
+    it('should explain which filter emptied the result', async () => {
+        const result = await tool.execute({ type: 'prefab', pattern: 'zzz*' }, PROJECT);
+        assert.ok(!result.isError);
+        const text = result.content[0].text;
+        assert.ok(text.includes('no filters:'));
+        assert.match(text, /\+ type="prefab": [1-9]/);
+        assert.ok(text.includes('+ pattern="zzz*": 0'));
+        assert.ok(text.includes('file name'));
+    });
+
+    it('should find assets by bare substring pattern', async () => {
+        const result = await tool.execute({ pattern: 'old' }, PROJECT);
+        assert.ok(!result.isError);
+        assert.ok(result.content[0].text.includes('Gold.prefab'));
+    });
+
+    it('should reject unknown asset types listing the valid ones', async () => {
+        const result = await tool.execute({ type: 'bogusType' }, PROJECT);
+        assert.strictEqual(result.isError, true);
+        const text = result.content[0].text;
+        assert.ok(text.includes('Known types:'));
+        assert.ok(text.includes('sprite'));
+        assert.ok(text.includes('Importers in this project:'));
+    });
+
+    it('should accept spriteFrame as a type alias', async () => {
+        const result = await tool.execute({ type: 'spriteFrame' }, PROJECT);
+        assert.ok(!result.isError);
+        assert.ok(result.content[0].text.includes('panel.png'));
+    });
+
     it('should render json format', async () => {
         const result = await tool.execute({ type: 'sprite', format: 'json' }, PROJECT);
         const parsed = JSON.parse(result.content[0].text);

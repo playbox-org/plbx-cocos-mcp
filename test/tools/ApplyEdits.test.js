@@ -108,6 +108,33 @@ describe('apply_edits tool', () => {
         assert.strictEqual(doc.serialize(), raw);
     });
 
+    test('add_component tells an unimported script apart from a typo', async () => {
+        fs.writeFileSync(
+            path.join(projectRoot, 'assets/Scripts/NotImported.ts'),
+            'export class NotImported {}\n'
+        );
+
+        const unimported = await new ApplyEdits().execute({
+            filePath: 'assets/Prefabs/TableCash.prefab',
+            ops: [{ op: 'add_component', node: 'Table', type: 'NotImported' }],
+            dryRun: true
+        }, projectRoot);
+
+        assert.ok(unimported.isError);
+        assert.match(text(unimported), /exists on disk \(assets\/Scripts\/NotImported\.ts\)/);
+        assert.match(text(unimported), /has no \.meta/);
+        assert.match(text(unimported), /open the project in Cocos Creator/);
+
+        const typo = await new ApplyEdits().execute({
+            filePath: 'assets/Prefabs/TableCash.prefab',
+            ops: [{ op: 'add_component', node: 'Table', type: 'NoSuchView' }],
+            dryRun: true
+        }, projectRoot);
+
+        assert.ok(typo.isError);
+        assert.match(text(typo), /not found in assets/);
+    });
+
     test('failed op writes nothing', async () => {
         const target = path.join(projectRoot, 'assets/Prefabs/TableCash.prefab');
         const before = fs.readFileSync(target, 'utf-8');

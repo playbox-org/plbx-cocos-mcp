@@ -75,6 +75,28 @@ describe('QueryPrefabGraph', () => {
             assert.ok(result.isError, 'should be error result');
         });
 
+        it('should refuse model sources with a get_asset_info hint', async () => {
+            const result = await tool.execute(
+                { prefabPath: 'assets/Models/Rock.glb' },
+                join(FIXTURES, 'mock-project')
+            );
+
+            assert.ok(result.isError);
+            const text = result.content[0].text;
+            assert.ok(text.includes('model source'));
+            assert.ok(text.includes('get_asset_info'));
+        });
+
+        it('should refuse other non-scene/prefab files', async () => {
+            const result = await tool.execute(
+                { prefabPath: 'assets/Materials/Dynamite.mtl' },
+                join(FIXTURES, 'mock-project')
+            );
+
+            assert.ok(result.isError);
+            assert.ok(result.content[0].text.includes('.scene/.prefab'));
+        });
+
         it('should work with all test prefabs', async () => {
             const prefabs = [
                 'real-prefabs/Car.prefab',

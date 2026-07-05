@@ -94,6 +94,27 @@ describe('AssetIndex', () => {
         assert.strictEqual(gold.length, 1);
     });
 
+    it('should match a bare pattern as a substring, wildcards as the whole name', () => {
+        const gold = index.list({ pattern: 'old' });
+        assert.ok(gold.some(e => e.name === 'Gold.prefab'));
+        assert.strictEqual(index.list({ pattern: 'old*' }).length, 0);
+    });
+
+    it('should treat spriteFrame as the sprite alias', () => {
+        const frames = index.list({ type: 'spriteFrame' });
+        assert.deepStrictEqual(frames, index.list({ type: 'sprite' }));
+        assert.ok(frames.length > 0);
+    });
+
+    it('should expose known types and project importers for validation', () => {
+        assert.ok(AssetIndex.knownTypes.includes('sprite'));
+        assert.ok(index.importers().includes('prefab'));
+        assert.ok(!index.importers().includes('directory'));
+        assert.ok(index.isKnownType('spriteFrame'));
+        assert.ok(index.isKnownType('fbx')); // raw importer present in the project
+        assert.ok(!index.isKnownType('bogusType'));
+    });
+
     it('should combine filters', () => {
         const result = index.list({ type: 'image', folder: 'Sprites', pattern: 'panel*' });
         assert.strictEqual(result.length, 1);

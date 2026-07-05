@@ -111,6 +111,16 @@ export class InspectNode extends BaseTool {
                     `Use the full path or nodeId.`
                 );
             }
+            const inInstances = minifier.findInInstanceSources(leaf);
+            if (inInstances.length > 0) {
+                const list = inInstances.map(h => `"${h.instance}" [P→${h.source}]`).join(', ');
+                return this.error(
+                    `No addressable node named "${leaf}". It exists inside collapsed prefab ` +
+                    `instance(s): ${list}. Instance internals are not addressable — override ` +
+                    'properties via set_instance_property, edit the source .prefab asset, or ' +
+                    '(for models) unpack the instance in the editor.'
+                );
+            }
             return this.error(`No node named "${leaf}" found`);
         }
 

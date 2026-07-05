@@ -12,10 +12,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { splitSubAssetRef, isFullUuid, isCompressedUuid, decompressUuid } from '../utils/uuid.js';
 
-/** Friendly type aliases → meta importer names */
+/** Friendly type aliases → meta importer names (keys normalized: lowercase, no -/_) */
 const TYPE_ALIASES = {
     image: ['image'],
     sprite: ['image'],
+    spriteframe: ['image'], // sprite frames are sub-assets of images, not a top-level type
     texture: ['image'],
     model: ['fbx', 'gltf'],
     mesh: ['fbx', 'gltf'],
@@ -146,12 +147,31 @@ export class AssetIndex {
         return subAsset ? { entry, subAsset } : null;
     }
 
+    /** Friendly type names accepted by list()'s type filter */
+    static get knownTypes() {
+        return Object.keys(TYPE_ALIASES);
+    }
+
+    /** Distinct importer names present in the project (directories excluded) */
+    importers() {
+        const set = new Set(
+            this.#entries.filter(e => e.importer !== 'directory').map(e => e.importer)
+        );
+        return [...set].sort();
+    }
+
+    /** True when the type filter can match anything: a known alias or an importer present in the project */
+    isKnownType(type) {
+        return normalizeType(type) in TYPE_ALIASES ||
+               this.#entries.some(e => e.importer === type.toLowerCase());
+    }
+
     /**
      * List assets with optional filters
      * @param {object} [filters]
      * @param {string} [filters.type] - Friendly alias (sprite, model, ...) or raw importer name
      * @param {string} [filters.folder] - Path prefix relative to project root or assets/
-     * @param {string} [filters.pattern] - Wildcard on file name (* and ?)
+     * @param {string} [filters.pattern] - File-name filter: substring, or anchored wildcard when it contains * / ?
      * @returns {object[]} Matching entries (directories excluded unless type=directory)
      */
     list({ type, folder, pattern } = {}) {
@@ -162,11 +182,12 @@ export class AssetIndex {
         }
 
         if (type) {
-            const importers = TYPE_ALIASES[type.toLowerCase()] ?? [type.toLowerCase()];
+            const aliasKey = normalizeType(type);
+            const importers = TYPE_ALIASES[aliasKey] ?? [type.toLowerCase()];
             result = result.filter(e => importers.includes(e.importer));
 
-            // 'sprite' narrows images to those with a spriteFrame sub-asset
-            if (type.toLowerCase() === 'sprite') {
+            // 'sprite'/'spriteFrame' narrows images to those with a spriteFrame sub-asset
+            if (aliasKey === 'sprite' || aliasKey === 'spriteframe') {
                 result = result.filter(e => e.subAssets.some(s => s.importer === 'sprite-frame'));
             }
         }
@@ -180,15 +201,18 @@ export class AssetIndex {
         }
 
         if (pattern) {
-            const re = new RegExp(
-                '^' + pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&')
-                             .replaceAll('*', '.*')
-                             .replaceAll('?', '.') + '$',
-                'i'
-            );
+            const body = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                                .replaceAll('*', '.*')
+                                .replaceAll('?', '.');
+            // Bare text means substring; wildcards anchor to the whole file name
+            const re = new RegExp(/[*?]/.test(pattern) ? `^${body}$` : body, 'i');
             result = result.filter(e => re.test(e.name));
         }
 
         return result;
     }
+}
+
+function normalizeType(type) {
+    return type.toLowerCase().replace(/[-_\s]/g, '');
 }

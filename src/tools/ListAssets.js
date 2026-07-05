@@ -20,6 +20,7 @@ export class ListAssets extends BaseTool {
                'Returns path, name and UUID for each asset. ' +
                'Types: sprite, image, model, prefab, scene, material, script, audio, font, animation ' +
                '(or a raw importer name like fbx, gltf, typescript). ' +
+               'Note: sprite frames are sub-assets of images — type "sprite" lists images that carry one. ' +
                'Args: {type?, folder?, pattern?, format?} — these are the only filter keys.';
     }
 
@@ -41,7 +42,7 @@ export class ListAssets extends BaseTool {
                 },
                 pattern: {
                     type: 'string',
-                    description: "File name wildcard, e.g. '*.png' or 'Zombie*'"
+                    description: "File name filter: substring ('Zombie'), or anchored wildcard when it contains * or ? ('*.png', 'Zombie*')"
                 },
                 format: {
                     type: 'string',
@@ -56,6 +57,16 @@ export class ListAssets extends BaseTool {
     async execute(args, projectRoot) {
         try {
             const index = new AssetIndex(projectRoot);
+
+            if (args?.type && !index.isKnownType(args.type)) {
+                return this.error(
+                    `Unknown asset type "${args.type}". ` +
+                    `Known types: ${AssetIndex.knownTypes.join(', ')}. ` +
+                    `Importers in this project: ${index.importers().join(', ') || 'none'}. ` +
+                    'Note: sprite frames are sub-assets of images — use type "sprite".'
+                );
+            }
+
             const matches = index.list({
                 type: args?.type,
                 folder: args?.folder,
@@ -63,7 +74,7 @@ export class ListAssets extends BaseTool {
             });
 
             if (matches.length === 0) {
-                return this.success('No assets match the given filters.');
+                return this.success(this.#explainEmpty(index, args));
             }
 
             const shown = matches.slice(0, MAX_RESULTS);
@@ -93,4 +104,42 @@ export class ListAssets extends BaseTool {
             return this.error(err.message);
         }
     }
+
+    /**
+     * Re-apply the filters cumulatively to report which one produced the
+     * empty result, so the caller can fix that filter instead of guessing.
+     */
+    #explainEmpty(index, args) {
+        const stages = [
+            ['type', { type: args?.type }],
+            ['folder', { type: args?.type, folder: args?.folder }],
+            ['pattern', { type: args?.type, folder: args?.folder, pattern: args?.pattern }]
+        ].filter(([key]) => args?.[key]);
+
+        const lines = ['No assets match the given filters.'];
+        let prev = index.list({}).length;
+        lines.push(`- no filters: ${prev} asset(s)`);
+
+        for (const [key, filters] of stages) {
+            const count = index.list(filters).length;
+            lines.push(`- + ${key}="${args[key]}": ${count}`);
+            if (count === 0) {
+                lines.push(HINTS[key]);
+                break;
+            }
+            prev = count;
+        }
+
+        return lines.join('\n');
+    }
 }
+
+const HINTS = {
+    type: 'The project has no assets of this type. Check importers with an unfiltered call, ' +
+          'or remember sprite frames live inside "image" assets (type "sprite").',
+    folder: 'Folder is a path prefix relative to the project root (or assets/), ' +
+            'e.g. "assets/Art/Models" — check it against list_assets without folder.',
+    pattern: 'Pattern matches the file name only: plain text = substring, ' +
+             'with * or ? it must match the whole name ("Zombie*", "*.png"). ' +
+             'Drop the pattern and scan the folder listing instead of guessing.'
+};

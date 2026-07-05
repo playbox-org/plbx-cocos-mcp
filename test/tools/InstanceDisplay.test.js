@@ -140,4 +140,24 @@ describe('collapsed instance display in read pipeline', () => {
         assert.ok(!result.isError, text(result));
         assert.match(text(result), /● Reward \[P→Gold\.prefab\]/);
     });
+
+    test('inspect_node explains names hidden inside collapsed instances', async () => {
+        // "Gold" is the source prefab's root node — visible in the file only
+        // through the collapsed stubs, so the lookup must say why it fails
+        const result = await new InspectNode().execute(
+            { filePath: PREFAB, nodeName: 'Gold' }, projectRoot);
+
+        assert.strictEqual(result.isError, true);
+        assert.match(text(result), /collapsed prefab instance/);
+        assert.match(text(result), /"Reward" \[P→Gold\.prefab\]/);
+        assert.match(text(result), /set_instance_property/);
+    });
+
+    test('inspect_node keeps the plain not-found error for unknown names', async () => {
+        const result = await new InspectNode().execute(
+            { filePath: PREFAB, nodeName: 'NoSuchNode' }, projectRoot);
+
+        assert.strictEqual(result.isError, true);
+        assert.match(text(result), /No node named "NoSuchNode" found/);
+    });
 });

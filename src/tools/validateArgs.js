@@ -90,9 +90,19 @@ function coerceScalar(value, prop) {
         const relaxed = prop.enum.find(e =>
             typeof e === 'string' && e.toLowerCase() === value.toLowerCase());
         if (relaxed !== undefined) return relaxed;
+
+        const synonym = ENUM_SYNONYMS[value.toLowerCase()];
+        if (synonym !== undefined && prop.enum.includes(synonym)) return synonym;
     }
     return value;
 }
+
+// Values callers habitually carry over from other tools ("format: compact"
+// on a text|json enum) — mapped instead of bounced when unambiguous
+const ENUM_SYNONYMS = {
+    compact: 'text',
+    plain: 'text'
+};
 
 function checkValue(key, value, prop) {
     const check = TYPE_OK[prop.type];

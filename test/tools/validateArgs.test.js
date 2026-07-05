@@ -110,6 +110,14 @@ describe('normalizeArgs', () => {
         assert.strictEqual(args.format, 'json');
     });
 
+    it('maps known enum synonyms carried over from other tools', () => {
+        const { args, error } = normalizeArgs(
+            { scenePath: 'a.scene', format: 'compact' }, SCHEMA
+        );
+        assert.strictEqual(error, null);
+        assert.strictEqual(args.format, 'text');
+    });
+
     it('collects multiple problems in one error', () => {
         const { error } = normalizeArgs({ prefab: 'x', format: 'yaml' }, SCHEMA);
         assert.match(error, /unknown parameter "prefab"/);

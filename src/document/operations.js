@@ -13,6 +13,8 @@
  * instance machinery in instances.js
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { isRef } from './SceneDocument.js';
 import {
     instantiatePrefab, setInstanceProperty, removeInstanceOverride, sortInstanceRegistry
@@ -258,6 +260,35 @@ export function describeComponentType(type, ctx) {
     if (type.startsWith('cc.')) return type;
     const name = ctx.scriptNameByCompressed?.get?.(type);
     return name ? `${name} (script)` : type;
+}
+
+/**
+ * Error-path only: when a script fails to resolve through .meta files, walk
+ * assets/ on disk to tell "typo" apart from "not imported by the editor yet".
+ * @returns {string|null} Project-relative path of the found source file
+ */
+function findUnimportedScript(projectRoot, name) {
+    if (!projectRoot) return null;
+    const wanted = new Set([`${name.toLowerCase()}.ts`, `${name.toLowerCase()}.js`]);
+    const stack = [path.join(projectRoot, 'assets')];
+
+    while (stack.length > 0) {
+        const dir = stack.pop();
+        let entries;
+        try {
+            entries = fs.readdirSync(dir, { withFileTypes: true });
+        } catch {
+            continue;
+        }
+        for (const entry of entries) {
+            if (entry.isDirectory()) {
+                stack.push(path.join(dir, entry.name));
+            } else if (wanted.has(entry.name.toLowerCase())) {
+                return path.relative(projectRoot, path.join(dir, entry.name)).replaceAll('\\', '/');
+            }
+        }
+    }
+    return null;
 }
 
 /** Reverse script lookup: class/file name → full asset UUID */
@@ -589,6 +620,14 @@ function addComponent(doc, op, ctx) {
         const compressed = isCompressedUuid(type) ? type : (() => {
             const uuid = resolveScriptUuid(ctx, type);
             if (!uuid) {
+                const onDisk = findUnimportedScript(ctx.projectRoot, type);
+                if (onDisk) {
+                    throw new OperationError(
+                        `Script "${type}" exists on disk (${onDisk}) but has no .meta — ` +
+                        'the editor has not imported it yet. Ask the user to open the project ' +
+                        'in Cocos Creator once, then retry.'
+                    );
+                }
                 throw new OperationError(
                     `Script "${type}" not found in assets (looked for ${type}.ts). ` +
                     `Available cc.* templates: ${templateTypes().join(', ')}`

@@ -5,6 +5,8 @@
  * SOLID: D - Depends on abstractions, uses dependency injection
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { SceneParser } from './SceneParser.js';
 import { ScriptResolver } from './ScriptResolver.js';
 import { AssetIndex } from './AssetIndex.js';
@@ -53,8 +55,7 @@ export class SceneMinifier {
         );
     }
 
-    /** Asset file name ("Gold.prefab") by UUID, or null */
-    #assetName(uuid) {
+    #getAssetIndex() {
         if (this.#assetIndex === undefined) {
             try {
                 this.#assetIndex = new AssetIndex(this.#projectRoot);
@@ -62,7 +63,12 @@ export class SceneMinifier {
                 this.#assetIndex = null;
             }
         }
-        return this.#assetIndex?.resolve(uuid)?.entry.name ?? null;
+        return this.#assetIndex;
+    }
+
+    /** Asset file name ("Gold.prefab") by UUID, or null */
+    #assetName(uuid) {
+        return this.#getAssetIndex()?.resolve(uuid)?.entry.name ?? null;
     }
 
     /**
@@ -221,6 +227,51 @@ export class SceneMinifier {
         }
 
         return matches;
+    }
+
+    /**
+     * Best-effort check whether `name` is a node inside a collapsed
+     * prefab-instance source — those nodes are not addressable, and a failed
+     * lookup should say so instead of a bare "not found".
+     * @param {string} name - Exact node name
+     * @returns {{instance: string, source: string}[]} Instances whose source contains it
+     */
+    findInInstanceSources(name) {
+        const hits = [];
+        const sourceHasNode = new Map(); // assetUuid → boolean
+
+        for (const [, node] of this.#sceneParser.nodes) {
+            const info = this.#sceneParser.getInstanceInfo(node);
+            if (!info?.assetUuid) continue;
+
+            if (!sourceHasNode.has(info.assetUuid)) {
+                sourceHasNode.set(info.assetUuid, this.#sourceContainsNode(info.assetUuid, name));
+            }
+            if (sourceHasNode.get(info.assetUuid)) {
+                hits.push({
+                    instance: this.#displayName(node) ?? '(instance)',
+                    source: this.#assetName(info.assetUuid) ?? info.assetUuid
+                });
+            }
+        }
+
+        return hits;
+    }
+
+    /** Read an instance's source prefab (.prefab asset or library/ model cache) and scan node names */
+    #sourceContainsNode(assetUuid, name) {
+        try {
+            const resolved = this.#getAssetIndex()?.resolve(assetUuid);
+            if (!resolved) return false;
+            const file = resolved.subAsset
+                ? path.join(this.#projectRoot, 'library', assetUuid.slice(0, 2), `${assetUuid}.json`)
+                : path.join(this.#projectRoot, resolved.entry.path);
+            const objects = JSON.parse(fs.readFileSync(file, 'utf-8'));
+            return Array.isArray(objects) &&
+                   objects.some(o => o?.__type__ === 'cc.Node' && o._name === name);
+        } catch {
+            return false;
+        }
     }
 
     #getNodePath(node) {

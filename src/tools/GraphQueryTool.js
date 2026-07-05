@@ -62,6 +62,17 @@ export class GraphQueryTool extends BaseTool {
             return this.error(`${this.kindLabel} file not found: ${filePath}`);
         }
 
+        const ext = path.extname(filePath).toLowerCase();
+        if (!['.scene', '.prefab', '.json'].includes(ext)) {
+            const modelHint = ['.fbx', '.glb', '.gltf'].includes(ext)
+                ? ` "${ext}" is a model source, not a serialized prefab — use get_asset_info for its ` +
+                  'meshes/materials/sizes; the model\'s internal hierarchy is not readable through MCP.'
+                : '';
+            return this.error(
+                `${this.name} reads .scene/.prefab JSON files, got "${path.basename(filePath)}".${modelHint}`
+            );
+        }
+
         try {
             const minifier = new SceneMinifier(filePath, projectRoot, {
                 detailed: args.detailed
