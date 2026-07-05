@@ -1,0 +1,653 @@
+# Scene: Main.scene_V2.scene
+
+● Main.scene_V2 [P]
+  ● Main Light
+    ◆ DirectionalLight {_useColorTemperature=true _colorTemperature=5500 _visibility=-325058561 _illuminanceHDR=110000}
+  ● Main Camera @(-8,12,8)
+    ◆ Camera {_projection=1 _priority=0 _fov=50 _fovAxis=0}
+    ◆ Script:b4347hmF {target=→Player#8 offsetX=-18.5 offsetY=28 offsetZ=19.6}
+    ◆ Script:14deb29W {camera=→Main Camera#6 layoutController=→[SERVICES]#1879 _id=c3Fy4M7mlO6LP8sIK25LDZ}
+  ● [SERVICES] @(-0.3,0,0)
+    ◆ Script:5c8bc2CY {musicSource=→Music#1854 sfxParent=→SFXs#1852 mainCamera=→Main Camera#6 layoutController=→[SERVICES]#1879}
+    ◆ Script:49fadMdy {_id=6dvBdUnLZMK7zeIc5If5am}
+    ◆ Script:82c49ffD {backgroundMusic=<asset> step=<asset> crusherButtonPress=<asset> crystalBreak=<asset>}
+    ● SFXs
+    ● Music
+      ◆ AudioSource {_loop=true _playOnAwake=false _volume=1 _id=50tXqfeXJA/44fIWPudJc/}
+    ● BigBlueCrystalls
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=30 _id=61EJOt6ZhL4oOart4vtfJa}
+    ● SmallCrystalls
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=400 _id=00H7LfpJRNoI+3IG43us8d}
+    ● Cars
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=50 _id=eaU1/tK/FEnILAPcdVBykc}
+    ● Coins
+      ◆ Script:ecb6aynO {prefab=Gold.prefab initialSize=400 _id=eeEjGfKM1Nr4+aG8QKhOxg}
+    ● BigRedCrystalls
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=8 _id=73b7ciZL1D17XqSLOW3Bcy}
+    ● PipeFx
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=5 _id=b3hfbQ+jlEubkTAvGR98fP}
+    ● UpgradeVfxController
+      ◆ Script:8a2d1kTZ {pool=→UpgradeVFXPool#1867 parentNode=→VFXs#1869 playInterval=0 despawnDelay=1.5}
+      ● UpgradeVFXPool
+        ◆ Script:ecb6aynO {prefab=<asset> initialSize=1 _id=ee3AIzHPpO2o5IKLoNXZIa}
+    ● ExplosionVfxController
+      ◆ Script:8a2d1kTZ {pool=→ExplosionVFXPool#1872 parentNode=→VFXs#1869 playInterval=0 despawnDelay=1.5}
+      ● ExplosionVFXPool
+        ◆ Script:ecb6aynO {prefab=<asset> initialSize=5 _id=40P9FTOYhCAYsJr1bI00hy}
+    ● HammerHitVfxController
+      ◆ Script:8a2d1kTZ {pool=→HammerHitVFXPool#1876 parentNode=→VFXs#1869 playInterval=0 despawnDelay=1.5}
+      ● HammerHitVFXPool
+        ◆ Script:ecb6aynO {prefab=<asset> initialSize=1 _id=96NKYar8xAs4Als3twD/gM}
+  ● [WORLD]
+    ● Environment
+      ● Ground
+        ● Grass
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ BoxCollider {_isTrigger=false _id=e4sPS6mE9Kvp1jKQSsvH9f}
+        ● SM_Floor
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ BoxCollider {_isTrigger=false _id=d8QoyNYz1DfrcVVL/FIZ/3}
+        ● SM_Floor
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ● Collider
+            ◆ BoxCollider {_isTrigger=false _id=12FT7Z1QpOXZbVVLhXH0j1}
+        ● SM_Floor
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ BoxCollider {_isTrigger=false _id=e46Jr+7JJCFpP/93w/nTyv}
+        ● SM_Floor
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ● Collider
+            ◆ BoxCollider {_isTrigger=false _id=6dTCBOwPtKL7xxoKFdgg9t}
+        ● SM_Floor
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ BoxCollider {_isTrigger=false _id=e9veQVMH5LrLozrGucRUEu}
+        ● SM_Floor
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ BoxCollider {_isTrigger=false _id=afXpUN46RGCbXPG3n+3T4c}
+        ● SM_Floor
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ BoxCollider {_isTrigger=false _id=652f33O+pHYZlF+jG0CkcX}
+        ● SM_Floor
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ BoxCollider {_isTrigger=false _id=35EPszXiFBGqW8CiebHMjd}
+      ● Cliffs
+        ● Scal [P→92d27365…]
+        ● Scal-001
+          ● Stone_Midle
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-001
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-002
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-001
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-002
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-003
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-003
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-004
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-004
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-005
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-005
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-006
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-006
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● Scal-002
+          ● Stone_Midle
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-001
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-002
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-001
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-002
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-003
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-003
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-004
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-004
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-005
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-005
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Midle-006
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Stone_Big-006
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● Scal-003 [P→92d27365…]
+        ● Scal_Centr [P→10ba5c51…]
+        ● ScalBorder [P→daebd1eb…]
+        ● ScalBorder-001 [P→daebd1eb…]
+        ● Colliders
+          ● Border
+            ◆ BoxCollider {_isTrigger=false _id=27tVGkeINNQ4FL4S0r+CJm}
+          ● Border-001
+            ◆ BoxCollider {_isTrigger=false _id=30ivuF5o9Gha2nKXS+oJ4X}
+          ● Border-002
+            ◆ BoxCollider {_isTrigger=false _id=a8agZa9MJBmpblt0D3WsGS}
+      ● Fences
+        ● Wall
+          ◆ BoxCollider {_isTrigger=false _id=03Tq8jHx1BQJiVvd0zaHYW}
+          ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
+          ● Fence [P→7c72ba33…]
+          ● Fence-001 [P→7c72ba33…]
+          ● Fence-002 [P→7c72ba33…]
+          ● Fence-003 [P→7c72ba33…]
+          ● Fence-004 [P→7c72ba33…]
+          ● Fence-005 [P→7c72ba33…]
+          ● Fence-006 [P→7c72ba33…]
+          ● Fence-007 [P→7c72ba33…]
+          ● Fence-008 [P→7c72ba33…]
+          ● Fence-009 [P→7c72ba33…]
+          ● Fence-010 [P→7c72ba33…]
+          ● Fence-011 [P→7c72ba33…]
+        ● Wall-001
+          ◆ BoxCollider {_isTrigger=false _id=e2z2y96gpNXrx0xslDqpAK}
+          ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
+          ● Fence [P→7c72ba33…]
+          ● Fence-001
+            ● SM_Wall
+              ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Fence-002
+            ● SM_Wall
+              ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Fence-003
+            ● SM_Wall
+              ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Fence-004 [P→7c72ba33…]
+          ● Fence-005 [P→7c72ba33…]
+          ● Fence-006 [P→7c72ba33…]
+          ● Fence-007 [P→7c72ba33…]
+          ● Fence-008 [P→7c72ba33…]
+          ● Fence-009 [P→7c72ba33…]
+          ● Fence-010 [P→7c72ba33…]
+          ● Fence-011 [P→7c72ba33…]
+        ● WallDoorway
+          ◆ BoxCollider {_isTrigger=false _id=b5aX1HqA1CkJb6UYo+cEi4}
+          ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
+          ● Fence [P→7c72ba33…]
+          ● Fence-001
+            ● SM_Wall
+              ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Fence-002
+            ● SM_Wall
+              ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Fence-003
+            ● SM_Wall
+              ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Fence-004 [P→7c72ba33…]
+          ● Fence-005 [P→7c72ba33…]
+          ● Fence-006 [P→7c72ba33…]
+          ● Fence-007 [P→7c72ba33…]
+          ● Fence-008 [P→7c72ba33…]
+          ● Fence-009 [P→7c72ba33…]
+          ● Fence-010 [P→7c72ba33…]
+          ● Fence-011 [P→7c72ba33…]
+          ● Lanterns
+            ● SM_Lantern
+              ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+            ● SM_Lantern-001
+              ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ● Border
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● WallDoorway-001
+          ◆ BoxCollider {_isTrigger=false _id=c6mgM6lZ1IN6emt9hmHz4N}
+          ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
+          ● Fence [P→7c72ba33…]
+          ● Fence-001 [P→7c72ba33…]
+          ● Fence-002 [P→7c72ba33…]
+          ● Fence-003 [P→7c72ba33…]
+          ● Fence-004 [P→7c72ba33…]
+          ● Fence-005 [P→7c72ba33…]
+          ● Fence-006 [P→7c72ba33…]
+          ● Fence-007 [P→7c72ba33…]
+          ● Fence-008 [P→7c72ba33…]
+          ● Fence-009 [P→7c72ba33…]
+          ● Fence-010 [P→7c72ba33…]
+          ● Fence-011 [P→7c72ba33…]
+          ● Border
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+      ● Crusher-001
+        ● SM_Platforma
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● SM_Stakes
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+      ● FakeShadows
+        ● Shadow
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-001
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-002
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-003
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-004
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-005
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-006
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-007
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-008
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-009
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-010
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-011
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-012
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-013
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-014
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-015
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-016
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-017
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-018
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-019
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-020
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-021
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-022
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-023
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-024
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-025
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-026
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-027
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Shadow-028
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+      ● Woods
+        ● Shadow
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● SM_Wood_01
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● SM_Wood_02
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● SM_Wood_03
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● SM_Wood_04
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● SM_Wood_05
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● SM_Wood_06
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● SM_Wood_07
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+    ● Gate @(20,0,2.7)
+      ◆ BoxCollider {_isTrigger=false _id=41CS2ZUrBD7bsff+fSloDV}
+      ● SM_Gate_Wood
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+      ● SM_Gate_Wood-001
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+    ● RedZoneGate @(-12.3,0,-3)
+      ● SM_Gate_Wood
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+      ● SM_Gate_Wood-001
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+    ● Player
+      ◆ Script:4e2e74v3 {animationController=→Zombi_Defolt#1957 _id=4f7fGKxBZL/YUwXbXg2hBi}
+      ◆ BoxCollider {_isTrigger=false _id=30wvpvwhVIQZ/TV+D3zl63}
+      ◆ RigidBody {_group=1 _type=1 _mass=1 _allowSleep=true}
+      ◆ Script:e0dfa7Lq {crystalStack=→CrystalStack#2421 goldStack=→GoldStack#1908 _id=949EtfV/hBbpKW7h7u4bCe}
+      ● CrystalStack
+        ◆ Script:03f35T03 {root=→CrystalStack#2420 itemType=Crystal gridX=2 gridZ=1}
+        ◆ Script:601a4FXN {stack=→CrystalStack#2421 debug=false maxFlightDuration=0.6 jitterXZ=0.05}
+        ◆ Script:36671hn8 {stiffness=80 damping=7 tiltGain=0.4 maxTiltDegrees=28}
+      ● GoldStack
+        ◆ Script:03f35T03 {root=→GoldStack#1907 itemType=Gold gridX=2 gridZ=1}
+        ◆ Script:601a4FXN {stack=→GoldStack#1908 pool=→Coins#1860 debug=false maxFlightDuration=0.6}
+        ◆ Script:36671hn8 {stiffness=80 damping=7 tiltGain=0.4 maxTiltDegrees=28}
+      ● Zombi_Defolt
+        ◆ animation.AnimationController {_graph=<asset> graph=<asset> _id=e6Zmhz5ctPR75SXku43LFz}
+        ● zombie_miner_helmet_2
+          ● Disc
+            ◆ SkinnedMeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ● zombie_miner_helmet
+            ◆ SkinnedMeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          [+54 hidden nodes, depth 10]
+      ● PlayerArrow
+        ◆ Script:820a7JVn {arrowMesh=→Arrow#2430 hideDistance=3.5 showDuration=0.25 hideDuration=0.2}
+        ● Arrow
+          ● Arrow
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+    ● House @(0.5,0,-8.5)
+      ● SM_Dom
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ◆ BoxCollider {_isTrigger=false _id=d3JghCyO1KWI3uiFIUn1GI}
+        ● SM_Dom_Krisha
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● Window
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Window-001
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● Plane
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+      ● lightning [P→f874611c…]
+    ● SellingStationRed @(-5,0,11.8)
+      ◆ Script:8d141ySj {crystalIcon=<asset> crystalStack=→CrystallStack#1821 carActiveAnchor=→ActiveWaypoint#1833 carPool=→Cars#1849}
+      ◆ BoxCollider {_isTrigger=false _id=e9eMdU4fdKsIxtS+zs2qo1}
+      ● Table
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● CashRegister
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ● Monitor
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+      ● CrystallStack
+        ◆ Script:03f35T03 {root=→CrystallStack#1820 gridX=2 gridZ=4 spacingX=0.8}
+        ◆ Script:601a4FXN {stack=→CrystallStack#1821 debug=false maxFlightDuration=0.6 jitterXZ=0.05}
+      ● SellZone-001
+        ◆ BoxCollider {_isTrigger=true _id=70z5J5uIhNWow4KKNdb3NL}
+        ◆ Script:5d6c8DvF {trigger=→SellZone-001#1830 _id=dfS1BkVo9FrJ94F5+hbEwZ}
+        ● RenderRoot
+          ◆ UITransform {_id=925WF5z61EirqwZ/kGySoB}
+          ◆ RenderRoot2D {_id=3cfQfDeQlHP7Cg+pV2CHM8}
+          ● bg
+            ◆ UITransform {_id=3bmY2AyPRMHa90ZCYCpt63}
+            ◆ Sprite {_customMaterial=<asset> _srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset>}
+      ● Waypoints
+        [+15 hidden nodes, depth 1]
+    ● SellingStation @(1.2,0,11.8)
+      ◆ Script:8d141ySj {crystalIcon=<asset> crystalStack=→CrystallStack#2263 carActiveAnchor=→ActiveWaypoint#2247 carPool=→Cars#1849}
+      ◆ BoxCollider {_isTrigger=false _id=c8pT0IimNMc6+nYcWK5Xz3}
+      ● Table
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        ● CashRegister
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ● Monitor
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+      ● CrystallStack
+        ◆ Script:03f35T03 {root=→CrystallStack#2235 gridX=2 gridZ=4 spacingX=0.8}
+        ◆ Script:601a4FXN {stack=→CrystallStack#2263 debug=false maxFlightDuration=0.6 jitterXZ=0.05}
+      ● Waypoints
+        [+15 hidden nodes, depth 1]
+    ● Hammer @(8.5,0,-9)
+      ◆ Script:40cabRgh {hammerMesh=→SM_Hammer#2151 hitInterval=3 hitAngle=100 hitDuration=0.15}
+      ◆ BoxCollider {_isTrigger=false _id=368Sz9oIJIPpJf2PQj/Or9}
+      ● SM_BaseFrame
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+      ● SM_Hammer
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+    ● Tubes
+      ● HammerTubes
+        ◆ Script:7dd6cAnm {pulsePool=→PipeFx#1864 path=["→SM_Perehodnik#2081","→SM_Perehodnik-001#2084"] pathRoot=→HammerTubes#2077 parentNode=→HammerTubes#2077}
+        ● SM_Truba
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● SM_Perehodnik
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● SM_Perehodnik-001
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        [+2 hidden nodes, depth 1]
+      ● CrusherTubes
+        ● SM_Truba
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● SM_Perehodnik-001
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● SM_Koleno
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● SM_Truba-001
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● SM_Koleno-001
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● FirstPipe
+          ◆ Script:7dd6cAnm {pulsePool=→PipeFx#1864 path=["→PipePoint#2119","→PipePoint-001#2120"] pathRoot=→FirstPipe#2118 parentNode=→FirstPipe#2118}
+          [+2 hidden nodes, depth 1]
+        ● SecondPipe
+          ◆ Script:7dd6cAnm {pulsePool=→PipeFx#1864 path=["→PipePoint#2123","→PipePoint-001#2124"] pathRoot=→SecondPipe#2122 parentNode=→SecondPipe#2122}
+          [+2 hidden nodes, depth 1]
+      ● ConveyorTubes
+        ◆ Script:7dd6cAnm {pulsePool=→PipeFx#1864 path=["→PipePoint#2100","→PipePoint-001#2101"] pathRoot=→ConveyorTubes#2090 parentNode=→ConveyorTubes#2090}
+        ● SM_Truba
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● SM_Perehodnik
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ● SM_Perehodnik-001
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        [+2 hidden nodes, depth 1]
+    ● Button @(8.5,0,-4)
+      ◆ Script:f1f387/0 {buttonNode=→SM_Button#2045 jumpTarget=→Foot#2046 trigger=→Button#2054 startHidden=true}
+      ◆ BoxCollider {_isTrigger=true _id=dcJQ8ofZtPOqd7OUN9XeSE}
+      ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
+      ● SM_Button
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        [+2 hidden nodes, depth 2]
+    ● Conveyor @(11.5,0.1,10)
+      ◆ Script:ad425ISo {pathPoints=["→Path1#2228","→Path2#2229","→Path3#2230","→Path4#2231","→Path5#2232"] targetStorage=→CrystallStack#2234 beltMaterial=<asset> batchInterval=0.25}
+      ● SM_Bort_3
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+      ● LENTA
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+      ● SM_Bort-001
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+      ● Cylinder
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ◆ BoxCollider {_isTrigger=false _id=54AvU00X9ECqgNjWc50XO+}
+        ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
+      ● Cylinder-001
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ◆ BoxCollider {_isTrigger=false _id=c4CrJcxs9Da6fkoY10Ulme}
+        ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
+      ● Path1
+      ● Path2
+      ● Path3
+      ● Path4
+      ● Path5
+    ● Queue
+    ● QueueRed
+    ● Crystals
+      ● Recycler
+        ◆ Script:ff8e5X/O {trigger=→Recycler#2024 pool=→BigBlueCrystalls#1856 _id=f6vZp2z6tHdoc/lH/1sgHm}
+        ◆ BoxCollider {_isTrigger=true _id=09MlwxKSdHoLvtNJM1Qk3a}
+        ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
+      ● SpawnPoints
+        [+1 hidden nodes, depth 1]
+      ● BigCrystalls
+      ● SmallCrystalls
+      ● RedCrystalls
+      ● Recycler-001
+        ◆ Script:ff8e5X/O {trigger=→Recycler-001#2032 pool=→BigRedCrystalls#1862 _id=2e2JiLuxxHTpb6eK0Yk4KD}
+        ◆ BoxCollider {_isTrigger=true _id=60MrVMr8ZGjJOrwnQG1y0B}
+        ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
+      ● RedCrystallsSpawnPoints
+        [+1 hidden nodes, depth 1]
+      ● StopLine
+      ● InitialSpawnPoints
+        [+5 hidden nodes, depth 1]
+    ● Zones
+      ● ButtonPurchaseZone [P→ab794f1c…]
+      ● HammerPurchaseZone [P→ab794f1c…]
+      ● GatePurchaseZone [P→ab794f1c…]
+      ● ConveyorPurchaseZone [P→ab794f1c…]
+      ● RedZonePurchaseZone [P→ab794f1c…]
+      ● StackZone [P→b77d09e2…]
+      ● GoldStackZone [P→b77d09e2…]
+      ● SellZone
+        ◆ BoxCollider {_isTrigger=true _id=38/oVJSFhKLJ76Ug6/7MrP}
+        ◆ Script:5d6c8DvF {trigger=→SellZone#2363 _id=ccufxnwD5HCbqZK6rbwrEU}
+        ● RenderRoot
+          ◆ UITransform {_id=1cPKY8W7xBCIy7bu8c54WM}
+          ◆ RenderRoot2D {_id=7b+L1D2YxLZo47W1BmD79l}
+          ● bg
+            ◆ UITransform {_id=afazrkaF5CNZjCA8toAEER}
+            ◆ Sprite {_customMaterial=<asset> _srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset>}
+      ● RedQueuePurchaseZone [P→ab794f1c…]
+    ● Crusher @(20.5,0,-4)
+      ◆ Script:b7fa5kIX {crushZone=→Crusher#2064 pikesNode=→SM_Stakes#2061 pikesRiseAmount=1 pikesRiseDuration=0.2}
+      ◆ BoxCollider {_isTrigger=true _id=69gUx1B+5Bf4ZYSrb5eIpl}
+      ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
+      ● SM_Platforma
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+      ● SM_Stakes
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+    ● EndCam_A @(-20.5,0,-4.2)
+    ● PointArrow
+      ◆ Script:789c8+K9 {arrowNode=→Arrow#2425 bobAmplitude=0.3 bobSpeed=1 rotateSpeed=60}
+      ● Arrow
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+    ● VFXs
+    ● Cacti_V1
+    ● Cacti2 [P→bb73cd66…]
+    ● Cactis
+      ● Cacti1 [P→b267cf03…]
+      ● Cacti2 [P→b267cf03…]
+      ● Cacti3 [P→b267cf03…]
+    ● Cacti3 [P→bb73cd66…]
+  ● [UI] @(540,1184,0)
+    ◆ UITransform {_id=c4j9T6VlBIsZF+uD7drQf3}
+    ◆ Canvas {_cameraComponent=→Camera#1886 _alignCanvasWithScreen=true _id=27ETxt9y1CjI42Xinmg0H9}
+    ◆ Widget {_alignFlags=45 _left=0 _right=0 _top=0}
+    ● Camera @(0,0,1000)
+      ◆ Camera {_projection=0 _priority=1073741824 _fov=45 _fovAxis=0}
+    ● JoystickContainer
+      ◆ UITransform {_id=267EXXPalGd42p3AKf3yNq}
+      ◆ Widget {_alignFlags=45 _left=0 _right=0 _top=0}
+      ● Joystick
+        ◆ UITransform {_id=2cYhannrJPgKekt3zyj+7h}
+        ◆ Script:fe1293CZ {canvas=→[UI]#1944 baseNode=→Base#1949 stickNode=→Handler#1952 baseSprite=→Base#1951}
+        ● Base
+          ◆ UITransform {_id=84O69tYghInaElVhVx8H//}
+          ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
+        ● Handler
+          ◆ UITransform {_id=2drQb6xb9FpIRw6nodnu/G}
+          ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
+    ● HUD
+      ◆ UITransform {_id=49RBvKzFZL/Lpw33CRdthb}
+      ◆ Widget {_alignFlags=45 _left=0 _right=0 _top=0}
+      ◆ SafeArea {_symmetric=true _id=3dfzInVHVCx6g8hYcFhTbq}
+      ● Logo
+        ◆ UITransform {_id=c1z1MBk8ZDz6Sn+bMwGBpX}
+        ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
+        ◆ Widget {_alignFlags=9 _left=60 _right=0 _top=60}
+      ● StoreButton
+        ◆ UITransform {_id=d0ViStspdJbIFNnAYm4gU8}
+        ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=1}
+        ◆ Button {_interactable=true _transition=0 _normalSprite=<asset> _hoverSprite=<asset>}
+        ◆ Widget {_alignFlags=9 _left=73 _right=0 _top=305}
+        ◆ Script:5f9405q2 {button=→StoreButton#1895 pulseScale=1.1 pulseDuration=0.6 _id=36lRjUdmRGRqxxYwL/Y5eP}
+      ● GoldCounter
+        ◆ UITransform {_id=4c55p1R3dEDbIShfOb0uOg}
+        ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=coin_bar.png@f9941 _type=0}
+        ◆ Widget {_alignFlags=33 _left=0 _right=60 _top=90}
+        ◆ Script:89b476SH {goldStorage=→GoldStack#1906 label=→Count#1901 _id=baYfc6sE1Oo5Z24fBUU1L1}
+        ● Count
+          ◆ UITransform {_id=d5CZCGV2ZPuKrRVP6CYklo}
+          ◆ Label {_srcBlendFactor=2 _dstBlendFactor=4 _horizontalAlign=1 _verticalAlign=1} "30"
+      ● Tutorial
+        ◆ UITransform {_id=8axy03sQZOQ7myksBIr52/}
+        ◆ Script:f4a7e/A5 {tutorialAnimation=→Tutorial#1922 tutorialLabel=→Label#1913 inactivityTime=5 fadeInDuration=0.3}
+        ◆ Animation {playOnLoad=false _clips=["<asset>"] _defaultClip=<asset> _id=0d/eTS0FBGaaWrB4x+q9ft}
+        ◆ Widget {_alignFlags=18 _left=0 _right=0 _top=0}
+        ● Label
+          ◆ UITransform {_id=62AYImlYFOKJ75LrkfiN4W}
+          ◆ Label {_srcBlendFactor=2 _dstBlendFactor=4 _horizontalAlign=1 _verticalAlign=1} "DRAG TO MOVE"
+        ● Beskonechnost
+          ◆ UITransform {_id=77OFQZyfpIKZ/o4stECj5+}
+          ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
+        ● Hend
+          ◆ UITransform {_id=edIQfVc+dAnbXcsZ1s9aab}
+          ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
+    ● CTA
+      ◆ UITransform {_id=a2yNn2BttIBYkHOZgC1MUc}
+      ◆ Widget {_alignFlags=45 _left=0 _right=0 _top=0}
+      ◆ Script:af33246q {fadeOverlay=→Curtain#1928 logo=→Logo#1933 ctaButton=→StoreButton#1939 _id=7fr2A36vdDhbTz/hnR77mC}
+      ● Curtain
+        ◆ UITransform {_id=97hJJ/bkdCm79IkJb7WTNf}
+        ◆ Widget {_alignFlags=45 _left=0 _right=0 _top=0}
+        ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
+      ● AnimatedContainer
+        ◆ UITransform {_id=64PlzbNtlI7LcYhR3vdT2a}
+        ● Logo
+          ◆ UITransform {_id=d7RrX3brpBk7h0IzZkbe2l}
+          ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
+        ● StoreButton
+          ◆ UITransform {_id=6daatnKlNGQYW1QN0S8djK}
+          ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=1}
+          ◆ Button {_interactable=true _transition=0 _normalSprite=<asset> _hoverSprite=<asset>}
+  ● Dummies
+    ● BigCrystal
+      ● Cristal_Anim [P→3405a2a2…]
+    ● BigRedCrystal @(-15.8,1.6,-6.1)
+      ● Cristal_Anim
+        ◆ SkeletalAnimation {playOnLoad=false _clips=["<asset>"] _defaultClip=<asset> _useBakedAnimation=true}
+        ● Armature
+          ● Cristal
+            ◆ SkinnedMeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          [+7 hidden nodes, depth 2]
+    ● CrystalSmall @(-0.5,0,0)
+      ● Cristal
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+    ● truba_FX
+      ● SM_Truba
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+    ● hit01
+      ◆ ParticleSystem {_materials=["<asset>","null"] _visFlags=0 scaleSpace=1 startSize3D=false}
+      ○ light-001
+        ◆ ParticleSystem {_materials=["<asset>"] _visFlags=0 scaleSpace=1 startSize3D=false}
+    ● levelup
+      ◆ ParticleSystem {_visFlags=0 scaleSpace=1 startSize3D=false startRotation3D=false}
+      ● light
+        ◆ ParticleSystem {_materials=["<asset>"] _visFlags=0 scaleSpace=1 startSize3D=false}
+      ● line-001
+        ◆ ParticleSystem {_materials=["<asset>","null"] _visFlags=0 scaleSpace=1 startSize3D=false}
+      ● particle
+        ◆ ParticleSystem {_materials=["<asset>"] _visFlags=0 scaleSpace=1 startSize3D=false}
+      ● halo
+        ◆ ParticleSystem {_visFlags=0 scaleSpace=1 startSize3D=true startRotation3D=true}
+      ● halo-001
+        ◆ ParticleSystem {_materials=["<asset>","null"] _visFlags=0 scaleSpace=1 startSize3D=true}
+      ● line-001
+        ◆ ParticleSystem {_visFlags=0 scaleSpace=1 startSize3D=false startRotation3D=false}
+      ● line-002
+        ◆ ParticleSystem {_materials=["<asset>","null"] _visFlags=0 scaleSpace=1 startSize3D=false}
+    ● RockHit @(-167.6,103.5,0)
+      ◆ ParticleSystem {_materials=["<asset>","null"] _visFlags=0 scaleSpace=1 startSize3D=false}
+      ● Explosion
+        ◆ ParticleSystem {_visFlags=0 scaleSpace=1 startSize3D=false startRotation3D=false}
+      ● light
+        ◆ ParticleSystem {_materials=["<asset>"] _visFlags=0 scaleSpace=1 startSize3D=false}
+      ● smoke
+        ◆ ParticleSystem {_materials=["<asset>","null"] _visFlags=0 scaleSpace=1 startSize3D=false}
+    ● ZombieBuyer @(540,1184,0)
+      ● Zombie_1gr_colander
+        ◆ SkeletalAnimation {playOnLoad=false _clips=["<asset>","<asset>"] _useBakedAnimation=false _sockets=["→head.x Socket#3428"]}
+        ● Zombie_1gr_colander
+          ◆ SkinnedMeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+        [+27 hidden nodes, depth 9]

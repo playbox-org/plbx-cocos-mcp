@@ -80,7 +80,7 @@ export class BuildPrefab extends BaseTool {
             throw err;
         }
 
-        const { errors, warnings } = new Validator(doc, assetIndex).validate();
+        const { errors, warnings } = new Validator(doc, assetIndex, { projectRoot }).validate();
         if (errors.length > 0) {
             return this.error(
                 `Compiled prefab failed validation — nothing was written:\n` +

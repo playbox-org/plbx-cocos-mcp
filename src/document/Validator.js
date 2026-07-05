@@ -12,6 +12,8 @@
  */
 
 import { isRef } from './SceneDocument.js';
+import { loadSourcePrefabByUuid } from './instances.js';
+import { fileIdTargets } from './targetOverrides.js';
 import { eulerToQuat, quatApproxEquals } from '../utils/math3d.js';
 
 const VISUAL_ROOT_TYPES = ['cc.MeshRenderer', 'cc.SkinnedMeshRenderer', 'cc.Sprite'];
@@ -19,14 +21,18 @@ const VISUAL_ROOT_TYPES = ['cc.MeshRenderer', 'cc.SkinnedMeshRenderer', 'cc.Spri
 export class Validator {
     #doc;
     #assetIndex;
+    #projectRoot;
 
     /**
      * @param {import('./SceneDocument.js').SceneDocument} doc
      * @param {object|null} [assetIndex] - Enables asset-existence checks
+     * @param {{projectRoot?: string}} [options] - projectRoot additionally
+     *   enables targetOverride resolution checks against source prefabs
      */
-    constructor(doc, assetIndex = null) {
+    constructor(doc, assetIndex = null, options = {}) {
         this.#doc = doc;
         this.#assetIndex = assetIndex;
+        this.#projectRoot = options.projectRoot ?? null;
     }
 
     /**
@@ -43,6 +49,8 @@ export class Validator {
             this.#checkHierarchy(errors);
             this.#checkComponents(errors);
             this.#checkIds(errors);
+            this.#checkTargetOverrides(errors, warnings);
+            this.#checkRemovedComponents(errors, warnings);
             this.#checkReachability(warnings);
             this.#checkRotations(warnings);
             this.#checkWrapperRule(warnings);
@@ -178,6 +186,188 @@ export class Validator {
                 }
             });
         }
+    }
+
+    /**
+     * cc.TargetOverrideInfo invariants (references into collapsed instances).
+     * Structural violations are errors; anything that also occurs in
+     * editor-authored files stays a warning — the golden corpus must
+     * validate with 0 errors.
+     */
+    #checkTargetOverrides(errors, warnings) {
+        const doc = this.#doc;
+        const resolvable = this.#assetIndex && this.#projectRoot
+            ? { assetIndex: this.#assetIndex, projectRoot: this.#projectRoot }
+            : null;
+        const targetMaps = new Map(); // asset uuid → fileIdTargets map | null
+
+        doc.objects.forEach((obj, idx) => {
+            if (obj.__type__ !== 'cc.TargetOverrideInfo') return;
+            const at = `TargetOverrideInfo #${idx}`;
+
+            if (!Array.isArray(obj.propertyPath) || obj.propertyPath.length === 0 ||
+                obj.propertyPath.some(s => typeof s !== 'string')) {
+                errors.push(`${at}: propertyPath must be a non-empty array of strings`);
+            }
+
+            const info = isRef(obj.targetInfo) ? doc.getObject(obj.targetInfo.__id__) : null;
+            if (info?.__type__ !== 'cc.TargetInfo' ||
+                !Array.isArray(info.localID) || info.localID.length === 0 ||
+                info.localID.some(s => typeof s !== 'string')) {
+                errors.push(`${at}: targetInfo must reference a cc.TargetInfo with a non-empty string localID`);
+            }
+
+            if (!isRef(obj.source)) {
+                errors.push(`${at}: source must reference an object in this file`);
+            } else if (obj.sourceInfo === null) {
+                const src = doc.getObject(obj.source.__id__);
+                if (!src || doc.isNode(src)) {
+                    errors.push(`${at}: sourceInfo is null but source #${obj.source.__id__} is not a component`);
+                }
+            } else {
+                const srcInfo = isRef(obj.sourceInfo) ? doc.getObject(obj.sourceInfo.__id__) : null;
+                if (srcInfo?.__type__ !== 'cc.TargetInfo') {
+                    errors.push(`${at}: sourceInfo must be null or reference a cc.TargetInfo`);
+                }
+                if (!doc.isNode(doc.getObject(obj.source.__id__))) {
+                    errors.push(`${at}: sourceInfo is set but source #${obj.source.__id__} is not a node`);
+                } else if (!doc.isInstanceStub(obj.source.__id__)) {
+                    warnings.push(
+                        `${at}: sourceInfo is set but source "${doc.nodePath(obj.source.__id__)}" ` +
+                        `is not a prefab instance — the engine cannot resolve the source`
+                    );
+                } else if (resolvable && Array.isArray(srcInfo?.localID) && srcInfo.localID.length === 1) {
+                    const targets = this.#sourcePrefabTargets(obj.source.__id__, targetMaps);
+                    if (targets && !targets.has(srcInfo.localID[0])) {
+                        warnings.push(
+                            `${at}: sourceInfo localID "${srcInfo.localID[0]}" does not resolve ` +
+                            `in the source prefab of "${doc.nodePath(obj.source.__id__)}"`
+                        );
+                    }
+                }
+            }
+
+            if (obj.target !== null) {
+                if (!isRef(obj.target) || !doc.isNode(doc.getObject(obj.target.__id__))) {
+                    errors.push(`${at}: target must be null or reference a node`);
+                    return;
+                }
+            }
+
+            // A live override shadows the serialized value on load — a
+            // non-null serialized value is a silent surprise.
+            if (obj.sourceInfo === null && isRef(obj.source) &&
+                Array.isArray(obj.propertyPath) && obj.propertyPath.length > 0) {
+                let value = doc.getObject(obj.source.__id__);
+                for (const seg of obj.propertyPath) {
+                    if (value === null || typeof value !== 'object') { value = undefined; break; }
+                    value = value[seg];
+                }
+                if (value !== null && value !== undefined) {
+                    warnings.push(
+                        `${at}: source property "${obj.propertyPath.join('.')}" has a non-null ` +
+                        `serialized value that the target override will overwrite on load`
+                    );
+                }
+            }
+
+            // Resolution checks (warnings): single-hop localID against the
+            // target stub's source prefab; unresolvable prefabs are skipped
+            // (the missing-asset warning already covers them).
+            if (!resolvable || !isRef(obj.target)) return;
+            const stubIdx = obj.target.__id__;
+            if (!doc.isInstanceStub(stubIdx)) return;
+            const localID = info?.localID;
+            if (!Array.isArray(localID) || localID.length !== 1) return;
+
+            const targets = this.#sourcePrefabTargets(stubIdx, targetMaps);
+            if (targets && !targets.has(localID[0])) {
+                warnings.push(
+                    `${at}: localID "${localID[0]}" does not resolve in the source prefab ` +
+                    `of "${doc.nodePath(stubIdx)}" — the reference will be lost on load`
+                );
+            }
+        });
+    }
+
+    /**
+     * fileIdTargets map of a stub's source prefab, cached per asset uuid.
+     * Requires assetIndex + projectRoot; null when the prefab is unreadable
+     * (the missing-asset warning already covers that).
+     */
+    #sourcePrefabTargets(stubIdx, cache) {
+        const doc = this.#doc;
+        const assetUuid = doc.getObject(doc.getObject(stubIdx)._prefab.__id__).asset?.__uuid__;
+        if (typeof assetUuid !== 'string') return null;
+        if (!cache.has(assetUuid)) {
+            try {
+                const { doc: sourceDoc } = loadSourcePrefabByUuid(
+                    { assetIndex: this.#assetIndex, projectRoot: this.#projectRoot }, assetUuid);
+                cache.set(assetUuid, fileIdTargets(sourceDoc));
+            } catch {
+                cache.set(assetUuid, null);
+            }
+        }
+        return cache.get(assetUuid);
+    }
+
+    /**
+     * cc.PrefabInstance.removedComponents invariants: entries are
+     * cc.TargetInfo references with string localIDs (errors); with a
+     * project available, single-hop localIDs must resolve to a component
+     * of the source prefab (warnings).
+     */
+    #checkRemovedComponents(errors, warnings) {
+        const doc = this.#doc;
+        const resolvable = this.#assetIndex && this.#projectRoot;
+        const targetMaps = new Map();
+
+        doc.objects.forEach((obj, idx) => {
+            if (obj.__type__ !== 'cc.PrefabInstance') return;
+            const rc = obj.removedComponents;
+            if (rc === null || rc === undefined) return;
+            if (!Array.isArray(rc)) {
+                errors.push(`PrefabInstance #${idx}: removedComponents must be an array or null`);
+                return;
+            }
+            const stubIdx = this.#stubOfInstance(idx);
+            rc.forEach((r, i) => {
+                const at = `PrefabInstance #${idx}.removedComponents[${i}]`;
+                const info = isRef(r) ? doc.getObject(r.__id__) : null;
+                if (info?.__type__ !== 'cc.TargetInfo' ||
+                    !Array.isArray(info.localID) || info.localID.length === 0 ||
+                    info.localID.some(s => typeof s !== 'string')) {
+                    errors.push(`${at}: must reference a cc.TargetInfo with a non-empty string localID`);
+                    return;
+                }
+                if (!resolvable || stubIdx === null || info.localID.length !== 1) return;
+                const targets = this.#sourcePrefabTargets(stubIdx, targetMaps);
+                const hit = targets?.get(info.localID[0]);
+                if (targets && !hit) {
+                    warnings.push(
+                        `${at}: localID "${info.localID[0]}" does not resolve in the ` +
+                        `source prefab of "${doc.nodePath(stubIdx)}" — the removal is a no-op`
+                    );
+                } else if (hit && !hit.component) {
+                    warnings.push(
+                        `${at}: localID "${info.localID[0]}" resolves to node "${hit.target}", ` +
+                        `not a component — the removal is a no-op`
+                    );
+                }
+            });
+        });
+    }
+
+    /** The instance stub node owning a cc.PrefabInstance (PrefabInfo.root) */
+    #stubOfInstance(instanceIdx) {
+        const doc = this.#doc;
+        for (const obj of doc.objects) {
+            if (obj.__type__ === 'cc.PrefabInfo' &&
+                isRef(obj.instance) && obj.instance.__id__ === instanceIdx && isRef(obj.root)) {
+                return obj.root.__id__;
+            }
+        }
+        return null;
     }
 
     #checkReachability(warnings) {

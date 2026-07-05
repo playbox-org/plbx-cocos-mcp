@@ -1,0 +1,253 @@
+{
+  "name": "ZombieBuyer",
+  "active": true,
+  "components": [
+    {
+      "type": "Script:9c1e50Oh",
+      "enabled": true,
+      "props": {
+        "bodyAnchor": "→Zombie_1gr_colander#42",
+        "carCrystalStack": "→CarCrystalStack#3",
+        "cashAnchor": "→CarCrystalStack#2",
+        "indicator": "→CarIndicatorView#37",
+        "indicatorBillboard": "→CarIndicatorView#39",
+        "requiredCount": 6,
+        "coinReward": 5,
+        "idleClip": "Idle",
+        "runClip": "Run",
+        "animBlendDuration": 0.15,
+        "runSpeedThreshold": 0.05,
+        "facingYawOffset": 0,
+        "bodyNode__targetOverride": "→(instance)",
+        "wheels.0__targetOverride": "→(instance)",
+        "animation__targetOverride": "→Zombie_1gr_colander#42"
+      }
+    }
+  ],
+  "children": [
+    {
+      "name": "CarCrystalStack",
+      "active": true,
+      "pos": [
+        0,
+        1.2,
+        -0.9
+      ],
+      "components": [
+        {
+          "type": "Script:03f35T03",
+          "enabled": true,
+          "props": {
+            "root": "→CarCrystalStack#2",
+            "gridX": 2,
+            "gridZ": 1,
+            "spacingX": 0.8,
+            "spacingZ": 0.8,
+            "stackHeight": 0.5,
+            "defaultArcHeight": 2,
+            "defaultSpeed": 8,
+            "maxFlightDuration": 0.6,
+            "maxCapacity": 0,
+            "maxVisible": 0,
+            "visibleFromTop": false,
+            "disablePhysicsOnAdd": true,
+            "snapRotationOnAdd": true,
+            "snapScaleOnAdd": true,
+            "editorPreviewEnabled": false,
+            "editorPreviewCount": 0
+          }
+        }
+      ],
+      "prefab": true
+    },
+    {
+      "name": "CarIndicatorView",
+      "active": true,
+      "pos": [
+        0,
+        3,
+        0.8
+      ],
+      "components": [
+        {
+          "type": "Script:c72b8Bj6",
+          "enabled": true,
+          "props": {
+            "progressFill": "→Fill#12",
+            "countLabel": "→Count#24",
+            "iconSprite": "→Icon#18",
+            "bounceTarget": "→CarIndicatorView#6",
+            "bounceScale": 1.15,
+            "bounceDuration": 0.18
+          }
+        },
+        {
+          "type": "Script:84bf09ol",
+          "enabled": true,
+          "props": {
+            "lockYAxis": false
+          }
+        }
+      ],
+      "children": [
+        {
+          "name": "Root",
+          "active": true,
+          "pos": [
+            0,
+            0.6,
+            0
+          ],
+          "components": [
+            {
+              "type": "UITransform",
+              "enabled": true
+            },
+            {
+              "type": "RenderRoot2D",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "Bg",
+              "active": true,
+              "components": [
+                {
+                  "type": "UITransform",
+                  "enabled": true
+                },
+                {
+                  "type": "Sprite",
+                  "enabled": true,
+                  "props": {
+                    "_customMaterial": "<asset>",
+                    "_srcBlendFactor": 2,
+                    "_dstBlendFactor": 4,
+                    "_spriteFrame": "<asset>",
+                    "_type": 0,
+                    "_fillType": 0,
+                    "_sizeMode": 1,
+                    "_fillStart": 0,
+                    "_fillRange": 0,
+                    "_isTrimmedMode": true,
+                    "_useGrayscale": false
+                  }
+                }
+              ],
+              "children": [
+                {
+                  "name": "Fill",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Sprite",
+                      "enabled": true,
+                      "props": {
+                        "_customMaterial": "<asset>",
+                        "_srcBlendFactor": 2,
+                        "_dstBlendFactor": 4,
+                        "_spriteFrame": "<asset>",
+                        "_type": 3,
+                        "_fillType": 1,
+                        "_sizeMode": 0,
+                        "_fillStart": 0,
+                        "_fillRange": 1,
+                        "_isTrimmedMode": true,
+                        "_useGrayscale": false
+                      }
+                    }
+                  ],
+                  "prefab": true
+                },
+                {
+                  "name": "Icon",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Sprite",
+                      "enabled": true,
+                      "props": {
+                        "_customMaterial": "<asset>",
+                        "_srcBlendFactor": 2,
+                        "_dstBlendFactor": 4,
+                        "_spriteFrame": "<asset>",
+                        "_type": 0,
+                        "_fillType": 1,
+                        "_sizeMode": 0,
+                        "_fillStart": 0,
+                        "_fillRange": 1,
+                        "_isTrimmedMode": true,
+                        "_useGrayscale": false
+                      }
+                    }
+                  ],
+                  "prefab": true
+                },
+                {
+                  "name": "Count",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Label",
+                      "enabled": true,
+                      "text": "12",
+                      "props": {
+                        "_customMaterial": "<asset>",
+                        "_srcBlendFactor": 2,
+                        "_dstBlendFactor": 4,
+                        "_horizontalAlign": 2,
+                        "_verticalAlign": 1,
+                        "_actualFontSize": 35,
+                        "_fontSize": 35,
+                        "_fontFamily": "Arial",
+                        "_lineHeight": 40,
+                        "_overflow": 0,
+                        "_enableWrapText": true,
+                        "_font": "<asset>",
+                        "_isSystemFontUsed": false,
+                        "_spacingX": 0,
+                        "_isItalic": false,
+                        "_isBold": true,
+                        "_isUnderline": false,
+                        "_underlineHeight": 2,
+                        "_cacheMode": 0,
+                        "_enableOutline": true,
+                        "_outlineWidth": 2,
+                        "_enableShadow": false,
+                        "_shadowBlur": 2
+                      }
+                    }
+                  ],
+                  "prefab": true
+                }
+              ],
+              "prefab": true
+            }
+          ],
+          "prefab": true
+        }
+      ],
+      "prefab": true
+    },
+    {
+      "name": "Zombie_1gr_colander",
+      "active": true,
+      "prefab": true,
+      "prefabSource": "60f23d78…"
+    }
+  ],
+  "prefab": true
+}

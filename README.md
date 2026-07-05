@@ -67,19 +67,21 @@ LLM никогда не редактирует `.scene`/`.prefab` напряму
 
 `apply_edits` принимает батч операций — всё или ничего: ops → перенумерация → валидация → атомарная запись только валидного результата. В ответе — минифицированные поддеревья затронутых участков. `dryRun: true` показывает результат без записи.
 
-Десять операций:
+Двенадцать операций:
 
 - `set_node_property` — name/active/layer/mobility/position/rotation/scale (euler автоматически синхронизирует кватернион)
 - `add_node`, `remove_node` (+ чистка реестра инстансов и внешних ссылок), `reparent`
 - `add_component` — шаблон `cc.*` или кастомный скрипт по имени
-- `set_component_property` — формы значений `$node`/`$asset`/`$component`, слияние value-типов
+- `remove_component` — снятие компонента с обычной ноды; внешние ссылки на компонент блокируют операцию (`force: true` обнуляет их); `cc.UITransform` защищён, пока на ноде есть зависимые UI-компоненты. На префаб-инстансе (`target` — путь внутри исходного префаба) удаление записывается в `removedComponents` инстанса, исходный префаб не трогается
+- `set_component_property` — формы значений `$node`/`$asset`/`$component`, слияние value-типов; `$node`/`$component` могут указывать **внутрь** свёрнутого префаб-инстанса (см. targetOverrides в format notes)
 - `set_asset_ref` — ссылка на ассет по пути/UUID/`uuid@subId`
 - `instantiate_prefab` — свёрнутый инстанс (стаб + overrides), принимает `.prefab`, модель (gltf-scene из `library/`) или `model@subId`
-- `set_instance_property` / `remove_instance_override` — overrides инстансов; `target` — путь внутри исходного префаба
+- `set_instance_property` / `remove_instance_override` — overrides инстансов; `target` — путь внутри исходного префаба; значения-ссылки поддерживаются: `$node`/`$component` на plain-объекты сцены сериализуются в значение override, ссылки внутрь инстансов — редакторской формой targetOverride с `sourceInfo`
+- `restore_instance_component` — откат `remove_component` на инстансе (удаляет запись из `removedComponents`)
 
 **Адресация нод** — путь (`Canvas/Panel/BuyBtn`, `Name[i]` для одноимённых) или стабильный `_id` ноды. Никогда `__id__` — индексы съезжают после каждой записи.
 
-**Политика префабов**: правь исходный ассет, не инстанс — инстансы наследуют изменения. Внутренности инстансов в файле не существуют (свёрнутая сериализация) и правятся только через overrides; читать их можно — `inspect_node` на инстансе разворачивает исходный префаб с target-путями и текущими overrides.
+**Политика префабов**: правь исходный ассет, не инстанс — инстансы наследуют изменения. Внутренности инстансов в файле не существуют (свёрнутая сериализация) и правятся только через overrides; читать их можно — `inspect_node` на инстансе разворачивает исходный префаб с target-путями и текущими overrides. Ссылки `@property` **на объекты внутри инстанса** проставляются обычным `set_component_property`: `{"$node": "Stub/Inner/Node"}` (путь продолжается внутрь стаба) или `{"$component": {node: "Stub", target: "Inner/Node", type: "T"}}` — сериализуются редакторской формой targetOverride.
 
 **Wrapper-конвенция** (`build_prefab`): модель/спрайт никогда не корень префаба. `Root` (scale 1, здесь логика/твины/коллайдеры) → `Visual`-ребёнок (модель с корректирующим скейлом). Валидатор предупреждает о нарушениях.
 
@@ -172,6 +174,7 @@ src/
 │   ├── SceneDocument.js     # load → mutate → validate → save; канон = DFS-перенумерация
 │   ├── operations.js        # Семантические операции
 │   ├── instances.js         # Свёрнутые префаб-инстансы и overrides
+│   ├── targetOverrides.js   # Ссылки @property внутрь свёрнутых инстансов
 │   ├── ComponentTemplates.js# Полные шаблоны компонентов 3.8.x
 │   ├── Validator.js         # Инварианты (ошибки) + конвенции (warnings)
 │   ├── PrefabBuilder.js     # Спек-компилятор build_prefab
@@ -195,6 +198,9 @@ src/
 - Нода: `_parent`/`_children` двунаправленны; у компонентов обратная ссылка `node`; value-типы (`cc.Vec3` и т.п.) инлайнятся. `_id` (22 символа base64) у всех нод/компонентов в сценах, `""` — в префаб-файлах. `_euler` ↔ `_lrot`: рантайм читает `_lrot`, формула `Quat.fromEuler` — YZX (`src/utils/math3d.js`).
 - **Префаб-инстансы сериализуются свёрнуто**: нода-заглушка `{_parent, _prefab, __editorExtras__}` (без `_name`/`_children`) + `cc.PrefabInfo {fileId = fileId корня исходника, instance}` + `cc.PrefabInstance {propertyOverrides, mountedChildren, ...}`. Всё состояние — в `CCPropertyOverrideInfo {targetInfo: {localID: [fileId]}, propertyPath, value}`; внутренние ноды инстанса в файле не существуют.
 - Корневая `cc.Scene._prefab` — **реестр инстансов** (`nestedPrefabInstanceRoots` в DFS-порядке иерархии, `targetOverrides`); при добавлении/удалении/перемещении инстансов он обновляется согласованно.
+- **Ссылки внутрь свёрнутых инстансов** (`cc.TargetOverrideInfo`, верифицировано на golden-корпусе: 43 в сцене + 4 в префабе): ссылка «компонент → объект внутри инстанса» **не** сериализуется как `{"__id__"}` — свойство у источника пишется `null` (или ключ опускается редактором вовсе), а в реестровом PrefabInfo (`targetOverrides`) появляется `cc.TargetOverrideInfo {source: <компонент>, sourceInfo: null, propertyPath: ["prop"] | ["arr", "0"] (сегменты — всегда строки), target: <нода-стаб>, targetInfo: cc.TargetInfo {localID: [<fileId цели в исходном префабе>]}}`. При загрузке движок резолвит `target` → корень инстанса → `localID` и перезаписывает `null`. Живой override **затеняет** сериализованное значение — при перезаписи свойства обычным значением запись targetOverride обязана удаляться (иначе тихий откат при загрузке); `apply_edits` делает это автоматически. Формы `target: null` (резолв от корня документа) и multi-hop `localID` встречаются в editor-файлах — читаются и сохраняются как есть, но не генерируются.
+- **Источник внутри инстанса** (`sourceInfo != null`, 24 из 43 записей golden-сцены): когда ссылку хранит компонент, сам лежащий в свёрнутом инстансе, `source` = **нода-стаб** этого инстанса, `sourceInfo` = `cc.TargetInfo {localID: [<CompPrefabInfo.fileId компонента-источника>]}` — движок резолвит источник через targetMap инстанса (`applyTargetOverrides`, исходники 3.8.7). Так пишет `set_instance_property` со значением `$node`/`$component`, указывающим внутрь инстанса (этого же или другого). Ссылка из инстанса на **plain-объект сцены** — другой механизм: обычный `{"__id__"}` прямо в значении `CCPropertyOverrideInfo` (golden: `playerGoldStorage`, 9 записей).
+- **`removedComponents`** (удаление компонента с инстанса): массив ссылок на `cc.TargetInfo {localID: [<CompPrefabInfo.fileId>]}` в `cc.PrefabInstance` — форма выведена из `applyRemovedComponents` в исходниках движка 3.8.7 (движок резолвит компонент через targetMap и снимает его с ноды); **editor re-save верификация pending** — в golden-корпусе массив всегда пуст. `remove_component` на стабе дедуплицирует записи, чистит property-overrides умершего компонента и его исходящие targetOverrides; входящие targetOverrides блокируют операцию без `force: true`.
 - `fileId` уникален только в definition-scope префаб-файла (инстансы одного префаба легитимно дублируют); `_id` уникален в файле.
 - Ссылки на ассеты: `{__uuid__: <полный dashed-UUID>, __expectedType__}`. Суб-ассеты изображений: `<uuid>@f9941` = spriteFrame, `<uuid>@6c48a` = texture2D; у моделей `@<5 hex>` — gltf-mesh/gltf-material/gltf-scene/gltf-animation.
 - AABB меша: `library/<2 hex>/<uuid>@<subId>.json` → `_struct.minPosition/maxPosition`; fallback для `.glb` — glTF accessors POSITION min/max. Для `.fbx` без `library/` кэша AABB недоступен. Скомпилированный gltf-scene префаб модели тоже лежит в `library/` — без него модель можно инстанцировать только через `.prefab`.
@@ -205,7 +211,7 @@ src/
 - designResolution: `settings/v2/packages/project.json` → `general.designResolution`; версия движка: `package.json` игры → `creator.version`; физика — `settings/v2/packages/` (`project.json` → `physics`, активный движок в `engine.json`).
 - Спрайт-мета: subMetas с rect/trim/9-slice границами; PNG в 3D-проекте может быть импортирован как `type: "texture"` без sprite-frame вовсе.
 
-Известные ограничения (кандидаты на развитие): multi-hop overrides внутрь вложенных инстансов, создание `targetOverrides`, editor-bridge для live-режима, CLI-валидация для CI.
+Известные ограничения (кандидаты на развитие): multi-hop overrides внутрь вложенных инстансов, mountedChildren/mountedComponents (добавление нод/компонентов в инстанс), editor re-save верификация `removedComponents` и `sourceInfo`-записей на реальном проекте (V2/V5 из плана M6), editor-bridge для live-режима, CLI-валидация для CI.
 
 ## Тестирование
 

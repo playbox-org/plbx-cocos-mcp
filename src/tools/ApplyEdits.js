@@ -25,13 +25,16 @@ const OPS_DOC = `Operations (applied in order, all-or-nothing):
 - remove_node {node, force?} (force nulls external references into the subtree)
 - reparent {node, newParent, index?}
 - add_component {node, type, properties?} (type: cc.* template or custom script name)
+- remove_component {node, component?, componentIndex?, force?, target?} (force nulls external references to the component; cc.UITransform is protected while UI components need it. On a prefab-instance stub: target = node path inside the source prefab ("" = root), the removal is recorded in the instance's removedComponents — the source prefab is untouched; undo with restore_instance_component)
 - set_component_property {node, component?, componentIndex?, property, value}
-  value forms: raw JSON | {x?,y?,..} merged into typed values | {"$node": "path"} | {"$asset": "path|uuid", "$type"?} | {"$component": {node, type}}
+  value forms: raw JSON | {x?,y?,..} merged into typed values | {"$node": "path"} | {"$asset": "path|uuid", "$type"?} | {"$component": {node, type, target?}}
+  References INTO collapsed prefab instances work: {"$node": "Stub/Inner/Node"} (path continues inside the stub) and {"$component": {node: "Stub", target: "Inner/Node", type: "T"}} serialize as null + a targetOverride record (the editor's own form); overwriting with a plain value removes the record
 - set_asset_ref {node, component?, componentIndex?, property, asset, expectedType?} (asset: project path, UUID or "uuid@subId"; null clears)
 - instantiate_prefab {parent, prefab, name?, position?, rotation?, scale?, index?} (prefab: .prefab path/UUID, or a model file / "model.fbx@subId" for its gltf-scene prefab; creates a collapsed instance stub)
 - set_instance_property {node, target?, component?, componentIndex?, property, value}
-  node = the instance stub in this file; target = node path INSIDE the source prefab ("" = its root; discover paths with inspect_node on the stub). Without component: name|active|layer|mobility|position|rotation|scale. With component: any field (value forms as in set_component_property) — e.g. replace an embedded model material: {node: "Zombie", target: "Mesh", component: "cc.SkinnedMeshRenderer", property: "materials[0]", value: {"$asset": "Materials/Zombie.mtl"}}. Stored as propertyOverrides; same target+property updates in place
-- remove_instance_override {node, target?, component?, componentIndex?, property} (reverts an override back to the source prefab value)
+  node = the instance stub in this file; target = node path INSIDE the source prefab ("" = its root; discover paths with inspect_node on the stub). Without component: name|active|layer|mobility|position|rotation|scale. With component: any field (value forms as in set_component_property) — e.g. replace an embedded model material: {node: "Zombie", target: "Mesh", component: "cc.SkinnedMeshRenderer", property: "materials[0]", value: {"$asset": "Materials/Zombie.mtl"}}. Stored as propertyOverrides; same target+property updates in place. Reference values work too: {"$node"}/{"$component"} to plain scene objects serialize into the override value; references into a collapsed instance (this one or another) become a targetOverride record with sourceInfo (the editor's own form)
+- remove_instance_override {node, target?, component?, componentIndex?, property} (reverts an override — property or reference — back to the source prefab value)
+- restore_instance_component {node, target?, component?, componentIndex?} (undoes remove_component on an instance: deletes the removedComponents entry)
 
 Node addressing: "Canvas/Panel/BuyBtn" path from root, "/" = root, node _id, "Name[i]" or "[i]" disambiguate same-named/positional siblings.
 Prefab instances inside scenes are collapsed stubs: their internals are not in the file. Inspect them with inspect_node (shows internals + target paths), override properties with set_instance_property, remove/reparent the whole instance, or edit the source .prefab; anything else is rejected.`;
@@ -99,7 +102,7 @@ export class ApplyEdits extends BaseTool {
         }
 
         const { dropped } = doc.renumber();
-        const { errors, warnings } = new Validator(doc, assetIndex).validate();
+        const { errors, warnings } = new Validator(doc, assetIndex, { projectRoot }).validate();
         if (errors.length > 0) {
             return this.error(
                 `Edits produced an invalid document — nothing was written:\n` +

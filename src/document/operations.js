@@ -17,8 +17,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { isRef } from './SceneDocument.js';
 import {
-    instantiatePrefab, setInstanceProperty, removeInstanceOverride, sortInstanceRegistry
+    instantiatePrefab, setInstanceProperty, removeInstanceOverride, sortInstanceRegistry,
+    removeInstanceComponent, restoreInstanceComponent
 } from './instances.js';
+import {
+    dropTargetOverrides, upsertTargetOverride, transformValueTracked
+} from './targetOverrides.js';
 import {
     createComponent, createScriptComponent, resolveTemplateType, templateTypes
 } from './ComponentTemplates.js';
@@ -93,11 +97,13 @@ const HANDLERS = {
     remove_node: removeNode,
     reparent: reparent,
     add_component: addComponent,
+    remove_component: removeComponent,
     set_component_property: setComponentProperty,
     set_asset_ref: setAssetRef,
     instantiate_prefab: instantiatePrefab,
     set_instance_property: setInstanceProperty,
-    remove_instance_override: removeInstanceOverride
+    remove_instance_override: removeInstanceOverride,
+    restore_instance_component: restoreInstanceComponent
 };
 
 export function applyOperation(doc, op, ctx = {}) {
@@ -209,7 +215,7 @@ function locateProperty(component, path, { allowCreate = false } = {}) {
             `Index ${key} out of bounds for "${path}" (length ${container.length})`
         );
     }
-    return { container, key, leafName: segments[segments.length - 1] };
+    return { container, key, segments };
 }
 
 /** Find a component on a node by type/script name or positional index */
@@ -301,7 +307,7 @@ function resolveScriptUuid(ctx, name) {
 }
 
 /** Resolve an asset ref via AssetIndex into {__uuid__, __expectedType__} */
-function resolveAssetValue(ctx, ref, expectedType) {
+export function resolveAssetValue(ctx, ref, expectedType) {
     if (!ctx.assetIndex) {
         throw new OperationError('Asset resolution requires a project (assetIndex unavailable)');
     }
@@ -674,7 +680,7 @@ function addComponent(doc, op, ctx) {
     // Apply initial properties through the same code path as set_component_property
     const applied = [];
     for (const [prop, raw] of Object.entries(op.properties ?? {})) {
-        setPropertyOnComponent(doc, component, prop, raw, ctx, { isScript: !templateType });
+        setPropertyOnComponent(doc, compIdx, prop, raw, ctx, { isScript: !templateType });
         applied.push(prop);
     }
 
@@ -682,6 +688,91 @@ function addComponent(doc, op, ctx) {
         op: 'add_component',
         target: path,
         summary: `added ${label} to "${path}"${applied.length ? ` (set: ${applied.join(', ')})` : ''}`,
+        nodeIdx: idx
+    };
+}
+
+/**
+ * Components the editor refuses to remove while a dependent component is
+ * still on the node (the dependent's requireComponent). force does NOT
+ * bypass this — the editor forbids it too.
+ */
+export const REQUIRED_COMPANIONS = {
+    'cc.UITransform': [
+        'cc.Sprite', 'cc.Label', 'cc.RichText', 'cc.Button', 'cc.Layout',
+        'cc.Widget', 'cc.Mask', 'cc.Graphics', 'cc.ProgressBar', 'cc.Slider',
+        'cc.ScrollView', 'cc.PageView', 'cc.EditBox', 'cc.Toggle'
+    ]
+};
+
+function removeComponent(doc, op, ctx) {
+    const idx = resolveEditableNode(doc, requireString(op, 'node'), { allowStub: true });
+    if (doc.isInstanceStub(idx)) {
+        // The component lives in the source prefab — removal is recorded as
+        // a removedComponents entry on the instance (instances.js).
+        return removeInstanceComponent(doc, op, ctx);
+    }
+    const compIdx = findComponent(doc, idx, op.component, op.componentIndex, ctx);
+    const component = doc.getObject(compIdx);
+    const node = doc.getObject(idx);
+    const nodePath = doc.nodePath(idx);
+    const label = describeComponentType(component.__type__, ctx);
+
+    const dependents = (REQUIRED_COMPANIONS[component.__type__] ?? []).filter(dep =>
+        doc.componentIndices(idx).some(c => c !== compIdx && doc.getObject(c).__type__ === dep));
+    if (dependents.length > 0) {
+        throw new OperationError(
+            `Cannot remove ${component.__type__} from "${nodePath}" — required by ` +
+            `${dependents.join(', ')} on the same node. Remove those components first.`
+        );
+    }
+
+    // The component and its prefab bookkeeping die together; loose helper
+    // objects (ClickEvents etc.) become unreachable and are GC'd on renumber.
+    const removed = new Set([compIdx]);
+    if (isRef(component.__prefab)) removed.add(component.__prefab.__id__);
+
+    // Prune targetOverrides sourced from the dying component (mirror of the
+    // endpoint cleanup in remove_node)
+    for (let i = 0; i < doc.objects.length; i++) {
+        if (removed.has(i)) continue;
+        const obj = doc.getObject(i);
+        if (obj.__type__ !== 'cc.PrefabInfo' || !Array.isArray(obj.targetOverrides)) continue;
+        obj.targetOverrides = obj.targetOverrides.filter(r => {
+            if (!isRef(r)) return true;
+            const override = doc.getObject(r.__id__);
+            return !(isRef(override?.source) && removed.has(override.source.__id__));
+        });
+    }
+
+    // Detach first, then judge remaining references by reachability: pruned
+    // override objects are unreachable now and must not count as referrers.
+    node._components = node._components.filter(r => !(isRef(r) && r.__id__ === compIdx));
+
+    const reachable = doc.reachableIds();
+    const external = doc.externalRefsInto(removed)
+        .filter(r => reachable.has(r.fromIdx));
+    if (external.length > 0 && !op.force) {
+        const list = external.slice(0, 10).map(r => {
+            const from = doc.getObject(r.fromIdx);
+            const owner = isRef(from.node) ? ` on node "${doc.nodePath(from.node.__id__)}"` : '';
+            return `${from.__type__}${owner} → .${r.path}`;
+        }).join('; ');
+        throw new OperationError(
+            `${label} on "${nodePath}" is referenced from outside (${external.length} refs): ${list}. ` +
+            `Retarget those references first, or pass force: true to null them. ` +
+            `(The document is now inconsistent — discard it, do not save.)`
+        );
+    }
+    for (const r of external) {
+        nullifyRef(doc.getObject(r.fromIdx), r.path);
+    }
+
+    return {
+        op: 'remove_component',
+        target: nodePath,
+        summary: `removed ${label} from "${nodePath}"` +
+            `${external.length ? ` (nulled ${external.length} external refs)` : ''}`,
         nodeIdx: idx
     };
 }
@@ -706,14 +797,34 @@ function syncPairedField(component, container, key, value) {
         : value;
 }
 
-function setPropertyOnComponent(doc, component, property, rawValue, ctx, { isScript }) {
-    const { container, key } = locateProperty(component, property, { allowCreate: isScript });
-    const value = transformValue(doc, rawValue, ctx);
+function setPropertyOnComponent(doc, compIdx, property, rawValue, ctx, { isScript }) {
+    const component = doc.getObject(compIdx);
+    const { container, key, segments } = locateProperty(component, property, { allowCreate: isScript });
+    const pathStrings = segments.map(String);
+
+    // A write supersedes any target override it covers — otherwise the stale
+    // override would silently overwrite the new value on load.
+    dropTargetOverrides(doc, compIdx, pathStrings);
+
+    // $node/$component values pointing INSIDE collapsed prefab instances
+    // cannot serialize as {__id__} — they become null + a TargetOverrideInfo
+    // in the document registry (golden-scene shape, sourceInfo: null).
+    const refs = [];
+    const value = transformValueTracked(doc, rawValue, ctx, refs);
     const existing = container[key];
     const isReference = value && typeof value === 'object' &&
         ('__id__' in value || '__uuid__' in value);
     container[key] = isReference ? value : mergeTyped(existing, value, property);
     syncPairedField(component, container, key, container[key]);
+
+    for (const ref of refs) {
+        upsertTargetOverride(doc, ctx, {
+            sourceIdx: compIdx,
+            propertyPath: [...pathStrings, ...ref.path],
+            stubIdx: ref.stubIdx,
+            localID: ref.localID
+        });
+    }
 }
 
 function setComponentProperty(doc, op, ctx) {
@@ -723,7 +834,7 @@ function setComponentProperty(doc, op, ctx) {
     const component = doc.getObject(compIdx);
     const isScript = !component.__type__.startsWith('cc.');
 
-    setPropertyOnComponent(doc, component, property, op.value, ctx, { isScript });
+    setPropertyOnComponent(doc, compIdx, property, op.value, ctx, { isScript });
 
     const path = doc.nodePath(idx);
     return {
@@ -743,9 +854,12 @@ function setAssetRef(doc, op, ctx) {
     const value = op.asset === null
         ? null
         : resolveAssetValue(ctx, requireString(op, 'asset'), op.expectedType);
-    const { container, key } = locateProperty(component, property, {
+    const { container, key, segments } = locateProperty(component, property, {
         allowCreate: !component.__type__.startsWith('cc.')
     });
+    // Same supersede rule as setPropertyOnComponent (asset values are never
+    // instance refs, so only the drop side applies here)
+    dropTargetOverrides(doc, compIdx, segments.map(String));
     container[key] = value;
     syncPairedField(component, container, key, value);
 

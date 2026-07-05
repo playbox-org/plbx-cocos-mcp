@@ -10,8 +10,12 @@
  * "fileId mapping" this module implements.
  *
  * Scope: single-hop localID only. Targets inside nested instances of
- * the source prefab (multi-hop localID), mountedChildren/mountedComponents
- * and removedComponents are not implemented yet.
+ * the source prefab (multi-hop localID) and mountedChildren/
+ * mountedComponents are not implemented yet. removedComponents is
+ * implemented (remove_component on a stub / restore_instance_component):
+ * entries are cc.TargetInfo{localID: [CompPrefabInfo.fileId]} — the form
+ * the 3.8.7 engine reads in applyRemovedComponents (editor re-save
+ * verification pending, the golden corpus only holds empty arrays).
  *
  * SOLID: S - instance machinery only; generic ops stay in operations.js
  */
@@ -22,8 +26,12 @@ import { randomUUID } from 'crypto';
 import { SceneDocument, isRef } from './SceneDocument.js';
 import {
     OperationError, requireString, resolveEditableNode, mergeTyped, parsePropertyPath,
-    findComponent, transformValue, normalizeNodeProperty, describeComponentType
+    findComponent, normalizeNodeProperty, describeComponentType, REQUIRED_COMPANIONS
 } from './operations.js';
+import {
+    transformValueTracked, upsertTargetOverride, dropTargetOverrides,
+    dropTargetOverridesInto, listTargetOverrides
+} from './targetOverrides.js';
 import { generateFileId } from '../utils/fileId.js';
 import { eulerToQuat } from '../utils/math3d.js';
 
@@ -132,7 +140,7 @@ function loadPrefabDocument(filePath, ref) {
 }
 
 /** fileId of a node inside its own prefab file (PrefabInfo.fileId) */
-function nodeFileId(sourceDoc, nodeIdx, label) {
+export function nodeFileId(sourceDoc, nodeIdx, label) {
     const node = sourceDoc.getObject(nodeIdx);
     if (!isRef(node._prefab)) {
         throw new OperationError(
@@ -315,7 +323,12 @@ export function sortInstanceRegistry(doc) {
         (order.get(a.__id__) ?? Infinity) - (order.get(b.__id__) ?? Infinity));
 }
 
-function registryInfo(doc, ctx) {
+/**
+ * The document's registry PrefabInfo (cc.Scene._prefab / prefab-root
+ * PrefabInfo) — holder of nestedPrefabInstanceRoots and targetOverrides.
+ * Created on demand for scenes that never held an instance.
+ */
+export function registryInfo(doc, ctx) {
     const root = doc.root.node;
     if (isRef(root._prefab)) return doc.getObject(root._prefab.__id__);
 
@@ -387,10 +400,12 @@ export function removeInstanceOverride(doc, op, ctx) {
 
     let localId;
     let paths;
+    let isComponent = false;
     if (op.component !== undefined || op.componentIndex !== undefined) {
         const compIdx = findComponent(sourceDoc, targetIdx, op.component, op.componentIndex, ctx);
         localId = componentFileId(sourceDoc, compIdx, label);
         paths = [overridePathForComponent(sourceDoc.getObject(compIdx), property)];
+        isComponent = true;
     } else {
         localId = nodeFileId(sourceDoc, targetIdx, label);
         const form = NODE_PROPERTY_FORMS[property] ?? property;
@@ -400,6 +415,10 @@ export function removeInstanceOverride(doc, op, ctx) {
     let removed = 0;
     for (const p of paths) {
         removed += dropOverride(doc, instance, [localId], p);
+        // Reference overrides live in the registry, not in propertyOverrides
+        if (isComponent) {
+            removed += dropTargetOverrides(doc, stubIdx, p, { sourceLocalID: [localId] });
+        }
     }
     if (removed === 0) {
         throw new OperationError(
@@ -485,14 +504,41 @@ function setComponentOverride(doc, op, ctx, { instance, sourceDoc, targetIdx, la
     const localId = componentFileId(sourceDoc, compIdx, label);
     const propertyPath = overridePathForComponent(component, property);
 
-    // Base for value-type merges: existing override, else the source value
-    const existing = findOverride(doc, instance, [localId], propertyPath)?.value ??
-        readPath(component, propertyPath);
-    const value = transformValue(doc, op.value, ctx);
-    const isReference = value && typeof value === 'object' && ('__id__' in value || '__uuid__' in value);
-    const finalValue = isReference ? value : mergeTyped(existing, value, property);
+    // $node/$component values pointing INSIDE collapsed instances (this one
+    // or another) cannot live in an override value — each becomes a
+    // cc.TargetOverrideInfo with sourceInfo = this component's fileId
+    // (golden scene shape: trigger/progressFill/costLabel/paymentAnchor).
+    // Plain scene references stay {__id__} in the value (golden:
+    // playerGoldStorage).
+    const refs = [];
+    const value = transformValueTracked(doc, op.value, ctx, refs);
 
-    pushOverride(doc, instance, [localId], propertyPath, finalValue);
+    // Any write supersedes the reference overrides it covers — a stale
+    // TargetOverrideInfo would silently overwrite the new value on load.
+    dropTargetOverrides(doc, stubIdx, propertyPath, { sourceLocalID: [localId] });
+
+    if (refs.length === 1 && refs[0].path.length === 0) {
+        // Whole-value reference: the editor writes NO property override —
+        // the TargetOverrideInfo alone carries the wiring (golden shape).
+        dropOverride(doc, instance, [localId], propertyPath);
+    } else {
+        // Base for value-type merges: existing override, else the source value
+        const existing = findOverride(doc, instance, [localId], propertyPath)?.value ??
+            readPath(component, propertyPath);
+        const isReference = value && typeof value === 'object' && ('__id__' in value || '__uuid__' in value);
+        const finalValue = isReference ? value : mergeTyped(existing, value, property);
+        pushOverride(doc, instance, [localId], propertyPath, finalValue);
+    }
+
+    for (const ref of refs) {
+        upsertTargetOverride(doc, ctx, {
+            sourceIdx: stubIdx,
+            sourceLocalID: [localId],
+            propertyPath: [...propertyPath, ...ref.path],
+            stubIdx: ref.stubIdx,
+            localID: ref.localID
+        });
+    }
 
     const stubPath = doc.nodePath(stubIdx);
     const where = op.target ? `${stubPath}→${op.target}` : stubPath;
@@ -505,7 +551,7 @@ function setComponentOverride(doc, op, ctx, { instance, sourceDoc, targetIdx, la
     };
 }
 
-function componentFileId(sourceDoc, compIdx, label) {
+export function componentFileId(sourceDoc, compIdx, label) {
     const component = sourceDoc.getObject(compIdx);
     if (!isRef(component.__prefab)) {
         throw new OperationError(
@@ -541,6 +587,138 @@ function readPath(obj, segments) {
         current = current[seg];
     }
     return current;
+}
+
+// ----------------------------------------------- removedComponents (A2)
+
+/**
+ * remove_component on an instance stub: the component exists only in the
+ * source prefab, so removal is recorded as a cc.TargetInfo{localID:
+ * [CompPrefabInfo.fileId]} entry in cc.PrefabInstance.removedComponents —
+ * the form the 3.8.7 engine reads in applyRemovedComponents (editor
+ * re-save verification pending; the golden corpus only holds []).
+ *
+ * op: {node: <stub>, target?: <path in source prefab>, component?,
+ *      componentIndex?, force?}
+ */
+export function removeInstanceComponent(doc, op, ctx) {
+    const { instance, sourceDoc, targetIdx, label, stubIdx } = resolveInstanceTarget(doc, op, ctx);
+    const compIdx = findComponent(sourceDoc, targetIdx, op.component, op.componentIndex, ctx);
+    const component = sourceDoc.getObject(compIdx);
+    const fileId = componentFileId(sourceDoc, compIdx, label);
+    const typeLabel = describeComponentType(component.__type__, ctx);
+    const where = op.target ? `${doc.nodePath(stubIdx)}→${op.target}` : doc.nodePath(stubIdx);
+
+    if (!Array.isArray(instance.removedComponents)) instance.removedComponents = [];
+    const already = removedComponentEntries(doc, instance);
+    if (already.some(e => sameArray(e.obj.localID, [fileId]))) {
+        throw new OperationError(`${typeLabel} on "${where}" is already removed from this instance`);
+    }
+
+    // Same editor rule as on plain nodes, judged against the source node's
+    // components that survive on THIS instance. force does not bypass.
+    const removedIds = new Set(already.flatMap(e => e.obj.localID.length === 1 ? e.obj.localID : []));
+    const dependents = (REQUIRED_COMPANIONS[component.__type__] ?? []).filter(dep =>
+        sourceDoc.componentIndices(targetIdx).some(c => {
+            if (c === compIdx || sourceDoc.getObject(c).__type__ !== dep) return false;
+            try {
+                return !removedIds.has(componentFileId(sourceDoc, c, label));
+            } catch {
+                return true;
+            }
+        }));
+    if (dependents.length > 0) {
+        throw new OperationError(
+            `Cannot remove ${component.__type__} from "${where}" — required by ` +
+            `${dependents.join(', ')} on the same node. Remove those components first.`
+        );
+    }
+
+    // References INTO the dying component (registry TargetOverrideInfo
+    // entries addressed through this stub) mirror the external-refs rule of
+    // plain remove_component: block unless force, then drop.
+    const incoming = listTargetOverrides(doc).filter(({ obj }) => {
+        if (!isRef(obj.target) || obj.target.__id__ !== stubIdx) return false;
+        const info = isRef(obj.targetInfo) ? doc.getObject(obj.targetInfo.__id__) : null;
+        return info?.__type__ === 'cc.TargetInfo' && sameArray(info.localID, [fileId]);
+    });
+    if (incoming.length > 0 && !op.force) {
+        const list = incoming.slice(0, 10).map(({ obj }) => {
+            if (obj.sourceInfo === null && isRef(obj.source)) {
+                const from = doc.getObject(obj.source.__id__);
+                const owner = isRef(from?.node) ? `${doc.nodePath(from.node.__id__)} ▸ ` : '';
+                return `${owner}${describeComponentType(from?.__type__ ?? '?', ctx)} .${obj.propertyPath.join('.')}`;
+            }
+            return `${isRef(obj.source) ? doc.nodePath(obj.source.__id__) : '?'} (inside instance) .${obj.propertyPath.join('.')}`;
+        }).join('; ');
+        throw new OperationError(
+            `${typeLabel} on "${where}" is referenced by target overrides (${incoming.length}): ${list}. ` +
+            `Retarget those references first, or pass force: true to drop them.`
+        );
+    }
+    dropTargetOverridesInto(doc, stubIdx, [fileId]);
+
+    // Bookkeeping that dies with the component: its property overrides and
+    // the reference overrides it was the source of.
+    const staleOverrides = dropOverridesByLocalId(doc, instance, [fileId]);
+    dropTargetOverrides(doc, stubIdx, [], { sourceLocalID: [fileId] });
+
+    instance.removedComponents.push({
+        __id__: doc.addObject({ __type__: 'cc.TargetInfo', localID: [fileId] })
+    });
+
+    return {
+        op: 'remove_component',
+        target: doc.nodePath(stubIdx),
+        summary: `removed ${typeLabel} from "${where}" (recorded in removedComponents` +
+            `${staleOverrides ? `, dropped ${staleOverrides} stale override(s)` : ''}` +
+            `${incoming.length ? `, dropped ${incoming.length} incoming reference(s)` : ''})`,
+        nodeIdx: stubIdx
+    };
+}
+
+/**
+ * op: {node: <stub>, target?, component?, componentIndex?}
+ * Undoes remove_component on an instance: deletes the matching
+ * removedComponents entry, so the source prefab's component is back.
+ */
+export function restoreInstanceComponent(doc, op, ctx) {
+    const { instance, sourceDoc, targetIdx, label, stubIdx } = resolveInstanceTarget(doc, op, ctx);
+    const compIdx = findComponent(sourceDoc, targetIdx, op.component, op.componentIndex, ctx);
+    const component = sourceDoc.getObject(compIdx);
+    const fileId = componentFileId(sourceDoc, compIdx, label);
+    const typeLabel = describeComponentType(component.__type__, ctx);
+    const where = op.target ? `${doc.nodePath(stubIdx)}→${op.target}` : doc.nodePath(stubIdx);
+
+    const before = (instance.removedComponents ?? []).length;
+    instance.removedComponents = (instance.removedComponents ?? []).filter(r => {
+        if (!isRef(r)) return true;
+        const obj = doc.getObject(r.__id__);
+        return !(obj?.__type__ === 'cc.TargetInfo' && sameArray(obj.localID, [fileId]));
+    });
+    if (instance.removedComponents.length === before) {
+        const removed = removedComponentEntries(doc, instance)
+            .map(e => e.obj.localID.join('/')).join(', ');
+        throw new OperationError(
+            `${typeLabel} on "${where}" is not removed on this instance — nothing to restore ` +
+            `(removed localIDs: ${removed || 'none'})`
+        );
+    }
+
+    return {
+        op: 'restore_instance_component',
+        target: doc.nodePath(stubIdx),
+        summary: `restored ${typeLabel} on "${where}" (removedComponents entry deleted)`,
+        nodeIdx: stubIdx
+    };
+}
+
+/** Well-formed removedComponents entries of an instance */
+export function removedComponentEntries(doc, instance) {
+    return (instance.removedComponents ?? [])
+        .filter(isRef)
+        .map(r => ({ ref: r, obj: doc.getObject(r.__id__) }))
+        .filter(e => e.obj?.__type__ === 'cc.TargetInfo' && Array.isArray(e.obj.localID));
 }
 
 // ---------------------------------------------------------- override store
@@ -582,6 +760,19 @@ function pushOverride(doc, instance, localID, propertyPath, value) {
         value
     });
     instance.propertyOverrides.push({ __id__: overrideIdx });
+}
+
+/** Remove every override addressed at localID (any path); returns count */
+function dropOverridesByLocalId(doc, instance, localID) {
+    const before = instance.propertyOverrides.length;
+    instance.propertyOverrides = instance.propertyOverrides.filter(r => {
+        if (!isRef(r)) return true;
+        const obj = doc.getObject(r.__id__);
+        if (obj?.__type__ !== 'CCPropertyOverrideInfo') return true;
+        const target = isRef(obj.targetInfo) ? doc.getObject(obj.targetInfo.__id__) : null;
+        return !(target && sameArray(target.localID, localID));
+    });
+    return before - instance.propertyOverrides.length;
 }
 
 /** Remove the override for (localID, propertyPath); returns removed count */

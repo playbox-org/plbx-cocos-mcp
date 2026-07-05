@@ -1,0 +1,33 @@
+# Node: [SERVICES]#1851
+
+● [SERVICES] @(-0.3,0,0)
+  ◆ Script:5c8bc2CY {musicSource=→Music#1854 sfxParent=→SFXs#1852 mainCamera=→Main Camera#6 layoutController=→[SERVICES]#1879 audioCatalog=→[SERVICES]#1880 joystickView=→Joystick#1881 playerView=→Player#1956 crystalPool=→BigBlueCrystalls#1856 crystalContainer=→BigCrystalls#2020 crystalSpawnPoints=["→Point#2027"] crystalInitialSpawnPoints=["→Point#2038","→Point-001#2039","→Point-002#2040","→Point-003#2041","→Point-004#2042"] crystalMoveSpeed=7 crystalSpawnInterval=0.7 crystalMaxSimultaneous=25 crystalJitterX=4 crystalJitterZ=1 crystalRecycleZone=→Recycler#2023 crystalStopLine=→StopLine#2036 crusherButtonView=→Button#2043 bigCrusherView=→Crusher#2056 shardPool=→SmallCrystalls#1858 shardContainer=→SmallCrystalls#2028 explosionVfx=→ExplosionVfxController#1873 hammerPressVfx=→HammerHitVfxController#1877 playerCrystalStorage=→CrystalStack#2419 salesStationA=→SellingStation#2262 stationCrystalStorage=→CrystallStack#2234 salesDropZone=→SellZone#2364 carSpawnInterval=2 carSpeed=6 coinPool=→Coins#1860 playerGoldStorage=→GoldStack#1906 startingCoins=20 hammerSystem=→Hammer#2154 conveyorSystem=→Conveyor#2233 salesStationB=→SellingStationRed#1848 redCrystalPool=→BigRedCrystalls#1862 redCrystalContainer=→RedCrystalls#2029 redCrystalSpawnPoints=["→Point#2035"] tutorialArrow=→PointArrow#2423 playerTutorialArrow=→PlayerArrow#2428 cameraFollow=→Main Camera#7 endCamPoint=→EndCam_A#2434 packshotView=→CTA#1943 clickBuildCount=0 _id=a8d8FMBWxN3J+FE4p9Dsrr buyButtonZone__targetOverride=→ButtonPurchaseZone#2069 buyGateZone__targetOverride=→GatePurchaseZone#2177 buyConveyorZone__targetOverride=→ConveyorPurchaseZone#2204 buyRedStationZone__targetOverride=→RedQueuePurchaseZone#2365 buyRedMiningZone__targetOverride=→RedZonePurchaseZone#2290 buyHammerZone__targetOverride=→HammerPurchaseZone#2141 shardStack__targetOverride=→StackZone#2067}
+  ◆ Script:49fadMdy {_id=6dvBdUnLZMK7zeIc5If5am}
+  ◆ Script:82c49ffD {backgroundMusic=<asset> step=<asset> crusherButtonPress=<asset> crystalBreak=<asset> shardLand=<asset> coinLand=<asset> hammerHit=<asset> pikesUp=<asset> upgradeReveal=<asset> cashRegister=<asset> packshot=<asset> _id=a5ORnW/ZBBSr3G2pcxtBhX}
+  ● SFXs
+  ● Music
+    ◆ AudioSource {_loop=true _playOnAwake=false _volume=1 _id=50tXqfeXJA/44fIWPudJc/}
+  ● BigBlueCrystalls
+    ◆ Script:ecb6aynO {prefab=<asset> initialSize=30 _id=61EJOt6ZhL4oOart4vtfJa}
+  ● SmallCrystalls
+    ◆ Script:ecb6aynO {prefab=<asset> initialSize=400 _id=00H7LfpJRNoI+3IG43us8d}
+  ● Cars
+    ◆ Script:ecb6aynO {prefab=<asset> initialSize=50 _id=eaU1/tK/FEnILAPcdVBykc}
+  ● Coins
+    ◆ Script:ecb6aynO {prefab=Gold.prefab initialSize=400 _id=eeEjGfKM1Nr4+aG8QKhOxg}
+  ● BigRedCrystalls
+    ◆ Script:ecb6aynO {prefab=<asset> initialSize=8 _id=73b7ciZL1D17XqSLOW3Bcy}
+  ● PipeFx
+    ◆ Script:ecb6aynO {prefab=<asset> initialSize=5 _id=b3hfbQ+jlEubkTAvGR98fP}
+  ● UpgradeVfxController
+    ◆ Script:8a2d1kTZ {pool=→UpgradeVFXPool#1867 parentNode=→VFXs#1869 playInterval=0 despawnDelay=1.5 _id=90sqcbT5ZIAKUUPDRZKFL3}
+    ● UpgradeVFXPool
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=1 _id=ee3AIzHPpO2o5IKLoNXZIa}
+  ● ExplosionVfxController
+    ◆ Script:8a2d1kTZ {pool=→ExplosionVFXPool#1872 parentNode=→VFXs#1869 playInterval=0 despawnDelay=1.5 _id=a2G3tvBclKppBYieK3QTWp}
+    ● ExplosionVFXPool
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=5 _id=40P9FTOYhCAYsJr1bI00hy}
+  ● HammerHitVfxController
+    ◆ Script:8a2d1kTZ {pool=→HammerHitVFXPool#1876 parentNode=→VFXs#1869 playInterval=0 despawnDelay=1.5 _id=9555z0R2FJ/IjJiGLG+/g5}
+    ● HammerHitVFXPool
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=1 _id=96NKYar8xAs4Als3twD/gM}

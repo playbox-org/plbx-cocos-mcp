@@ -9,6 +9,7 @@ export class PropertyExtractor {
     #sceneParser;
     #detailed;
     #assetResolver;
+    #targetOverridesBySource; // lazy: component idx → [{key, targetId}]
     #skipKeys = new Set([
         '__type__', '__idx__', 'node', '_enabled', '_name',
         '_objFlags', '__editorExtras__', '__prefab', '_string'
@@ -37,7 +38,41 @@ export class PropertyExtractor {
             }
         }
 
+        // Properties overridden by cc.TargetOverrideInfo serialize as null
+        // (or are omitted) — surface the real target as a sibling
+        // "<prop>__targetOverride" entry so the reference is visible.
+        for (const o of this.#overridesFor(component.__idx__)) {
+            const name = o.targetId !== undefined ? this.#resolveRefName(o.targetId) : null;
+            const suffix = this.#detailed && o.targetId !== undefined ? `#${o.targetId}` : '';
+            props[`${o.key}__targetOverride`] = `→${name ?? '(instance)'}${suffix}`;
+        }
+
         return Object.keys(props).length > 0 ? props : undefined;
+    }
+
+    /**
+     * targetOverrides whose source is a plain component of this file
+     * (sourceInfo null), grouped by component index. Built lazily on the
+     * first extract() call.
+     */
+    #overridesFor(componentIdx) {
+        if (this.#targetOverridesBySource === undefined) {
+            const map = new Map();
+            const objects = Array.isArray(this.#sceneParser.objects) ? this.#sceneParser.objects : [];
+            for (const obj of objects) {
+                if (obj?.__type__ !== 'cc.TargetOverrideInfo') continue;
+                if (obj.sourceInfo !== null) continue; // source lives inside an instance
+                const src = obj.source?.__id__;
+                if (src === undefined || !Array.isArray(obj.propertyPath)) continue;
+                const list = map.get(src) ?? [];
+                list.push({ key: obj.propertyPath.join('.'), targetId: obj.target?.__id__ });
+                map.set(src, list);
+            }
+            this.#targetOverridesBySource = map;
+        }
+        return componentIdx !== undefined
+            ? (this.#targetOverridesBySource.get(componentIdx) ?? [])
+            : [];
     }
 
     #shouldSkip(key, value) {

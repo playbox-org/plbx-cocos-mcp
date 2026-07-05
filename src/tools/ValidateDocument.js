@@ -52,7 +52,7 @@ export class ValidateDocument extends BaseTool {
         }
 
         const assetIndex = new AssetIndex(projectRoot);
-        const { errors, warnings } = new Validator(doc, assetIndex).validate();
+        const { errors, warnings } = new Validator(doc, assetIndex, { projectRoot }).validate();
 
         const lines = [`# Validation: ${args.filePath}`, ''];
         lines.push(`Objects: ${doc.objects.length} | Type: ${doc.isScene ? 'scene' : doc.isPrefab ? 'prefab' : 'unknown'}`);

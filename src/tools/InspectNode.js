@@ -13,7 +13,9 @@ import { AssetIndex } from '../core/AssetIndex.js';
 import { TextFormatter } from '../formatters/TextFormatter.js';
 import { JsonFormatter } from '../formatters/JsonFormatter.js';
 import { SceneDocument, isRef } from '../document/SceneDocument.js';
-import { loadSourcePrefabByUuid } from '../document/instances.js';
+import { loadSourcePrefabByUuid, removedComponentEntries } from '../document/instances.js';
+import { fileIdTargets } from '../document/targetOverrides.js';
+import { compressUuid } from '../utils/uuid.js';
 
 export class InspectNode extends BaseTool {
     get name() {
@@ -200,14 +202,81 @@ export class InspectNode extends BaseTool {
         const doc = SceneDocument.load(ctx.filePath);
         const targets = fileIdTargets(source.doc);
         const overrides = this.#collectOverrides(doc, nodeId, targets, assetIndex);
+        const incomingRefs = this.#collectIncomingRefs(doc, nodeId, targets, assetIndex);
+        const removedComponents = this.#collectRemovedComponents(doc, nodeId, targets);
 
         return {
             name: stub.name ?? graph.name,
             stubPath: doc.nodePath(nodeId),
             sourceLabel: source.label,
             overrides,
+            incomingRefs,
+            removedComponents,
             graph
         };
+    }
+
+    /** removedComponents entries resolved to source-prefab paths */
+    #collectRemovedComponents(doc, stubIdx, targets) {
+        const instance = doc.instanceOf(stubIdx);
+        if (!instance) return [];
+        return removedComponentEntries(doc, instance).map(({ obj }) => {
+            const hit = obj.localID.length === 1 ? targets.get(obj.localID[0]) : null;
+            return {
+                target: hit?.target ?? null,
+                component: hit?.component ?? null,
+                localID: hit ? undefined : obj.localID
+            };
+        });
+    }
+
+    /**
+     * targetOverrides whose target is this stub: document components whose
+     * @property references resolve INTO the instance (serialized null +
+     * cc.TargetOverrideInfo — see targetOverrides.js).
+     */
+    #collectIncomingRefs(doc, stubIdx, targets, assetIndex) {
+        const scriptNames = new Map();
+        for (const entry of assetIndex.list({ type: 'script' })) {
+            scriptNames.set(compressUuid(entry.uuid), entry.name.replace(/\.[jt]s$/, ''));
+        }
+
+        const refs = [];
+        for (const obj of doc.objects) {
+            if (obj?.__type__ !== 'cc.TargetOverrideInfo') continue;
+            if (!isRef(obj.target) || obj.target.__id__ !== stubIdx) continue;
+
+            let source = '?';
+            if (obj.sourceInfo === null && isRef(obj.source)) {
+                const comp = doc.getObject(obj.source.__id__);
+                const nodePath = isRef(comp?.node) ? doc.nodePath(comp.node.__id__) : null;
+                const type = comp ? (scriptNames.get(comp.__type__) ?? comp.__type__) : '?';
+                source = `${nodePath ?? '?'} ▸ ${type}`;
+            } else if (isRef(obj.source)) {
+                // Source lives inside an instance (sourceInfo form) — when it
+                // is THIS instance, its localID resolves through the same map
+                let detail = '';
+                if (obj.source.__id__ === stubIdx) {
+                    const sInfo = isRef(obj.sourceInfo) ? doc.getObject(obj.sourceInfo.__id__) : null;
+                    const sHit = Array.isArray(sInfo?.localID) && sInfo.localID.length === 1
+                        ? targets.get(sInfo.localID[0]) : null;
+                    if (sHit) detail = ` "${sHit.target}"${sHit.component ? ` ▸ ${sHit.component}` : ''}`;
+                }
+                source = `${doc.nodePath(obj.source.__id__) ?? '?'}${detail} (inside instance)`;
+            }
+
+            const info = isRef(obj.targetInfo) ? doc.getObject(obj.targetInfo.__id__) : null;
+            const localID = Array.isArray(info?.localID) ? info.localID : [];
+            const hit = localID.length === 1 ? targets.get(localID[0]) : null;
+            refs.push({
+                source,
+                property: Array.isArray(obj.propertyPath) ? obj.propertyPath.join('.') : '?',
+                target: hit?.target ?? null,
+                component: hit?.component ?? null,
+                localID: hit ? undefined : localID
+            });
+        }
+        return refs;
     }
 
     #collectOverrides(doc, stubIdx, targets, assetIndex) {
@@ -239,6 +308,8 @@ export class InspectNode extends BaseTool {
                 instanceOf: expansion.sourceLabel,
                 stubPath: expansion.stubPath,
                 overrides: expansion.overrides,
+                incomingRefs: expansion.incomingRefs,
+                removedComponents: expansion.removedComponents,
                 source: expansion.graph
             }, null, 2));
         }
@@ -251,6 +322,8 @@ export class InspectNode extends BaseTool {
             `set_instance_property {node: "${expansion.stubPath}", target: "<path from the tree>",`,
             'component?: "<Type>", property, value} — target "/" is the instance root.',
             'Adding components to internal nodes requires unpacking the model in the editor.',
+            'Removing one works: remove_component {node: "<stub>", target, component} records it',
+            'in removedComponents (undo with restore_instance_component).',
             ''
         ];
 
@@ -263,6 +336,26 @@ export class InspectNode extends BaseTool {
                 ? `"${o.target}"${o.component ? ` ${o.component}` : ''}`
                 : `localID=[${o.localID.join(', ')}]${o.localID.length > 1 ? ' (nested, multi-hop)' : ''}`;
             lines.push(`- ${where} .${o.property} = ${o.value}`);
+        }
+
+        if (expansion.removedComponents.length > 0) {
+            lines.push('', `## Removed components (${expansion.removedComponents.length})`);
+            for (const rc of expansion.removedComponents) {
+                const where = rc.target !== null
+                    ? `"${rc.target}"${rc.component ? ` ▸ ${rc.component}` : ''}`
+                    : `localID=[${rc.localID.join(', ')}]`;
+                lines.push(`- ${where} (removed on this instance; undo with restore_instance_component)`);
+            }
+        }
+
+        if (expansion.incomingRefs.length > 0) {
+            lines.push('', `## Incoming scene references (${expansion.incomingRefs.length})`);
+            for (const r of expansion.incomingRefs) {
+                const where = r.target !== null
+                    ? `"${r.target}"${r.component ? ` ▸ ${r.component}` : ''}`
+                    : `localID=[${r.localID.join(', ')}]${r.localID.length > 1 ? ' (nested, multi-hop)' : ''}`;
+                lines.push(`- ${r.source} .${r.property} → ${where}`);
+            }
         }
 
         lines.push('', `## Source internals (target paths relative to the instance root)`);
@@ -307,37 +400,6 @@ function annotateTargets(graph) {
         }
     };
     walk(graph, '');
-}
-
-/**
- * fileId → {target, component} over a source prefab document: node
- * PrefabInfo.fileId and component CompPrefabInfo.fileId, keyed the way
- * cc.TargetInfo.localID references them (single-hop).
- */
-function fileIdTargets(sourceDoc) {
-    const map = new Map();
-    const rootIdx = sourceDoc.root.idx;
-    const walk = (idx) => {
-        const node = sourceDoc.getObject(idx);
-        const target = idx === rootIdx ? '/' : sourceDoc.nodePath(idx);
-        if (isRef(node._prefab)) {
-            const info = sourceDoc.getObject(node._prefab.__id__);
-            if (typeof info?.fileId === 'string' && info.fileId !== '') {
-                map.set(info.fileId, { target, component: null });
-            }
-        }
-        for (const compIdx of sourceDoc.componentIndices(idx)) {
-            const comp = sourceDoc.getObject(compIdx);
-            if (!isRef(comp?.__prefab)) continue;
-            const info = sourceDoc.getObject(comp.__prefab.__id__);
-            if (typeof info?.fileId === 'string' && info.fileId !== '') {
-                map.set(info.fileId, { target, component: comp.__type__ });
-            }
-        }
-        for (const childIdx of sourceDoc.childIndices(idx)) walk(childIdx);
-    };
-    walk(rootIdx);
-    return map;
 }
 
 /** Compact display form for an override value */
