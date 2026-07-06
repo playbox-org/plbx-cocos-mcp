@@ -5,8 +5,11 @@
  * SOLID: D - Depends on abstractions, uses dependency injection
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { SceneParser } from './SceneParser.js';
 import { ScriptResolver } from './ScriptResolver.js';
+import { AssetIndex } from './AssetIndex.js';
 import { NodeTreeBuilder } from './NodeTreeBuilder.js';
 import { TypeFilter } from '../filters/TypeFilter.js';
 import { NodeFilter } from '../filters/NodeFilter.js';
@@ -20,6 +23,8 @@ export class SceneMinifier {
     #typeFilter;
     #nodeFilter;
     #treeBuilder;
+    #projectRoot;
+    #assetIndex; // lazy: only built when a prefab-instance stub needs its asset name
 
     /**
      * Create a new SceneMinifier
@@ -29,6 +34,7 @@ export class SceneMinifier {
      */
     constructor(scenePath, projectRoot, options = {}) {
         // Create dependencies
+        this.#projectRoot = projectRoot;
         this.#sceneParser = new SceneParser(scenePath);
         this.#scriptResolver = new ScriptResolver(projectRoot);
         this.#typeFilter = options.typeFilter || new TypeFilter();
@@ -45,8 +51,63 @@ export class SceneMinifier {
             this.#scriptResolver,
             this.#typeFilter,
             this.#nodeFilter,
-            { detailed: options.detailed }
+            {
+                detailed: options.detailed,
+                assetNameResolver: (uuid) => this.#assetName(uuid),
+                assetRefResolver: (uuid) => this.#assetLabel(uuid)
+            }
         );
+    }
+
+    #getAssetIndex() {
+        if (this.#assetIndex === undefined) {
+            try {
+                this.#assetIndex = AssetIndex.shared(this.#projectRoot);
+            } catch {
+                this.#assetIndex = null;
+            }
+        }
+        return this.#assetIndex;
+    }
+
+    /** Asset file name ("Gold.prefab") by UUID, or null */
+    #assetName(uuid) {
+        return this.#getAssetIndex()?.resolve(uuid)?.entry.name ?? null;
+    }
+
+    /**
+     * Property-value label for an asset reference ("Mat.mtl",
+     * "Model.fbx@subId (embedded)"). Null for UUIDs not in the project
+     * (engine built-ins).
+     */
+    #assetLabel(uuid) {
+        return this.#getAssetIndex()?.label(uuid) ?? null;
+    }
+
+    /**
+     * Collapsed prefab-instance info for a node id: {assetUuid, name},
+     * or null for regular nodes.
+     */
+    instanceStubInfo(nodeId) {
+        const node = this.#sceneParser.getNode(nodeId);
+        if (!node) return null;
+        const info = this.#sceneParser.getInstanceInfo(node);
+        if (!info?.assetUuid) return null;
+        return { assetUuid: info.assetUuid, name: this.#displayName(node) };
+    }
+
+    /**
+     * Name as the editor shows it: _name, or for collapsed prefab instances
+     * the _name override / source asset name.
+     */
+    #displayName(node) {
+        if (node._name) return node._name;
+        const info = this.#sceneParser.getInstanceInfo(node);
+        if (!info) return node._name;
+        return info.nameOverride
+            ?? (info.assetUuid
+                ? this.#assetName(info.assetUuid)?.replace(/\.[^.]+$/, '') ?? null
+                : null);
     }
 
     /**
@@ -98,6 +159,9 @@ export class SceneMinifier {
         for (const obj of this.#sceneParser.objects) {
             const type = obj.__type__;
 
+            // Only real components carry a back-reference to their node;
+            // skip helper objects (cc.PrefabInfo, cc.SceneGlobals, ...)
+            if (obj.node?.__id__ === undefined) continue;
             if (this.#typeFilter.isNoise(type)) continue;
 
             if (this.#typeFilter.isCustomScript(type)) {
@@ -136,10 +200,13 @@ export class SceneMinifier {
         const regex = new RegExp(pattern, 'i');
         const matches = [];
 
-        for (const [_, node] of this.#sceneParser.nodes) {
-            if (node._name && regex.test(node._name)) {
+        for (const [id, node] of this.#sceneParser.nodes) {
+            const name = this.#displayName(node);
+            if (name && regex.test(name)) {
                 matches.push({
-                    name: node._name,
+                    name,
+                    id,
+                    path: this.nodeAddress(id),
                     active: node._active !== false,
                     components: this.#getComponentTypes(node)
                 });
@@ -147,6 +214,25 @@ export class SceneMinifier {
         }
 
         return matches;
+    }
+
+    /**
+     * Write-side address of a node: path from the root with the root itself
+     * excluded ("[WORLD]/Player"), or "/" for the root — the form the `node`
+     * argument of apply_edits / get_node_bounds / compute_fit_scale accepts.
+     * @param {number} nodeId - Node index in the scene array
+     * @returns {string|null}
+     */
+    nodeAddress(nodeId) {
+        let node = this.#sceneParser.getNode(nodeId);
+        if (!node) return null;
+        const parts = [];
+        while (node._parent?.__id__ !== undefined) {
+            parts.unshift(this.#displayName(node) ?? '<unnamed>');
+            node = this.#sceneParser.getObject(node._parent.__id__);
+            if (!node) return null;
+        }
+        return parts.length ? parts.join('/') : '/';
     }
 
     /**
@@ -163,7 +249,11 @@ export class SceneMinifier {
             this.#scriptResolver,
             this.#typeFilter,
             noLimitFilter,
-            { detailed: true }
+            {
+                detailed: true,
+                assetNameResolver: (uuid) => this.#assetName(uuid),
+                assetRefResolver: (uuid) => this.#assetLabel(uuid)
+            }
         );
         return builder.buildFrom(nodeId);
     }
@@ -177,16 +267,61 @@ export class SceneMinifier {
         const matches = [];
 
         for (const [id, node] of this.#sceneParser.nodes) {
-            if (node._name === name) {
+            if (this.#displayName(node) === name) {
                 matches.push({
                     id,
-                    name: node._name,
+                    name,
                     path: this.#getNodePath(node)
                 });
             }
         }
 
         return matches;
+    }
+
+    /**
+     * Best-effort check whether `name` is a node inside a collapsed
+     * prefab-instance source — those nodes are not addressable, and a failed
+     * lookup should say so instead of a bare "not found".
+     * @param {string} name - Exact node name
+     * @returns {{instance: string, source: string}[]} Instances whose source contains it
+     */
+    findInInstanceSources(name) {
+        const hits = [];
+        const sourceHasNode = new Map(); // assetUuid → boolean
+
+        for (const [, node] of this.#sceneParser.nodes) {
+            const info = this.#sceneParser.getInstanceInfo(node);
+            if (!info?.assetUuid) continue;
+
+            if (!sourceHasNode.has(info.assetUuid)) {
+                sourceHasNode.set(info.assetUuid, this.#sourceContainsNode(info.assetUuid, name));
+            }
+            if (sourceHasNode.get(info.assetUuid)) {
+                hits.push({
+                    instance: this.#displayName(node) ?? '(instance)',
+                    source: this.#assetName(info.assetUuid) ?? info.assetUuid
+                });
+            }
+        }
+
+        return hits;
+    }
+
+    /** Read an instance's source prefab (.prefab asset or library/ model cache) and scan node names */
+    #sourceContainsNode(assetUuid, name) {
+        try {
+            const resolved = this.#getAssetIndex()?.resolve(assetUuid);
+            if (!resolved) return false;
+            const file = resolved.subAsset
+                ? path.join(this.#projectRoot, 'library', assetUuid.slice(0, 2), `${assetUuid}.json`)
+                : path.join(this.#projectRoot, resolved.entry.path);
+            const objects = JSON.parse(fs.readFileSync(file, 'utf-8'));
+            return Array.isArray(objects) &&
+                   objects.some(o => o?.__type__ === 'cc.Node' && o._name === name);
+        } catch {
+            return false;
+        }
     }
 
     #getNodePath(node) {

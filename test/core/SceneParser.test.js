@@ -2,6 +2,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { SceneParser } from '../../src/core/SceneParser.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -56,6 +58,21 @@ describe('SceneParser', () => {
             () => new SceneParser('/nonexistent/path.scene'),
             /ENOENT|Cannot read/
         );
+    });
+
+    it('should throw on valid JSON that is not an array', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'scene-parser-'));
+        const filePath = join(dir, 'not-a-scene.json');
+        writeFileSync(filePath, '{"__type__": "cc.Scene"}');
+
+        try {
+            assert.throws(
+                () => new SceneParser(filePath),
+                /Not a Cocos scene\/prefab: expected a JSON array/
+            );
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     it('should find prefab root via cc.Prefab.data', () => {

@@ -65,19 +65,32 @@ describe('NodeFilter', () => {
         it('should identify skeleton bones by name pattern', () => {
             const filter = new NodeFilter();
 
-            // Patterns match at START of name: ^Root, ^Spine, ^Chest, ^Neck, ^Head, etc.
+            // Keyword matches whole name, or continues with separator/digit
             assert.strictEqual(filter.isBone('Root'), true);
-            assert.strictEqual(filter.isBone('RootNode'), true);
             assert.strictEqual(filter.isBone('Spine'), true);
             assert.strictEqual(filter.isBone('Spine1'), true);
             assert.strictEqual(filter.isBone('Head'), true);
+            assert.strictEqual(filter.isBone('Head_L'), true);
             assert.strictEqual(filter.isBone('Shoulder_L'), true);
-            assert.strictEqual(filter.isBone('ArmLeft'), true);
+            assert.strictEqual(filter.isBone('Hand.R'), true);
             assert.strictEqual(filter.isBone('Hand_R'), true);
             assert.strictEqual(filter.isBone('Finger01'), true);
             assert.strictEqual(filter.isBone('Hip'), true);
             assert.strictEqual(filter.isBone('Leg_L'), true);
-            assert.strictEqual(filter.isBone('FootLeft'), true);
+            assert.strictEqual(filter.isBone('mixamorig:Head'), true);
+        });
+
+        it('should identify bones with a bare L/R side suffix (no separator)', () => {
+            const filter = new NodeFilter();
+
+            assert.strictEqual(filter.isBone('EyeL'), true);
+            assert.strictEqual(filter.isBone('EyeR'), true);
+            assert.strictEqual(filter.isBone('HandR'), true);
+            assert.strictEqual(filter.isBone('FootL'), true);
+            assert.strictEqual(filter.isBone('ShoulderL'), true);
+            // ...but a suffix continuing into a word is not a side marker
+            assert.strictEqual(filter.isBone('EyeLid'), false);
+            assert.strictEqual(filter.isBone('HandRig'), false);
         });
 
         it('should not identify regular nodes as bones', () => {
@@ -87,6 +100,19 @@ describe('NodeFilter', () => {
             assert.strictEqual(filter.isBone('Camera'), false);
             assert.strictEqual(filter.isBone('Level'), false);
             assert.strictEqual(filter.isBone('UI_Button'), false);
+        });
+
+        it('should not match bone keyword as plain prefix of a longer word', () => {
+            const filter = new NodeFilter();
+
+            assert.strictEqual(filter.isBone('Header'), false);
+            assert.strictEqual(filter.isBone('Footer'), false);
+            assert.strictEqual(filter.isBone('Armor'), false);
+            assert.strictEqual(filter.isBone('Handle'), false);
+            // Standard root of Cocos gltf prefabs must never be filtered
+            assert.strictEqual(filter.isBone('RootNode'), false);
+            assert.strictEqual(filter.isBone('Headquarters'), false);
+            assert.strictEqual(filter.isBone('Legend'), false);
         });
     });
 
@@ -107,6 +133,15 @@ describe('NodeFilter', () => {
             const boneNode = { _name: 'Head' };
             assert.strictEqual(filter.shouldFilter(boneNode, 1, false), false);
             assert.strictEqual(filter.shouldFilter(boneNode, 2, false), true);
+        });
+
+        it('should accept zero as maxDepth', () => {
+            const filter = new NodeFilter();
+            filter.configure({ maxDepth: 0 });
+
+            const node = { _name: 'Test' };
+            assert.strictEqual(filter.shouldFilter(node, 0, false), false);
+            assert.strictEqual(filter.shouldFilter(node, 1, false), true);
         });
 
         it('should return this for chaining', () => {

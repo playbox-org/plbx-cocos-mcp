@@ -7,17 +7,16 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { compressUuid } from '../utils/uuid.js';
 
 export class ScriptResolver {
-    #byPrefix = new Map();
-    #byFullUuid = new Map();
+    #byCompressedUuid = new Map();
 
     /**
      * @param {string} projectRoot - Path to Cocos project root
      */
     constructor(projectRoot) {
-        const scriptsDir = path.join(projectRoot, 'assets', 'Scripts');
-        this.#scanDirectory(scriptsDir);
+        this.#scanDirectory(path.join(projectRoot, 'assets'));
     }
 
     #scanDirectory(dir) {
@@ -30,7 +29,7 @@ export class ScriptResolver {
 
             if (entry.isDirectory()) {
                 this.#scanDirectory(fullPath);
-            } else if (entry.name.endsWith('.ts.meta')) {
+            } else if (/\.(ts|js)\.meta$/.test(entry.name)) {
                 this.#processMeta(fullPath, entry.name);
             }
         }
@@ -41,15 +40,10 @@ export class ScriptResolver {
             const meta = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
             if (!meta.uuid) return;
 
-            const scriptName = fileName.replace('.ts.meta', '');
+            const scriptName = fileName.replace(/\.(ts|js)\.meta$/, '');
 
-            // Store by full UUID
-            this.#byFullUuid.set(meta.uuid, scriptName);
-            this.#byFullUuid.set(meta.uuid.replace(/-/g, ''), scriptName);
-
-            // Store by prefix (first 5 chars match scene type prefix)
-            const prefix = meta.uuid.replace(/-/g, '').slice(0, 5);
-            this.#byPrefix.set(prefix, scriptName);
+            // Scene files reference scripts by compressed UUID (__type__)
+            this.#byCompressedUuid.set(compressUuid(meta.uuid), scriptName);
         } catch {
             // Skip invalid meta files
         }
@@ -66,24 +60,10 @@ export class ScriptResolver {
             return type.replace('cc.', '');
         }
 
-        // Try full UUID match
-        if (this.#byFullUuid.has(type)) {
-            return this.#byFullUuid.get(type);
-        }
-
-        // Try prefix match (Cocos compressed UUID)
-        const prefix = type.slice(0, 5);
-        if (this.#byPrefix.has(prefix)) {
-            return this.#byPrefix.get(prefix);
-        }
+        // Exact compressed UUID match
+        const name = this.#byCompressedUuid.get(type);
+        if (name) return name;
 
         return `Script:${type.slice(0, 8)}`;
-    }
-
-    /**
-     * Check if type is a custom script (not built-in)
-     */
-    isCustomScript(type) {
-        return !type.startsWith('cc.') && /^[a-zA-Z0-9+/]{15,}$/.test(type);
     }
 }

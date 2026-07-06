@@ -83,6 +83,30 @@ describe('InspectNode', () => {
             assert.ok(text.includes('Player'), 'should include node name');
         });
 
+        it('should print the root-anchored path in the header', async () => {
+            const result = await tool.execute(
+                { filePath: 'sample-scene.json', nodeName: 'Player' },
+                FIXTURES
+            );
+
+            assert.ok(!result.isError, 'should not be error');
+            assert.match(result.content[0].text,
+                /Path: "Level\/Player" — use as `node`/,
+                'header carries the address reusable in other tools');
+        });
+
+        it('should include the path field in json format', async () => {
+            const result = await tool.execute(
+                { filePath: 'sample-scene.json', nodeName: 'Player', format: 'json' },
+                FIXTURES
+            );
+
+            assert.ok(!result.isError, 'should not be error');
+            const parsed = JSON.parse(result.content[0].text);
+            assert.strictEqual(parsed.path, 'Level/Player');
+            assert.strictEqual(parsed.name, 'Player');
+        });
+
         it('should return disambiguation list for duplicate names', async () => {
             // roadside-c4 has 9 nodes named "root"
             const result = await tool.execute(
@@ -103,6 +127,50 @@ describe('InspectNode', () => {
             );
 
             assert.ok(result.isError, 'should be error');
+        });
+    });
+
+    describe('execute with nodeName as a path', () => {
+        it('should resolve a parent-path prefix (apply_edits style)', async () => {
+            const result = await tool.execute(
+                { filePath: 'sample-scene.json', nodeName: 'Level/Player' },
+                FIXTURES
+            );
+
+            assert.ok(!result.isError, 'should not be error');
+            assert.ok(result.content[0].text.includes('Player'));
+        });
+
+        it('should resolve a full path including the scene root name', async () => {
+            const result = await tool.execute(
+                { filePath: 'sample-scene.json', nodeName: 'TestScene/Level/Enemy/EnemyChild' },
+                FIXTURES
+            );
+
+            assert.ok(!result.isError, 'should not be error');
+            assert.ok(result.content[0].text.includes('EnemyChild'));
+        });
+
+        it('should list same-named candidates when the path is wrong', async () => {
+            const result = await tool.execute(
+                { filePath: 'sample-scene.json', nodeName: 'WrongParent/Player' },
+                FIXTURES
+            );
+
+            assert.ok(result.isError, 'should be error');
+            const text = result.content[0].text;
+            assert.ok(text.includes('No node at path'), 'should mention the path');
+            assert.ok(text.includes('Player#4'), 'should list existing candidates');
+        });
+
+        it('should accept node as an alias for nodeName via run()', async () => {
+            const result = await tool.run(
+                { filePath: 'sample-scene.json', node: 'Level/Player' },
+                FIXTURES
+            );
+
+            assert.ok(!result.isError, 'should not be error');
+            assert.ok(result.content[0].text.includes('Player'));
         });
     });
 

@@ -1,0 +1,653 @@
+# Scene: Main.scene_V2.scene
+
+● Main.scene_V2 [P]
+  ● Main Light
+    ◆ DirectionalLight
+  ● Main Camera @(-8,12,8)
+    ◆ Camera
+    ◆ Script:b4347hmF {target=→Player offsetX=-18.5 offsetY=28 offsetZ=19.6}
+    ◆ Script:14deb29W {camera=→Main Camera layoutController=→[SERVICES] _id=c3Fy4M7mlO6LP8sIK25LDZ}
+  ● [SERVICES] @(-0.3,0,0)
+    ◆ Script:5c8bc2CY {musicSource=→Music sfxParent=→SFXs mainCamera=→Main Camera layoutController=→[SERVICES]}
+    ◆ Script:49fadMdy {_id=6dvBdUnLZMK7zeIc5If5am}
+    ◆ Script:82c49ffD {backgroundMusic=<asset> step=<asset> crusherButtonPress=<asset> crystalBreak=<asset>}
+    ● SFXs
+    ● Music
+      ◆ AudioSource
+    ● BigBlueCrystalls
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=30 _id=61EJOt6ZhL4oOart4vtfJa}
+    ● SmallCrystalls
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=400 _id=00H7LfpJRNoI+3IG43us8d}
+    ● Cars
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=50 _id=eaU1/tK/FEnILAPcdVBykc}
+    ● Coins
+      ◆ Script:ecb6aynO {prefab=Gold.prefab initialSize=400 _id=eeEjGfKM1Nr4+aG8QKhOxg}
+    ● BigRedCrystalls
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=8 _id=73b7ciZL1D17XqSLOW3Bcy}
+    ● PipeFx
+      ◆ Script:ecb6aynO {prefab=<asset> initialSize=5 _id=b3hfbQ+jlEubkTAvGR98fP}
+    ● UpgradeVfxController
+      ◆ Script:8a2d1kTZ {pool=→UpgradeVFXPool parentNode=→VFXs playInterval=0 despawnDelay=1.5}
+      ● UpgradeVFXPool
+        ◆ Script:ecb6aynO {prefab=<asset> initialSize=1 _id=ee3AIzHPpO2o5IKLoNXZIa}
+    ● ExplosionVfxController
+      ◆ Script:8a2d1kTZ {pool=→ExplosionVFXPool parentNode=→VFXs playInterval=0 despawnDelay=1.5}
+      ● ExplosionVFXPool
+        ◆ Script:ecb6aynO {prefab=<asset> initialSize=5 _id=40P9FTOYhCAYsJr1bI00hy}
+    ● HammerHitVfxController
+      ◆ Script:8a2d1kTZ {pool=→HammerHitVFXPool parentNode=→VFXs playInterval=0 despawnDelay=1.5}
+      ● HammerHitVFXPool
+        ◆ Script:ecb6aynO {prefab=<asset> initialSize=1 _id=96NKYar8xAs4Als3twD/gM}
+  ● [WORLD]
+    ● Environment
+      ● Ground
+        ● Grass
+          ◆ MeshRenderer
+          ◆ BoxCollider
+        ● SM_Floor
+          ◆ MeshRenderer
+          ◆ BoxCollider
+        ● SM_Floor
+          ◆ MeshRenderer
+          ● Collider
+            ◆ BoxCollider
+        ● SM_Floor
+          ◆ MeshRenderer
+          ◆ BoxCollider
+        ● SM_Floor
+          ◆ MeshRenderer
+          ● Collider
+            ◆ BoxCollider
+        ● SM_Floor
+          ◆ MeshRenderer
+          ◆ BoxCollider
+        ● SM_Floor
+          ◆ MeshRenderer
+          ◆ BoxCollider
+        ● SM_Floor
+          ◆ MeshRenderer
+          ◆ BoxCollider
+        ● SM_Floor
+          ◆ MeshRenderer
+          ◆ BoxCollider
+      ● Cliffs
+        ● Scal [P→92d27365…]
+        ● Scal-001
+          ● Stone_Midle
+            ◆ MeshRenderer
+          ● Stone_Big-001
+            ◆ MeshRenderer
+          ● Stone_Big-002
+            ◆ MeshRenderer
+          ● Stone_Midle-001
+            ◆ MeshRenderer
+          ● Stone_Midle-002
+            ◆ MeshRenderer
+          ● Stone_Big-003
+            ◆ MeshRenderer
+          ● Stone_Midle-003
+            ◆ MeshRenderer
+          ● Stone_Midle-004
+            ◆ MeshRenderer
+          ● Stone_Big-004
+            ◆ MeshRenderer
+          ● Stone_Big-005
+            ◆ MeshRenderer
+          ● Stone_Midle-005
+            ◆ MeshRenderer
+          ● Stone_Midle-006
+            ◆ MeshRenderer
+          ● Stone_Big-006
+            ◆ MeshRenderer
+        ● Scal-002
+          ● Stone_Midle
+            ◆ MeshRenderer
+          ● Stone_Big-001
+            ◆ MeshRenderer
+          ● Stone_Big-002
+            ◆ MeshRenderer
+          ● Stone_Midle-001
+            ◆ MeshRenderer
+          ● Stone_Midle-002
+            ◆ MeshRenderer
+          ● Stone_Big-003
+            ◆ MeshRenderer
+          ● Stone_Midle-003
+            ◆ MeshRenderer
+          ● Stone_Midle-004
+            ◆ MeshRenderer
+          ● Stone_Big-004
+            ◆ MeshRenderer
+          ● Stone_Big-005
+            ◆ MeshRenderer
+          ● Stone_Midle-005
+            ◆ MeshRenderer
+          ● Stone_Midle-006
+            ◆ MeshRenderer
+          ● Stone_Big-006
+            ◆ MeshRenderer
+        ● Scal-003 [P→92d27365…]
+        ● Scal_Centr [P→10ba5c51…]
+        ● ScalBorder [P→daebd1eb…]
+        ● ScalBorder-001 [P→daebd1eb…]
+        ● Colliders
+          ● Border
+            ◆ BoxCollider
+          ● Border-001
+            ◆ BoxCollider
+          ● Border-002
+            ◆ BoxCollider
+      ● Fences
+        ● Wall
+          ◆ BoxCollider
+          ◆ RigidBody
+          ● Fence [P→7c72ba33…]
+          ● Fence-001 [P→7c72ba33…]
+          ● Fence-002 [P→7c72ba33…]
+          ● Fence-003 [P→7c72ba33…]
+          ● Fence-004 [P→7c72ba33…]
+          ● Fence-005 [P→7c72ba33…]
+          ● Fence-006 [P→7c72ba33…]
+          ● Fence-007 [P→7c72ba33…]
+          ● Fence-008 [P→7c72ba33…]
+          ● Fence-009 [P→7c72ba33…]
+          ● Fence-010 [P→7c72ba33…]
+          ● Fence-011 [P→7c72ba33…]
+        ● Wall-001
+          ◆ BoxCollider
+          ◆ RigidBody
+          ● Fence [P→7c72ba33…]
+          ● Fence-001
+            ● SM_Wall
+              ◆ MeshRenderer
+          ● Fence-002
+            ● SM_Wall
+              ◆ MeshRenderer
+          ● Fence-003
+            ● SM_Wall
+              ◆ MeshRenderer
+          ● Fence-004 [P→7c72ba33…]
+          ● Fence-005 [P→7c72ba33…]
+          ● Fence-006 [P→7c72ba33…]
+          ● Fence-007 [P→7c72ba33…]
+          ● Fence-008 [P→7c72ba33…]
+          ● Fence-009 [P→7c72ba33…]
+          ● Fence-010 [P→7c72ba33…]
+          ● Fence-011 [P→7c72ba33…]
+        ● WallDoorway
+          ◆ BoxCollider
+          ◆ RigidBody
+          ● Fence [P→7c72ba33…]
+          ● Fence-001
+            ● SM_Wall
+              ◆ MeshRenderer
+          ● Fence-002
+            ● SM_Wall
+              ◆ MeshRenderer
+          ● Fence-003
+            ● SM_Wall
+              ◆ MeshRenderer
+          ● Fence-004 [P→7c72ba33…]
+          ● Fence-005 [P→7c72ba33…]
+          ● Fence-006 [P→7c72ba33…]
+          ● Fence-007 [P→7c72ba33…]
+          ● Fence-008 [P→7c72ba33…]
+          ● Fence-009 [P→7c72ba33…]
+          ● Fence-010 [P→7c72ba33…]
+          ● Fence-011 [P→7c72ba33…]
+          ● Lanterns
+            ● SM_Lantern
+              ◆ MeshRenderer
+            ● SM_Lantern-001
+              ◆ MeshRenderer
+          ● Border
+            ◆ MeshRenderer
+        ● WallDoorway-001
+          ◆ BoxCollider
+          ◆ RigidBody
+          ● Fence [P→7c72ba33…]
+          ● Fence-001 [P→7c72ba33…]
+          ● Fence-002 [P→7c72ba33…]
+          ● Fence-003 [P→7c72ba33…]
+          ● Fence-004 [P→7c72ba33…]
+          ● Fence-005 [P→7c72ba33…]
+          ● Fence-006 [P→7c72ba33…]
+          ● Fence-007 [P→7c72ba33…]
+          ● Fence-008 [P→7c72ba33…]
+          ● Fence-009 [P→7c72ba33…]
+          ● Fence-010 [P→7c72ba33…]
+          ● Fence-011 [P→7c72ba33…]
+          ● Border
+            ◆ MeshRenderer
+      ● Crusher-001
+        ● SM_Platforma
+          ◆ MeshRenderer
+        ● SM_Stakes
+          ◆ MeshRenderer
+      ● FakeShadows
+        ● Shadow
+          ◆ MeshRenderer
+        ● Shadow
+          ◆ MeshRenderer
+        ● Shadow
+          ◆ MeshRenderer
+        ● Shadow
+          ◆ MeshRenderer
+        ● Shadow
+          ◆ MeshRenderer
+        ● Shadow
+          ◆ MeshRenderer
+        ● Shadow
+          ◆ MeshRenderer
+        ● Shadow-001
+          ◆ MeshRenderer
+        ● Shadow-002
+          ◆ MeshRenderer
+        ● Shadow-003
+          ◆ MeshRenderer
+        ● Shadow-004
+          ◆ MeshRenderer
+        ● Shadow-005
+          ◆ MeshRenderer
+        ● Shadow-006
+          ◆ MeshRenderer
+        ● Shadow-007
+          ◆ MeshRenderer
+        ● Shadow-008
+          ◆ MeshRenderer
+        ● Shadow-009
+          ◆ MeshRenderer
+        ● Shadow-010
+          ◆ MeshRenderer
+        ● Shadow-011
+          ◆ MeshRenderer
+        ● Shadow-012
+          ◆ MeshRenderer
+        ● Shadow-013
+          ◆ MeshRenderer
+        ● Shadow-014
+          ◆ MeshRenderer
+        ● Shadow-015
+          ◆ MeshRenderer
+        ● Shadow-016
+          ◆ MeshRenderer
+        ● Shadow-017
+          ◆ MeshRenderer
+        ● Shadow-018
+          ◆ MeshRenderer
+        ● Shadow-019
+          ◆ MeshRenderer
+        ● Shadow-020
+          ◆ MeshRenderer
+        ● Shadow-021
+          ◆ MeshRenderer
+        ● Shadow-022
+          ◆ MeshRenderer
+        ● Shadow-023
+          ◆ MeshRenderer
+        ● Shadow-024
+          ◆ MeshRenderer
+        ● Shadow-025
+          ◆ MeshRenderer
+        ● Shadow-026
+          ◆ MeshRenderer
+        ● Shadow-027
+          ◆ MeshRenderer
+        ● Shadow-028
+          ◆ MeshRenderer
+      ● Woods
+        ● Shadow
+          ◆ MeshRenderer
+        ● SM_Wood_01
+          ◆ MeshRenderer
+        ● SM_Wood_02
+          ◆ MeshRenderer
+        ● SM_Wood_03
+          ◆ MeshRenderer
+        ● SM_Wood_04
+          ◆ MeshRenderer
+        ● SM_Wood_05
+          ◆ MeshRenderer
+        ● SM_Wood_06
+          ◆ MeshRenderer
+        ● SM_Wood_07
+          ◆ MeshRenderer
+    ● Gate @(20,0,2.7)
+      ◆ BoxCollider
+      ● SM_Gate_Wood
+        ◆ MeshRenderer
+      ● SM_Gate_Wood-001
+        ◆ MeshRenderer
+    ● RedZoneGate @(-12.3,0,-3)
+      ● SM_Gate_Wood
+        ◆ MeshRenderer
+      ● SM_Gate_Wood-001
+        ◆ MeshRenderer
+    ● Player
+      ◆ Script:4e2e74v3 {animationController=→Zombi_Defolt _id=4f7fGKxBZL/YUwXbXg2hBi}
+      ◆ BoxCollider
+      ◆ RigidBody
+      ◆ Script:e0dfa7Lq {crystalStack=→CrystalStack goldStack=→GoldStack _id=949EtfV/hBbpKW7h7u4bCe offsetWhenBothPresent=[0,0,-0.8]}
+      ● CrystalStack
+        ◆ Script:03f35T03 {root=→CrystalStack itemType=Crystal gridX=2 gridZ=1}
+        ◆ Script:601a4FXN {stack=→CrystalStack debug=false maxFlightDuration=0.6 jitterXZ=0.05}
+        ◆ Script:36671hn8 {stiffness=80 damping=7 tiltGain=0.4 maxTiltDegrees=28}
+      ● GoldStack
+        ◆ Script:03f35T03 {root=→GoldStack itemType=Gold gridX=2 gridZ=1}
+        ◆ Script:601a4FXN {stack=→GoldStack pool=→Coins debug=false maxFlightDuration=0.6}
+        ◆ Script:36671hn8 {stiffness=80 damping=7 tiltGain=0.4 maxTiltDegrees=28}
+      ● Zombi_Defolt
+        ◆ animation.AnimationController
+        ● zombie_miner_helmet_2
+          ● Disc
+            ◆ SkinnedMeshRenderer
+          ● zombie_miner_helmet
+            ◆ SkinnedMeshRenderer
+          [+54 hidden nodes, depth 10]
+      ● PlayerArrow
+        ◆ Script:820a7JVn {arrowMesh=→Arrow hideDistance=3.5 showDuration=0.25 hideDuration=0.2}
+        ● Arrow
+          ● Arrow
+            ◆ MeshRenderer
+    ● House @(0.5,0,-8.5)
+      ● SM_Dom
+        ◆ MeshRenderer
+        ◆ BoxCollider
+        ● SM_Dom_Krisha
+          ◆ MeshRenderer
+        ● Window
+          ◆ MeshRenderer
+        ● Window-001
+          ◆ MeshRenderer
+        ● Plane
+          ◆ MeshRenderer
+      ● lightning [P→f874611c…]
+    ● SellingStationRed @(-5,0,11.8)
+      ◆ Script:8d141ySj {crystalIcon=<asset> crystalStack=→CrystallStack carActiveAnchor=→ActiveWaypoint carPool=→Cars}
+      ◆ BoxCollider
+      ● Table
+        ◆ MeshRenderer
+        ● CashRegister
+          ◆ MeshRenderer
+          ● Monitor
+            ◆ MeshRenderer
+      ● CrystallStack
+        ◆ Script:03f35T03 {root=→CrystallStack gridX=2 gridZ=4 spacingX=0.8}
+        ◆ Script:601a4FXN {stack=→CrystallStack debug=false maxFlightDuration=0.6 jitterXZ=0.05}
+      ● SellZone-001
+        ◆ BoxCollider
+        ◆ Script:5d6c8DvF {trigger=→SellZone-001 _id=dfS1BkVo9FrJ94F5+hbEwZ}
+        ● RenderRoot
+          ◆ UITransform
+          ◆ RenderRoot2D
+          ● bg
+            ◆ UITransform
+            ◆ Sprite
+      ● Waypoints
+        [+15 hidden nodes, depth 1]
+    ● SellingStation @(1.2,0,11.8)
+      ◆ Script:8d141ySj {crystalIcon=<asset> crystalStack=→CrystallStack carActiveAnchor=→ActiveWaypoint carPool=→Cars}
+      ◆ BoxCollider
+      ● Table
+        ◆ MeshRenderer
+        ● CashRegister
+          ◆ MeshRenderer
+          ● Monitor
+            ◆ MeshRenderer
+      ● CrystallStack
+        ◆ Script:03f35T03 {root=→CrystallStack gridX=2 gridZ=4 spacingX=0.8}
+        ◆ Script:601a4FXN {stack=→CrystallStack debug=false maxFlightDuration=0.6 jitterXZ=0.05}
+      ● Waypoints
+        [+15 hidden nodes, depth 1]
+    ● Hammer @(8.5,0,-9)
+      ◆ Script:40cabRgh {hammerMesh=→SM_Hammer hitInterval=3 hitAngle=100 hitDuration=0.15}
+      ◆ BoxCollider
+      ● SM_BaseFrame
+        ◆ MeshRenderer
+      ● SM_Hammer
+        ◆ MeshRenderer
+    ● Tubes
+      ● HammerTubes
+        ◆ Script:7dd6cAnm {pulsePool=→PipeFx path=[×2] pathRoot=→HammerTubes parentNode=→HammerTubes}
+        ● SM_Truba
+          ◆ MeshRenderer
+        ● SM_Perehodnik
+          ◆ MeshRenderer
+        ● SM_Perehodnik-001
+          ◆ MeshRenderer
+        [+2 hidden nodes, depth 1]
+      ● CrusherTubes
+        ● SM_Truba
+          ◆ MeshRenderer
+        ● SM_Perehodnik-001
+          ◆ MeshRenderer
+        ● SM_Koleno
+          ◆ MeshRenderer
+        ● SM_Truba-001
+          ◆ MeshRenderer
+        ● SM_Koleno-001
+          ◆ MeshRenderer
+        ● FirstPipe
+          ◆ Script:7dd6cAnm {pulsePool=→PipeFx path=[×2] pathRoot=→FirstPipe parentNode=→FirstPipe}
+          [+2 hidden nodes, depth 1]
+        ● SecondPipe
+          ◆ Script:7dd6cAnm {pulsePool=→PipeFx path=[×2] pathRoot=→SecondPipe parentNode=→SecondPipe}
+          [+2 hidden nodes, depth 1]
+      ● ConveyorTubes
+        ◆ Script:7dd6cAnm {pulsePool=→PipeFx path=[×2] pathRoot=→ConveyorTubes parentNode=→ConveyorTubes}
+        ● SM_Truba
+          ◆ MeshRenderer
+        ● SM_Perehodnik
+          ◆ MeshRenderer
+        ● SM_Perehodnik-001
+          ◆ MeshRenderer
+        [+2 hidden nodes, depth 1]
+    ● Button @(8.5,0,-4)
+      ◆ Script:f1f387/0 {buttonNode=→SM_Button jumpTarget=→Foot trigger=→Button startHidden=true}
+      ◆ BoxCollider
+      ◆ RigidBody
+      ● SM_Button
+        ◆ MeshRenderer
+        [+2 hidden nodes, depth 2]
+    ● Conveyor @(11.5,0.1,10)
+      ◆ Script:ad425ISo {pathPoints=[×5] targetStorage=→CrystallStack beltMaterial=<asset> batchInterval=0.25}
+      ● SM_Bort_3
+        ◆ MeshRenderer
+      ● LENTA
+        ◆ MeshRenderer
+      ● SM_Bort-001
+        ◆ MeshRenderer
+      ● Cylinder
+        ◆ MeshRenderer
+        ◆ BoxCollider
+        ◆ RigidBody
+      ● Cylinder-001
+        ◆ MeshRenderer
+        ◆ BoxCollider
+        ◆ RigidBody
+      ● Path1
+      ● Path2
+      ● Path3
+      ● Path4
+      ● Path5
+    ● Queue
+    ● QueueRed
+    ● Crystals
+      ● Recycler
+        ◆ Script:ff8e5X/O {trigger=→Recycler pool=→BigBlueCrystalls _id=f6vZp2z6tHdoc/lH/1sgHm}
+        ◆ BoxCollider
+        ◆ RigidBody
+      ● SpawnPoints
+        [+1 hidden nodes, depth 1]
+      ● BigCrystalls
+      ● SmallCrystalls
+      ● RedCrystalls
+      ● Recycler-001
+        ◆ Script:ff8e5X/O {trigger=→Recycler-001 pool=→BigRedCrystalls _id=2e2JiLuxxHTpb6eK0Yk4KD}
+        ◆ BoxCollider
+        ◆ RigidBody
+      ● RedCrystallsSpawnPoints
+        [+1 hidden nodes, depth 1]
+      ● StopLine
+      ● InitialSpawnPoints
+        [+5 hidden nodes, depth 1]
+    ● Zones
+      ● ButtonPurchaseZone [P→ab794f1c…]
+      ● HammerPurchaseZone [P→ab794f1c…]
+      ● GatePurchaseZone [P→ab794f1c…]
+      ● ConveyorPurchaseZone [P→ab794f1c…]
+      ● RedZonePurchaseZone [P→ab794f1c…]
+      ● StackZone [P→b77d09e2…]
+      ● GoldStackZone [P→b77d09e2…]
+      ● SellZone
+        ◆ BoxCollider
+        ◆ Script:5d6c8DvF {trigger=→SellZone _id=ccufxnwD5HCbqZK6rbwrEU}
+        ● RenderRoot
+          ◆ UITransform
+          ◆ RenderRoot2D
+          ● bg
+            ◆ UITransform
+            ◆ Sprite
+      ● RedQueuePurchaseZone [P→ab794f1c…]
+    ● Crusher @(20.5,0,-4)
+      ◆ Script:b7fa5kIX {crushZone=→Crusher pikesNode=→SM_Stakes pikesRiseAmount=1 pikesRiseDuration=0.2}
+      ◆ BoxCollider
+      ◆ RigidBody
+      ● SM_Platforma
+        ◆ MeshRenderer
+      ● SM_Stakes
+        ◆ MeshRenderer
+    ● EndCam_A @(-20.5,0,-4.2)
+    ● PointArrow
+      ◆ Script:789c8+K9 {arrowNode=→Arrow bobAmplitude=0.3 bobSpeed=1 rotateSpeed=60}
+      ● Arrow
+        ◆ MeshRenderer
+    ● VFXs
+    ● Cacti_V1
+    ● Cacti2 [P→bb73cd66…]
+    ● Cactis
+      ● Cacti1 [P→b267cf03…]
+      ● Cacti2 [P→b267cf03…]
+      ● Cacti3 [P→b267cf03…]
+    ● Cacti3 [P→bb73cd66…]
+  ● [UI] @(540,1184,0)
+    ◆ UITransform
+    ◆ Canvas
+    ◆ Widget
+    ● Camera @(0,0,1000)
+      ◆ Camera
+    ● JoystickContainer
+      ◆ UITransform
+      ◆ Widget
+      ● Joystick
+        ◆ UITransform
+        ◆ Script:fe1293CZ {canvas=→[UI] baseNode=→Base stickNode=→Handler baseSprite=→Base}
+        ● Base
+          ◆ UITransform
+          ◆ Sprite
+        ● Handler
+          ◆ UITransform
+          ◆ Sprite
+    ● HUD
+      ◆ UITransform
+      ◆ Widget
+      ◆ SafeArea
+      ● Logo
+        ◆ UITransform
+        ◆ Sprite
+        ◆ Widget
+      ● StoreButton
+        ◆ UITransform
+        ◆ Sprite
+        ◆ Button
+        ◆ Widget
+        ◆ Script:5f9405q2 {button=→StoreButton pulseScale=1.1 pulseDuration=0.6 _id=36lRjUdmRGRqxxYwL/Y5eP}
+      ● GoldCounter
+        ◆ UITransform
+        ◆ Sprite
+        ◆ Widget
+        ◆ Script:89b476SH {goldStorage=→GoldStack label=→Count _id=baYfc6sE1Oo5Z24fBUU1L1}
+        ● Count
+          ◆ UITransform
+          ◆ Label "30"
+      ● Tutorial
+        ◆ UITransform
+        ◆ Script:f4a7e/A5 {tutorialAnimation=→Tutorial tutorialLabel=→Label inactivityTime=5 fadeInDuration=0.3}
+        ◆ Animation
+        ◆ Widget
+        ● Label
+          ◆ UITransform
+          ◆ Label "DRAG TO MOVE"
+        ● Beskonechnost
+          ◆ UITransform
+          ◆ Sprite
+        ● Hend
+          ◆ UITransform
+          ◆ Sprite
+    ● CTA
+      ◆ UITransform
+      ◆ Widget
+      ◆ Script:af33246q {fadeOverlay=→Curtain logo=→Logo ctaButton=→StoreButton _id=7fr2A36vdDhbTz/hnR77mC}
+      ● Curtain
+        ◆ UITransform
+        ◆ Widget
+        ◆ Sprite
+      ● AnimatedContainer
+        ◆ UITransform
+        ● Logo
+          ◆ UITransform
+          ◆ Sprite
+        ● StoreButton
+          ◆ UITransform
+          ◆ Sprite
+          ◆ Button
+  ● Dummies
+    ● BigCrystal
+      ● Cristal_Anim [P→3405a2a2…]
+    ● BigRedCrystal @(-15.8,1.6,-6.1)
+      ● Cristal_Anim
+        ◆ SkeletalAnimation
+        ● Armature
+          ● Cristal
+            ◆ SkinnedMeshRenderer
+          [+7 hidden nodes, depth 2]
+    ● CrystalSmall @(-0.5,0,0)
+      ● Cristal
+        ◆ MeshRenderer
+    ● truba_FX
+      ● SM_Truba
+        ◆ MeshRenderer
+    ● hit01
+      ◆ ParticleSystem
+      ○ light-001
+        ◆ ParticleSystem
+    ● levelup
+      ◆ ParticleSystem
+      ● light
+        ◆ ParticleSystem
+      ● line-001
+        ◆ ParticleSystem
+      ● particle
+        ◆ ParticleSystem
+      ● halo
+        ◆ ParticleSystem
+      ● halo-001
+        ◆ ParticleSystem
+      ● line-001
+        ◆ ParticleSystem
+      ● line-002
+        ◆ ParticleSystem
+    ● RockHit @(-167.6,103.5,0)
+      ◆ ParticleSystem
+      ● Explosion
+        ◆ ParticleSystem
+      ● light
+        ◆ ParticleSystem
+      ● smoke
+        ◆ ParticleSystem
+    ● ZombieBuyer @(540,1184,0)
+      ● Zombie_1gr_colander
+        ◆ SkeletalAnimation
+        ● Zombie_1gr_colander
+          ◆ SkinnedMeshRenderer
+        [+27 hidden nodes, depth 9]

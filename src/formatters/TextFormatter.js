@@ -9,6 +9,7 @@ import { Formatter } from './Formatter.js';
 
 export class TextFormatter extends Formatter {
     #indentStr = '  ';
+    #maxProps = 4;
     #activeMarker = '●';
     #inactiveMarker = '○';
     #enabledMarker = '◆';
@@ -18,7 +19,8 @@ export class TextFormatter extends Formatter {
      * Configure formatting options
      */
     configure(options = {}) {
-        if (options.indent) this.#indentStr = options.indent;
+        if (options.indent !== undefined) this.#indentStr = options.indent;
+        if (options.maxProps !== undefined) this.#maxProps = options.maxProps;
         return this;
     }
 
@@ -36,7 +38,7 @@ export class TextFormatter extends Formatter {
         // Node header
         let header = `${prefix}${marker} ${node.name}`;
         if (node.pos) header += ` @(${node.pos.join(',')})`;
-        if (node.prefab) header += ' [P]';
+        if (node.prefab) header += node.prefabSource ? ` [P→${node.prefabSource}]` : ' [P]';
         lines.push(header);
 
         // Components
@@ -69,7 +71,7 @@ export class TextFormatter extends Formatter {
         // Add properties
         if (comp.props && Object.keys(comp.props).length > 0) {
             const propStr = Object.entries(comp.props)
-                .slice(0, 4)
+                .slice(0, this.#maxProps)
                 .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
                 .join(' ');
             line += ` {${propStr}}`;

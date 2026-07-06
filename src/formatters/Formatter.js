@@ -13,6 +13,7 @@
  * @property {Array} [children]
  * @property {Array} [pos]
  * @property {boolean} [prefab]
+ * @property {string} [prefabSource] - Source asset file name for collapsed prefab instances
  */
 
 /**

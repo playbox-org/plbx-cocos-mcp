@@ -40,6 +40,59 @@ describe('PropertyExtractor', () => {
             assert.ok(!('__type__' in props));
         });
 
+        it('should render embedded value-type structs as ordered arrays', () => {
+            const parser = new MockSceneParser();
+            const extractor = new PropertyExtractor(parser);
+
+            const component = {
+                __type__: 'cc.BoxCollider',
+                _center: { __type__: 'cc.Vec3', x: 0, y: 4, z: -1.5 },
+                _size: { __type__: 'cc.Vec3', x: 25, y: 8, z: 3 },
+                _radius: { __type__: 'cc.Vec2', x: 0.5, y: 1 },
+                tint: { __type__: 'cc.Color', r: 255, g: 128, b: 0, a: 255 }
+            };
+
+            const props = extractor.extract(component);
+            assert.deepStrictEqual(props._center, [0, 4, -1.5]);
+            assert.deepStrictEqual(props._size, [25, 8, 3]);
+            assert.deepStrictEqual(props._radius, [0.5, 1]);
+            assert.deepStrictEqual(props.tint, [255, 128, 0, 255]);
+        });
+
+        it('should append value-type props after scalars (text-cap additivity)', () => {
+            const parser = new MockSceneParser();
+            const extractor = new PropertyExtractor(parser);
+
+            // Value-type field appears BEFORE scalar fields in source order —
+            // it must still be emitted last so it cannot displace a scalar
+            // under the text formatter's prop cap.
+            const component = {
+                __type__: 'cc.DirectionalLight',
+                _color: { __type__: 'cc.Color', r: 255, g: 255, b: 255, a: 255 },
+                _useColorTemperature: true,
+                _colorTemperature: 5500,
+                _illuminanceHDR: 110000
+            };
+
+            const keys = Object.keys(extractor.extract(component));
+            assert.deepStrictEqual(keys, [
+                '_useColorTemperature', '_colorTemperature', '_illuminanceHDR', '_color'
+            ]);
+        });
+
+        it('should not render plain nested objects (no value-type __type__)', () => {
+            const parser = new MockSceneParser();
+            const extractor = new PropertyExtractor(parser);
+
+            const component = {
+                __type__: 'Test',
+                custom: { x: 1, y: 2, z: 3 }
+            };
+
+            const props = extractor.extract(component);
+            assert.ok(props === undefined || !('custom' in props));
+        });
+
         it('should format node references', () => {
             const parser = new MockSceneParser();
             parser.addObject(5, { _name: 'TargetNode' });
@@ -66,6 +119,56 @@ describe('PropertyExtractor', () => {
 
             const props = extractor.extract(component);
             assert.strictEqual(props.prefab, '<asset>');
+        });
+
+        it('should resolve asset references through assetResolver', () => {
+            const parser = new MockSceneParser();
+            const extractor = new PropertyExtractor(parser, {
+                assetResolver: (uuid) => uuid === 'abc-123' ? 'Gold.mtl' : null
+            });
+
+            const component = {
+                __type__: 'Test',
+                material: { __uuid__: 'abc-123' },
+                unknown: { __uuid__: 'zzz-999' }
+            };
+
+            const props = extractor.extract(component);
+            assert.strictEqual(props.material, 'Gold.mtl');
+            assert.strictEqual(props.unknown, '<asset>');
+        });
+
+        it('should collapse asset-ref arrays as count in default mode', () => {
+            const parser = new MockSceneParser();
+            const extractor = new PropertyExtractor(parser);
+
+            const component = {
+                __type__: 'Test',
+                _materials: [{ __uuid__: 'a' }, { __uuid__: 'b' }],
+                _clips: [{ __uuid__: 'a' }, null]
+            };
+
+            const props = extractor.extract(component);
+            assert.strictEqual(props._materials, '[×2]');
+            assert.strictEqual(props._clips, '[×1, null×1]');
+        });
+
+        it('should expand asset-ref arrays with labels in detailed mode', () => {
+            const parser = new MockSceneParser();
+            const labels = { 'mat-1': 'Zombie.mtl', 'mat-2': 'Model.fbx@a4098 (embedded)' };
+            const extractor = new PropertyExtractor(parser, {
+                detailed: true,
+                assetResolver: (uuid) => labels[uuid] ?? null
+            });
+
+            const component = {
+                __type__: 'cc.SkinnedMeshRenderer',
+                _materials: [{ __uuid__: 'mat-1' }, { __uuid__: 'mat-2' }, null]
+            };
+
+            const props = extractor.extract(component);
+            assert.deepStrictEqual(props._materials,
+                ['Zombie.mtl', 'Model.fbx@a4098 (embedded)', 'null']);
         });
 
         it('should truncate long strings', () => {
@@ -210,6 +313,22 @@ describe('PropertyExtractor', () => {
 
             const props = extractor.extract(component);
             assert.deepStrictEqual(props.items, ['→Node1#1', '→null', '→Node1#1']);
+        });
+
+        it('should not lose arrays with a leading null', () => {
+            const parser = new MockSceneParser();
+            parser.addObject(5, { _name: 'TargetNode' });
+
+            const component = {
+                __type__: 'Test',
+                items: [null, { __id__: 5 }]
+            };
+
+            const props = new PropertyExtractor(parser).extract(component);
+            assert.strictEqual(props.items, '[×1, null×1]');
+
+            const detailed = new PropertyExtractor(parser, { detailed: true }).extract(component);
+            assert.deepStrictEqual(detailed.items, ['→null', '→TargetNode#5']);
         });
 
         it('should show null count in default mode arrays', () => {

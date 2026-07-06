@@ -1,0 +1,22 @@
+{
+  "ver": "2.3.12",
+  "importer": "fbx",
+  "imported": true,
+  "uuid": "deadbeef-0001-4a4a-8b8b-c0c0c0c0c001",
+  "files": [],
+  "subMetas": {
+    "aaaaa": {
+      "importer": "gltf-mesh",
+      "uuid": "deadbeef-0001-4a4a-8b8b-c0c0c0c0c001@aaaaa",
+      "displayName": "mesh_001.mesh",
+      "id": "aaaaa",
+      "name": "mesh_001.mesh",
+      "userData": {},
+      "ver": "1.1.0",
+      "imported": true,
+      "files": [".json", ".bin"],
+      "subMetas": {}
+    }
+  },
+  "userData": {}
+}

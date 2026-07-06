@@ -5,11 +5,15 @@
  * SOLID: S - Only responsible for type classification
  */
 
+// Inlined value types (primitives) - shared with SceneParser
+export const VALUE_TYPES = new Set([
+    'cc.Vec3', 'cc.Vec2', 'cc.Vec4', 'cc.Quat',
+    'cc.Color', 'cc.Size', 'cc.Rect'
+]);
+
 // Noise types - data that doesn't help LLM understand scene structure
 const NOISE_TYPES = new Set([
-    // Primitives
-    'cc.Vec3', 'cc.Vec2', 'cc.Vec4', 'cc.Quat',
-    'cc.Color', 'cc.Size', 'cc.Rect',
+    ...VALUE_TYPES,
 
     // Animation curves
     'cc.CurveRange', 'cc.GradientRange', 'cc.Gradient',
@@ -27,16 +31,6 @@ const NOISE_TYPES = new Set([
     // Editor/Build
     'cc.ModelBakeSettings', 'cc.StaticLightSettings',
     'cc.TargetInfo', 'CCPropertyOverrideInfo'
-]);
-
-// Important components worth keeping
-const IMPORTANT_COMPONENTS = new Set([
-    'cc.Camera', 'cc.DirectionalLight', 'cc.PointLight', 'cc.SpotLight',
-    'cc.MeshRenderer', 'cc.SkinnedMeshRenderer',
-    'cc.Sprite', 'cc.Label', 'cc.Button', 'cc.Widget',
-    'cc.RigidBody', 'cc.BoxCollider', 'cc.SphereCollider', 'cc.CapsuleCollider',
-    'cc.ParticleSystem', 'cc.Animation', 'cc.AudioSource',
-    'cc.UITransform', 'cc.RenderRoot2D', 'cc.Canvas', 'cc.UIOpacity'
 ]);
 
 export class TypeFilter {
@@ -58,30 +52,9 @@ export class TypeFilter {
     }
 
     /**
-     * Check if type is an important built-in component
-     */
-    isImportant(type) {
-        return IMPORTANT_COMPONENTS.has(type);
-    }
-
-    /**
      * Check if type is a custom script
      */
     isCustomScript(type) {
         return !type.startsWith('cc.') && /^[a-zA-Z0-9+/]{15,}$/.test(type);
-    }
-
-    /**
-     * Get all noise types (for debugging/stats)
-     */
-    static get noiseTypes() {
-        return [...NOISE_TYPES];
-    }
-
-    /**
-     * Get all important types
-     */
-    static get importantTypes() {
-        return [...IMPORTANT_COMPONENTS];
     }
 }

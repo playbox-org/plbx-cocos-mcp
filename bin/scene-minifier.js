@@ -18,10 +18,13 @@ Usage:
   node bin/scene-minifier.js <scene-path> [options]
 
 Options:
-  --output, -o <file>   Write output to file
-  --json, -j            Output as JSON instead of text
-  --stats, -s           Include statistics
-  --help, -h            Show this help
+  --output, -o <file>       Write output to file
+  --json, -j                Output as JSON instead of text
+  --stats, -s               Include statistics (default: on)
+  --no-stats                Omit statistics
+  --project-root <dir>      Cocos project root (default: COCOS_PROJECT_ROOT env,
+                            or the nearest ancestor of the scene containing assets/)
+  --help, -h                Show this help
 
 Examples:
   plbx-scene assets/Scenes/game.scene
@@ -34,6 +37,7 @@ function parseArgs(args) {
     const options = {
         scenePath: null,
         outputPath: null,
+        projectRoot: null,
         json: false,
         stats: true,
         help: false
@@ -52,12 +56,39 @@ function parseArgs(args) {
             options.stats = false;
         } else if (arg === '--output' || arg === '-o') {
             options.outputPath = args[++i];
+        } else if (arg === '--project-root') {
+            options.projectRoot = args[++i];
         } else if (!arg.startsWith('-')) {
             options.scenePath = arg;
         }
     }
 
     return options;
+}
+
+/**
+ * Resolve the Cocos project root:
+ * COCOS_PROJECT_ROOT env → --project-root flag → nearest ancestor
+ * of the scene file containing an assets/ directory.
+ */
+function resolveProjectRoot(scenePath, options) {
+    if (process.env.COCOS_PROJECT_ROOT) {
+        return path.resolve(process.env.COCOS_PROJECT_ROOT);
+    }
+    if (options.projectRoot) {
+        return path.resolve(options.projectRoot);
+    }
+
+    let dir = path.dirname(scenePath);
+    while (true) {
+        if (fs.existsSync(path.join(dir, 'assets'))) return dir;
+        const parent = path.dirname(dir);
+        if (parent === dir) break; // reached filesystem root
+        dir = parent;
+    }
+
+    // Fallback: script names just won't resolve
+    return path.dirname(scenePath);
 }
 
 function main() {
@@ -70,7 +101,7 @@ function main() {
     }
 
     const scenePath = path.resolve(options.scenePath);
-    const projectRoot = path.resolve(path.dirname(scenePath), '..', '..');
+    const projectRoot = resolveProjectRoot(scenePath, options);
 
     if (!fs.existsSync(scenePath)) {
         console.error(`Error: Scene file not found: ${scenePath}`);

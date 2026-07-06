@@ -1,0 +1,3993 @@
+{
+  "name": "Main.scene_V2",
+  "active": true,
+  "children": [
+    {
+      "name": "Main Light",
+      "active": true,
+      "components": [
+        {
+          "type": "DirectionalLight",
+          "enabled": true
+        }
+      ]
+    },
+    {
+      "name": "Main Camera",
+      "active": true,
+      "pos": [
+        -8,
+        12,
+        8
+      ],
+      "components": [
+        {
+          "type": "Camera",
+          "enabled": true
+        },
+        {
+          "type": "Script:b4347hmF",
+          "enabled": true,
+          "props": {
+            "target": "→Player",
+            "offsetX": -18.5,
+            "offsetY": 28,
+            "offsetZ": 19.6,
+            "smoothSpeed": 10,
+            "_id": "38jxvfBsROp7ljdRTV7jeC"
+          }
+        },
+        {
+          "type": "Script:14deb29W",
+          "enabled": true,
+          "props": {
+            "camera": "→Main Camera",
+            "layoutController": "→[SERVICES]",
+            "_id": "c3Fy4M7mlO6LP8sIK25LDZ"
+          }
+        }
+      ]
+    },
+    {
+      "name": "[SERVICES]",
+      "active": true,
+      "pos": [
+        -0.3,
+        0,
+        0
+      ],
+      "components": [
+        {
+          "type": "Script:5c8bc2CY",
+          "enabled": true,
+          "props": {
+            "musicSource": "→Music",
+            "sfxParent": "→SFXs",
+            "mainCamera": "→Main Camera",
+            "layoutController": "→[SERVICES]",
+            "audioCatalog": "→[SERVICES]",
+            "joystickView": "→Joystick",
+            "playerView": "→Player",
+            "crystalPool": "→BigBlueCrystalls",
+            "crystalContainer": "→BigCrystalls",
+            "crystalSpawnPoints": "[×1]",
+            "crystalInitialSpawnPoints": "[×5]",
+            "crystalMoveSpeed": 7,
+            "crystalSpawnInterval": 0.7,
+            "crystalMaxSimultaneous": 25,
+            "crystalJitterX": 4,
+            "crystalJitterZ": 1,
+            "crystalRecycleZone": "→Recycler",
+            "crystalStopLine": "→StopLine",
+            "crusherButtonView": "→Button",
+            "bigCrusherView": "→Crusher",
+            "shardPool": "→SmallCrystalls",
+            "shardContainer": "→SmallCrystalls",
+            "explosionVfx": "→ExplosionVfxController",
+            "hammerPressVfx": "→HammerHitVfxController",
+            "playerCrystalStorage": "→CrystalStack",
+            "salesStationA": "→SellingStation",
+            "stationCrystalStorage": "→CrystallStack",
+            "salesDropZone": "→SellZone",
+            "carSpawnInterval": 2,
+            "carSpeed": 6,
+            "coinPool": "→Coins",
+            "playerGoldStorage": "→GoldStack",
+            "startingCoins": 20,
+            "hammerSystem": "→Hammer",
+            "conveyorSystem": "→Conveyor",
+            "salesStationB": "→SellingStationRed",
+            "redCrystalPool": "→BigRedCrystalls",
+            "redCrystalContainer": "→RedCrystalls",
+            "redCrystalSpawnPoints": "[×1]",
+            "tutorialArrow": "→PointArrow",
+            "playerTutorialArrow": "→PlayerArrow",
+            "cameraFollow": "→Main Camera",
+            "endCamPoint": "→EndCam_A",
+            "packshotView": "→CTA",
+            "clickBuildCount": 0,
+            "_id": "a8d8FMBWxN3J+FE4p9Dsrr",
+            "crystalMoveDirection": [
+              0,
+              0,
+              1
+            ],
+            "redCrystalMoveDirection": [
+              0,
+              0,
+              1
+            ],
+            "buyButtonZone__targetOverride": "→ButtonPurchaseZone",
+            "buyGateZone__targetOverride": "→GatePurchaseZone",
+            "buyConveyorZone__targetOverride": "→ConveyorPurchaseZone",
+            "buyRedStationZone__targetOverride": "→RedQueuePurchaseZone",
+            "buyRedMiningZone__targetOverride": "→RedZonePurchaseZone",
+            "buyHammerZone__targetOverride": "→HammerPurchaseZone",
+            "shardStack__targetOverride": "→StackZone"
+          }
+        },
+        {
+          "type": "Script:49fadMdy",
+          "enabled": true,
+          "props": {
+            "_id": "6dvBdUnLZMK7zeIc5If5am"
+          }
+        },
+        {
+          "type": "Script:82c49ffD",
+          "enabled": true,
+          "props": {
+            "backgroundMusic": "<asset>",
+            "step": "<asset>",
+            "crusherButtonPress": "<asset>",
+            "crystalBreak": "<asset>",
+            "shardLand": "<asset>",
+            "coinLand": "<asset>",
+            "hammerHit": "<asset>",
+            "pikesUp": "<asset>",
+            "upgradeReveal": "<asset>",
+            "cashRegister": "<asset>",
+            "packshot": "<asset>",
+            "_id": "a5ORnW/ZBBSr3G2pcxtBhX"
+          }
+        }
+      ],
+      "children": [
+        {
+          "name": "SFXs",
+          "active": true
+        },
+        {
+          "name": "Music",
+          "active": true,
+          "components": [
+            {
+              "type": "AudioSource",
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "name": "BigBlueCrystalls",
+          "active": true,
+          "components": [
+            {
+              "type": "Script:ecb6aynO",
+              "enabled": true,
+              "props": {
+                "prefab": "<asset>",
+                "initialSize": 30,
+                "_id": "61EJOt6ZhL4oOart4vtfJa"
+              }
+            }
+          ]
+        },
+        {
+          "name": "SmallCrystalls",
+          "active": true,
+          "components": [
+            {
+              "type": "Script:ecb6aynO",
+              "enabled": true,
+              "props": {
+                "prefab": "<asset>",
+                "initialSize": 400,
+                "_id": "00H7LfpJRNoI+3IG43us8d"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Cars",
+          "active": true,
+          "components": [
+            {
+              "type": "Script:ecb6aynO",
+              "enabled": true,
+              "props": {
+                "prefab": "<asset>",
+                "initialSize": 50,
+                "_id": "eaU1/tK/FEnILAPcdVBykc"
+              }
+            }
+          ]
+        },
+        {
+          "name": "Coins",
+          "active": true,
+          "components": [
+            {
+              "type": "Script:ecb6aynO",
+              "enabled": true,
+              "props": {
+                "prefab": "Gold.prefab",
+                "initialSize": 400,
+                "_id": "eeEjGfKM1Nr4+aG8QKhOxg"
+              }
+            }
+          ]
+        },
+        {
+          "name": "BigRedCrystalls",
+          "active": true,
+          "components": [
+            {
+              "type": "Script:ecb6aynO",
+              "enabled": true,
+              "props": {
+                "prefab": "<asset>",
+                "initialSize": 8,
+                "_id": "73b7ciZL1D17XqSLOW3Bcy"
+              }
+            }
+          ]
+        },
+        {
+          "name": "PipeFx",
+          "active": true,
+          "components": [
+            {
+              "type": "Script:ecb6aynO",
+              "enabled": true,
+              "props": {
+                "prefab": "<asset>",
+                "initialSize": 5,
+                "_id": "b3hfbQ+jlEubkTAvGR98fP"
+              }
+            }
+          ]
+        },
+        {
+          "name": "UpgradeVfxController",
+          "active": true,
+          "components": [
+            {
+              "type": "Script:8a2d1kTZ",
+              "enabled": true,
+              "props": {
+                "pool": "→UpgradeVFXPool",
+                "parentNode": "→VFXs",
+                "playInterval": 0,
+                "despawnDelay": 1.5,
+                "_id": "90sqcbT5ZIAKUUPDRZKFL3",
+                "defaultScale": [
+                  1,
+                  1,
+                  1
+                ]
+              }
+            }
+          ],
+          "children": [
+            {
+              "name": "UpgradeVFXPool",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:ecb6aynO",
+                  "enabled": true,
+                  "props": {
+                    "prefab": "<asset>",
+                    "initialSize": 1,
+                    "_id": "ee3AIzHPpO2o5IKLoNXZIa"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "ExplosionVfxController",
+          "active": true,
+          "components": [
+            {
+              "type": "Script:8a2d1kTZ",
+              "enabled": true,
+              "props": {
+                "pool": "→ExplosionVFXPool",
+                "parentNode": "→VFXs",
+                "playInterval": 0,
+                "despawnDelay": 1.5,
+                "_id": "a2G3tvBclKppBYieK3QTWp",
+                "defaultScale": [
+                  2,
+                  2,
+                  2
+                ]
+              }
+            }
+          ],
+          "children": [
+            {
+              "name": "ExplosionVFXPool",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:ecb6aynO",
+                  "enabled": true,
+                  "props": {
+                    "prefab": "<asset>",
+                    "initialSize": 5,
+                    "_id": "40P9FTOYhCAYsJr1bI00hy"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "HammerHitVfxController",
+          "active": true,
+          "components": [
+            {
+              "type": "Script:8a2d1kTZ",
+              "enabled": true,
+              "props": {
+                "pool": "→HammerHitVFXPool",
+                "parentNode": "→VFXs",
+                "playInterval": 0,
+                "despawnDelay": 1.5,
+                "_id": "9555z0R2FJ/IjJiGLG+/g5",
+                "defaultScale": [
+                  2.5,
+                  2.5,
+                  2.5
+                ]
+              }
+            }
+          ],
+          "children": [
+            {
+              "name": "HammerHitVFXPool",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:ecb6aynO",
+                  "enabled": true,
+                  "props": {
+                    "prefab": "<asset>",
+                    "initialSize": 1,
+                    "_id": "96NKYar8xAs4Als3twD/gM"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "[WORLD]",
+      "active": true,
+      "children": [
+        {
+          "name": "Environment",
+          "active": true,
+          "children": [
+            {
+              "name": "Ground",
+              "active": true,
+              "children": [
+                {
+                  "name": "Grass",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    },
+                    {
+                      "type": "BoxCollider",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Floor",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    },
+                    {
+                      "type": "BoxCollider",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Floor",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ],
+                  "children": [
+                    {
+                      "name": "Collider",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "BoxCollider",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Floor",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    },
+                    {
+                      "type": "BoxCollider",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Floor",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ],
+                  "children": [
+                    {
+                      "name": "Collider",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "BoxCollider",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Floor",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    },
+                    {
+                      "type": "BoxCollider",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Floor",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    },
+                    {
+                      "type": "BoxCollider",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Floor",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    },
+                    {
+                      "type": "BoxCollider",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Floor",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    },
+                    {
+                      "type": "BoxCollider",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Cliffs",
+              "active": true,
+              "children": [
+                {
+                  "name": "Scal",
+                  "active": true,
+                  "prefab": true,
+                  "prefabSource": "92d27365…"
+                },
+                {
+                  "name": "Scal-001",
+                  "active": true,
+                  "children": [
+                    {
+                      "name": "Stone_Midle",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-001",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-002",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-001",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-002",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-003",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-003",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-004",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-004",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-005",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-005",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-006",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-006",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "Scal-002",
+                  "active": true,
+                  "children": [
+                    {
+                      "name": "Stone_Midle",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-001",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-002",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-001",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-002",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-003",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-003",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-004",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-004",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-005",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-005",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Midle-006",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Stone_Big-006",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "Scal-003",
+                  "active": true,
+                  "prefab": true,
+                  "prefabSource": "92d27365…"
+                },
+                {
+                  "name": "Scal_Centr",
+                  "active": true,
+                  "prefab": true,
+                  "prefabSource": "10ba5c51…"
+                },
+                {
+                  "name": "ScalBorder",
+                  "active": true,
+                  "prefab": true,
+                  "prefabSource": "daebd1eb…"
+                },
+                {
+                  "name": "ScalBorder-001",
+                  "active": true,
+                  "prefab": true,
+                  "prefabSource": "daebd1eb…"
+                },
+                {
+                  "name": "Colliders",
+                  "active": true,
+                  "children": [
+                    {
+                      "name": "Border",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "BoxCollider",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Border-001",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "BoxCollider",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Border-002",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "BoxCollider",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Fences",
+              "active": true,
+              "children": [
+                {
+                  "name": "Wall",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "BoxCollider",
+                      "enabled": true
+                    },
+                    {
+                      "type": "RigidBody",
+                      "enabled": true
+                    }
+                  ],
+                  "children": [
+                    {
+                      "name": "Fence",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-001",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-002",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-003",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-004",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-005",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-006",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-007",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-008",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-009",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-010",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-011",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    }
+                  ]
+                },
+                {
+                  "name": "Wall-001",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "BoxCollider",
+                      "enabled": true
+                    },
+                    {
+                      "type": "RigidBody",
+                      "enabled": true
+                    }
+                  ],
+                  "children": [
+                    {
+                      "name": "Fence",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-001",
+                      "active": true,
+                      "children": [
+                        {
+                          "name": "SM_Wall",
+                          "active": true,
+                          "components": [
+                            {
+                              "type": "MeshRenderer",
+                              "enabled": true
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Fence-002",
+                      "active": true,
+                      "children": [
+                        {
+                          "name": "SM_Wall",
+                          "active": true,
+                          "components": [
+                            {
+                              "type": "MeshRenderer",
+                              "enabled": true
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Fence-003",
+                      "active": true,
+                      "children": [
+                        {
+                          "name": "SM_Wall",
+                          "active": true,
+                          "components": [
+                            {
+                              "type": "MeshRenderer",
+                              "enabled": true
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Fence-004",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-005",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-006",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-007",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-008",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-009",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-010",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-011",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    }
+                  ]
+                },
+                {
+                  "name": "WallDoorway",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "BoxCollider",
+                      "enabled": true
+                    },
+                    {
+                      "type": "RigidBody",
+                      "enabled": true
+                    }
+                  ],
+                  "children": [
+                    {
+                      "name": "Fence",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-001",
+                      "active": true,
+                      "children": [
+                        {
+                          "name": "SM_Wall",
+                          "active": true,
+                          "components": [
+                            {
+                              "type": "MeshRenderer",
+                              "enabled": true
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Fence-002",
+                      "active": true,
+                      "children": [
+                        {
+                          "name": "SM_Wall",
+                          "active": true,
+                          "components": [
+                            {
+                              "type": "MeshRenderer",
+                              "enabled": true
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Fence-003",
+                      "active": true,
+                      "children": [
+                        {
+                          "name": "SM_Wall",
+                          "active": true,
+                          "components": [
+                            {
+                              "type": "MeshRenderer",
+                              "enabled": true
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Fence-004",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-005",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-006",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-007",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-008",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-009",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-010",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-011",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Lanterns",
+                      "active": true,
+                      "children": [
+                        {
+                          "name": "SM_Lantern",
+                          "active": true,
+                          "components": [
+                            {
+                              "type": "MeshRenderer",
+                              "enabled": true
+                            }
+                          ]
+                        },
+                        {
+                          "name": "SM_Lantern-001",
+                          "active": true,
+                          "components": [
+                            {
+                              "type": "MeshRenderer",
+                              "enabled": true
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Border",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "WallDoorway-001",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "BoxCollider",
+                      "enabled": true
+                    },
+                    {
+                      "type": "RigidBody",
+                      "enabled": true
+                    }
+                  ],
+                  "children": [
+                    {
+                      "name": "Fence",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-001",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-002",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-003",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-004",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-005",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-006",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-007",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-008",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-009",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-010",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Fence-011",
+                      "active": true,
+                      "prefab": true,
+                      "prefabSource": "7c72ba33…"
+                    },
+                    {
+                      "name": "Border",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Crusher-001",
+              "active": true,
+              "children": [
+                {
+                  "name": "SM_Platforma",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Stakes",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "FakeShadows",
+              "active": true,
+              "children": [
+                {
+                  "name": "Shadow",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-001",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-002",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-003",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-004",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-005",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-006",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-007",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-008",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-009",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-010",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-011",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-012",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-013",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-014",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-015",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-016",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-017",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-018",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-019",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-020",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-021",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-022",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-023",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-024",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-025",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-026",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-027",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Shadow-028",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Woods",
+              "active": true,
+              "children": [
+                {
+                  "name": "Shadow",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Wood_01",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Wood_02",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Wood_03",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Wood_04",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Wood_05",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Wood_06",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Wood_07",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Gate",
+          "active": true,
+          "pos": [
+            20,
+            0,
+            2.7
+          ],
+          "components": [
+            {
+              "type": "BoxCollider",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "SM_Gate_Wood",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "SM_Gate_Wood-001",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "RedZoneGate",
+          "active": true,
+          "pos": [
+            -12.3,
+            0,
+            -3
+          ],
+          "children": [
+            {
+              "name": "SM_Gate_Wood",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "SM_Gate_Wood-001",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Player",
+          "active": true,
+          "components": [
+            {
+              "type": "Script:4e2e74v3",
+              "enabled": true,
+              "props": {
+                "animationController": "→Zombi_Defolt",
+                "_id": "4f7fGKxBZL/YUwXbXg2hBi"
+              }
+            },
+            {
+              "type": "BoxCollider",
+              "enabled": true
+            },
+            {
+              "type": "RigidBody",
+              "enabled": true
+            },
+            {
+              "type": "Script:e0dfa7Lq",
+              "enabled": true,
+              "props": {
+                "crystalStack": "→CrystalStack",
+                "goldStack": "→GoldStack",
+                "_id": "949EtfV/hBbpKW7h7u4bCe",
+                "offsetWhenBothPresent": [
+                  0,
+                  0,
+                  -0.8
+                ]
+              }
+            }
+          ],
+          "children": [
+            {
+              "name": "CrystalStack",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:03f35T03",
+                  "enabled": true,
+                  "props": {
+                    "root": "→CrystalStack",
+                    "itemType": "Crystal",
+                    "gridX": 2,
+                    "gridZ": 1,
+                    "spacingX": 0.8,
+                    "spacingZ": 0.8,
+                    "stackHeight": 0.8,
+                    "defaultArcHeight": 2,
+                    "defaultSpeed": 8,
+                    "maxFlightDuration": 0.6,
+                    "maxCapacity": 0,
+                    "maxVisible": 0,
+                    "visibleFromTop": false,
+                    "disablePhysicsOnAdd": true,
+                    "snapRotationOnAdd": true,
+                    "snapScaleOnAdd": true,
+                    "editorPreviewEnabled": false,
+                    "editorPreviewCount": 0,
+                    "_id": "53PNFdYapJua5Wfbn5QxkN"
+                  }
+                },
+                {
+                  "type": "Script:601a4FXN",
+                  "enabled": true,
+                  "props": {
+                    "stack": "→CrystalStack",
+                    "debug": false,
+                    "maxFlightDuration": 0.6,
+                    "jitterXZ": 0.05,
+                    "depositArcHeight": 1.2,
+                    "depositFlightSpeed": 9,
+                    "depositFlightMaxDuration": 0.6,
+                    "depositSpinX": 0,
+                    "depositSpinY": 0,
+                    "depositSpinZ": 0,
+                    "useJumpArcEasing": true,
+                    "_id": "b9GzCeWFJJXIz0XhMnw0M2"
+                  }
+                },
+                {
+                  "type": "Script:36671hn8",
+                  "enabled": true,
+                  "props": {
+                    "stiffness": 80,
+                    "damping": 7,
+                    "tiltGain": 0.4,
+                    "maxTiltDegrees": 28,
+                    "maxDeltaTime": 0.03,
+                    "teleportThreshold": 3,
+                    "_id": "f90Xg05z5NJZl18BKCs4gA"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "GoldStack",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:03f35T03",
+                  "enabled": true,
+                  "props": {
+                    "root": "→GoldStack",
+                    "itemType": "Gold",
+                    "gridX": 2,
+                    "gridZ": 1,
+                    "spacingX": 0.8,
+                    "spacingZ": 0.5,
+                    "stackHeight": 0.3,
+                    "defaultArcHeight": 2,
+                    "defaultSpeed": 8,
+                    "maxFlightDuration": 0.6,
+                    "maxCapacity": 0,
+                    "maxVisible": 0,
+                    "visibleFromTop": false,
+                    "disablePhysicsOnAdd": true,
+                    "snapRotationOnAdd": true,
+                    "snapScaleOnAdd": true,
+                    "editorPreviewEnabled": false,
+                    "editorPreviewCount": 0,
+                    "_id": "9cYh3vKVlJ5phhLXLexlRZ"
+                  }
+                },
+                {
+                  "type": "Script:601a4FXN",
+                  "enabled": true,
+                  "props": {
+                    "stack": "→GoldStack",
+                    "pool": "→Coins",
+                    "debug": false,
+                    "maxFlightDuration": 0.6,
+                    "jitterXZ": 0.05,
+                    "depositArcHeight": 1.2,
+                    "depositFlightSpeed": 9,
+                    "depositFlightMaxDuration": 0.6,
+                    "depositSpinX": 0,
+                    "depositSpinY": 0,
+                    "depositSpinZ": 0,
+                    "useJumpArcEasing": true,
+                    "_id": "42TqEnkXtILrg14bL8ylH8"
+                  }
+                },
+                {
+                  "type": "Script:36671hn8",
+                  "enabled": true,
+                  "props": {
+                    "stiffness": 80,
+                    "damping": 7,
+                    "tiltGain": 0.4,
+                    "maxTiltDegrees": 28,
+                    "maxDeltaTime": 0.03,
+                    "teleportThreshold": 3,
+                    "_id": "324drWmBpNKLO/Um3Z9c7T"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Zombi_Defolt",
+              "active": true,
+              "components": [
+                {
+                  "type": "animation.AnimationController",
+                  "enabled": true
+                }
+              ],
+              "children": [
+                {
+                  "name": "zombie_miner_helmet_2",
+                  "active": true,
+                  "children": [
+                    {
+                      "name": "Disc",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "SkinnedMeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    },
+                    {
+                      "name": "zombie_miner_helmet",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "SkinnedMeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ],
+                  "trimmed": {
+                    "nodes": 54,
+                    "depth": 10
+                  }
+                }
+              ]
+            },
+            {
+              "name": "PlayerArrow",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:820a7JVn",
+                  "enabled": true,
+                  "props": {
+                    "arrowMesh": "→Arrow",
+                    "hideDistance": 3.5,
+                    "showDuration": 0.25,
+                    "hideDuration": 0.2,
+                    "activeScale": 1,
+                    "_id": "23M6C86O5PqJr0uuI7nzlg"
+                  }
+                }
+              ],
+              "children": [
+                {
+                  "name": "Arrow",
+                  "active": true,
+                  "children": [
+                    {
+                      "name": "Arrow",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "House",
+          "active": true,
+          "pos": [
+            0.5,
+            0,
+            -8.5
+          ],
+          "children": [
+            {
+              "name": "SM_Dom",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                },
+                {
+                  "type": "BoxCollider",
+                  "enabled": true
+                }
+              ],
+              "children": [
+                {
+                  "name": "SM_Dom_Krisha",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Window",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Window-001",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Plane",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "lightning",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "f874611c…"
+            }
+          ]
+        },
+        {
+          "name": "SellingStationRed",
+          "active": true,
+          "pos": [
+            -5,
+            0,
+            11.8
+          ],
+          "components": [
+            {
+              "type": "Script:8d141ySj",
+              "enabled": true,
+              "props": {
+                "crystalIcon": "<asset>",
+                "crystalStack": "→CrystallStack",
+                "carActiveAnchor": "→ActiveWaypoint",
+                "carPool": "→Cars",
+                "carEnterWaypoints": "[×12]",
+                "carActiveWaypoint": "→ActiveWaypoint",
+                "carExitWaypoints": "[×2]",
+                "carContainer": "→QueueRed",
+                "_id": "fflCbBunxGnr4VZPWjCvhq",
+                "goldStack__targetOverride": "→GoldStackZone"
+              }
+            },
+            {
+              "type": "BoxCollider",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "Table",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ],
+              "children": [
+                {
+                  "name": "CashRegister",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ],
+                  "children": [
+                    {
+                      "name": "Monitor",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "CrystallStack",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:03f35T03",
+                  "enabled": true,
+                  "props": {
+                    "root": "→CrystallStack",
+                    "gridX": 2,
+                    "gridZ": 4,
+                    "spacingX": 0.8,
+                    "spacingZ": 0.8,
+                    "stackHeight": 0.5,
+                    "defaultArcHeight": 2,
+                    "defaultSpeed": 8,
+                    "maxFlightDuration": 0.6,
+                    "maxCapacity": 0,
+                    "maxVisible": 0,
+                    "visibleFromTop": false,
+                    "disablePhysicsOnAdd": true,
+                    "snapRotationOnAdd": true,
+                    "snapScaleOnAdd": true,
+                    "editorPreviewEnabled": false,
+                    "editorPreviewCount": 0,
+                    "_id": "99QBFuu+FACqNtfoaO4L52"
+                  }
+                },
+                {
+                  "type": "Script:601a4FXN",
+                  "enabled": true,
+                  "props": {
+                    "stack": "→CrystallStack",
+                    "debug": false,
+                    "maxFlightDuration": 0.6,
+                    "jitterXZ": 0.05,
+                    "depositArcHeight": 1.2,
+                    "depositFlightSpeed": 9,
+                    "depositFlightMaxDuration": 0.6,
+                    "depositSpinX": 0,
+                    "depositSpinY": 0,
+                    "depositSpinZ": 0,
+                    "useJumpArcEasing": true,
+                    "_id": "843vhUf7ZKPZ90uLcQiT01"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "SellZone-001",
+              "active": true,
+              "components": [
+                {
+                  "type": "BoxCollider",
+                  "enabled": true
+                },
+                {
+                  "type": "Script:5d6c8DvF",
+                  "enabled": true,
+                  "props": {
+                    "trigger": "→SellZone-001",
+                    "_id": "dfS1BkVo9FrJ94F5+hbEwZ"
+                  }
+                }
+              ],
+              "children": [
+                {
+                  "name": "RenderRoot",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "RenderRoot2D",
+                      "enabled": true
+                    }
+                  ],
+                  "children": [
+                    {
+                      "name": "bg",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "UITransform",
+                          "enabled": true
+                        },
+                        {
+                          "type": "Sprite",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Waypoints",
+              "active": true,
+              "trimmed": {
+                "nodes": 15,
+                "depth": 1
+              }
+            }
+          ]
+        },
+        {
+          "name": "SellingStation",
+          "active": true,
+          "pos": [
+            1.2,
+            0,
+            11.8
+          ],
+          "components": [
+            {
+              "type": "Script:8d141ySj",
+              "enabled": true,
+              "props": {
+                "crystalIcon": "<asset>",
+                "crystalStack": "→CrystallStack",
+                "carActiveAnchor": "→ActiveWaypoint",
+                "carPool": "→Cars",
+                "carEnterWaypoints": "[×12]",
+                "carActiveWaypoint": "→ActiveWaypoint",
+                "carExitWaypoints": "[×2]",
+                "carContainer": "→Queue",
+                "_id": "29sq8yux9HoYA1owDi8+1E",
+                "goldStack__targetOverride": "→GoldStackZone"
+              }
+            },
+            {
+              "type": "BoxCollider",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "Table",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ],
+              "children": [
+                {
+                  "name": "CashRegister",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ],
+                  "children": [
+                    {
+                      "name": "Monitor",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "MeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "CrystallStack",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:03f35T03",
+                  "enabled": true,
+                  "props": {
+                    "root": "→CrystallStack",
+                    "gridX": 2,
+                    "gridZ": 4,
+                    "spacingX": 0.8,
+                    "spacingZ": 0.8,
+                    "stackHeight": 0.5,
+                    "defaultArcHeight": 2,
+                    "defaultSpeed": 8,
+                    "maxFlightDuration": 0.6,
+                    "maxCapacity": 80,
+                    "maxVisible": 0,
+                    "visibleFromTop": false,
+                    "disablePhysicsOnAdd": true,
+                    "snapRotationOnAdd": true,
+                    "snapScaleOnAdd": true,
+                    "editorPreviewEnabled": false,
+                    "editorPreviewCount": 0,
+                    "_id": "8bBjwu8DlEJ7PFi9Ru9108"
+                  }
+                },
+                {
+                  "type": "Script:601a4FXN",
+                  "enabled": true,
+                  "props": {
+                    "stack": "→CrystallStack",
+                    "debug": false,
+                    "maxFlightDuration": 0.6,
+                    "jitterXZ": 0.05,
+                    "depositArcHeight": 1.2,
+                    "depositFlightSpeed": 9,
+                    "depositFlightMaxDuration": 0.6,
+                    "depositSpinX": 0,
+                    "depositSpinY": 0,
+                    "depositSpinZ": 0,
+                    "useJumpArcEasing": true,
+                    "_id": "93TNPM7oFEHa0E82kvxHeW"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Waypoints",
+              "active": true,
+              "trimmed": {
+                "nodes": 15,
+                "depth": 1
+              }
+            }
+          ]
+        },
+        {
+          "name": "Hammer",
+          "active": true,
+          "pos": [
+            8.5,
+            0,
+            -9
+          ],
+          "components": [
+            {
+              "type": "Script:40cabRgh",
+              "enabled": true,
+              "props": {
+                "hammerMesh": "→SM_Hammer",
+                "hitInterval": 3,
+                "hitAngle": 100,
+                "hitDuration": 0.15,
+                "returnDuration": 0.25,
+                "startHidden": true,
+                "_id": "2bYaJyN5xFUKQrmEwDN7Lz"
+              }
+            },
+            {
+              "type": "BoxCollider",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "SM_BaseFrame",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "SM_Hammer",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Tubes",
+          "active": true,
+          "children": [
+            {
+              "name": "HammerTubes",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:7dd6cAnm",
+                  "enabled": true,
+                  "props": {
+                    "pulsePool": "→PipeFx",
+                    "path": "[×2]",
+                    "pathRoot": "→HammerTubes",
+                    "parentNode": "→HammerTubes",
+                    "autoStart": false,
+                    "spawnInterval": 2,
+                    "speed": 6,
+                    "appearDuration": 0.12,
+                    "disappearDuration": 0.12,
+                    "debugLog": false,
+                    "_id": "79okY9/PlE8KTXmdMxniMJ",
+                    "pulseScale": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              ],
+              "children": [
+                {
+                  "name": "SM_Truba",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Perehodnik",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Perehodnik-001",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ],
+              "trimmed": {
+                "nodes": 2,
+                "depth": 1
+              }
+            },
+            {
+              "name": "CrusherTubes",
+              "active": true,
+              "children": [
+                {
+                  "name": "SM_Truba",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Perehodnik-001",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Koleno",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Truba-001",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Koleno-001",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "FirstPipe",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "Script:7dd6cAnm",
+                      "enabled": true,
+                      "props": {
+                        "pulsePool": "→PipeFx",
+                        "path": "[×2]",
+                        "pathRoot": "→FirstPipe",
+                        "parentNode": "→FirstPipe",
+                        "autoStart": false,
+                        "spawnInterval": 0.5,
+                        "speed": 6,
+                        "appearDuration": 0.12,
+                        "disappearDuration": 0.12,
+                        "debugLog": false,
+                        "_id": "a1mMOH6kZN8Y/ctQ805FcT",
+                        "pulseScale": [
+                          1,
+                          1,
+                          1
+                        ]
+                      }
+                    }
+                  ],
+                  "trimmed": {
+                    "nodes": 2,
+                    "depth": 1
+                  }
+                },
+                {
+                  "name": "SecondPipe",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "Script:7dd6cAnm",
+                      "enabled": true,
+                      "props": {
+                        "pulsePool": "→PipeFx",
+                        "path": "[×2]",
+                        "pathRoot": "→SecondPipe",
+                        "parentNode": "→SecondPipe",
+                        "autoStart": false,
+                        "spawnInterval": 0.35,
+                        "speed": 6,
+                        "appearDuration": 0.12,
+                        "disappearDuration": 0.12,
+                        "debugLog": false,
+                        "_id": "837PULVyJEyYkImhIp3zaO",
+                        "pulseScale": [
+                          1,
+                          1,
+                          1
+                        ]
+                      }
+                    }
+                  ],
+                  "trimmed": {
+                    "nodes": 2,
+                    "depth": 1
+                  }
+                }
+              ]
+            },
+            {
+              "name": "ConveyorTubes",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:7dd6cAnm",
+                  "enabled": true,
+                  "props": {
+                    "pulsePool": "→PipeFx",
+                    "path": "[×2]",
+                    "pathRoot": "→ConveyorTubes",
+                    "parentNode": "→ConveyorTubes",
+                    "autoStart": false,
+                    "spawnInterval": 0.5,
+                    "speed": 6,
+                    "appearDuration": 0.12,
+                    "disappearDuration": 0.12,
+                    "debugLog": false,
+                    "_id": "92re2bpZFPyaZfWE0GZJoI",
+                    "pulseScale": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                }
+              ],
+              "children": [
+                {
+                  "name": "SM_Truba",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Perehodnik",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "SM_Perehodnik-001",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "MeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ],
+              "trimmed": {
+                "nodes": 2,
+                "depth": 1
+              }
+            }
+          ]
+        },
+        {
+          "name": "Button",
+          "active": true,
+          "pos": [
+            8.5,
+            0,
+            -4
+          ],
+          "components": [
+            {
+              "type": "Script:f1f387/0",
+              "enabled": true,
+              "props": {
+                "buttonNode": "→SM_Button",
+                "jumpTarget": "→Foot",
+                "trigger": "→Button",
+                "startHidden": true,
+                "clipDuration": 1.3,
+                "jumpTotalFrames": 79,
+                "jumpTakeoffFrame": 23,
+                "jumpLandFrame": 49,
+                "jumpArcHeight": 1,
+                "buttonPressDepth": 0.3,
+                "buttonPressDuration": 0.15,
+                "groundAnchor": "→Ground",
+                "_id": "21JIz2HXlKu7tDyXPCHV6w"
+              }
+            },
+            {
+              "type": "BoxCollider",
+              "enabled": true
+            },
+            {
+              "type": "RigidBody",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "SM_Button",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ],
+              "trimmed": {
+                "nodes": 2,
+                "depth": 2
+              }
+            }
+          ]
+        },
+        {
+          "name": "Conveyor",
+          "active": true,
+          "pos": [
+            11.5,
+            0.1,
+            10
+          ],
+          "components": [
+            {
+              "type": "Script:ad425ISo",
+              "enabled": true,
+              "props": {
+                "pathPoints": "[×5]",
+                "targetStorage": "→CrystallStack",
+                "beltMaterial": "<asset>",
+                "batchInterval": 0.25,
+                "flySpeed": 8,
+                "nodeSpeed": 4,
+                "arcHeight": 1.5,
+                "tilingSpeed": 0.5,
+                "tilingX": 0.7,
+                "tilingY": 0.7,
+                "startHidden": true,
+                "_id": "90zLDznyxAzpEPSKyCKNKH"
+              }
+            }
+          ],
+          "children": [
+            {
+              "name": "SM_Bort_3",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "LENTA",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "SM_Bort-001",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "Cylinder",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                },
+                {
+                  "type": "BoxCollider",
+                  "enabled": true
+                },
+                {
+                  "type": "RigidBody",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "Cylinder-001",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                },
+                {
+                  "type": "BoxCollider",
+                  "enabled": true
+                },
+                {
+                  "type": "RigidBody",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "Path1",
+              "active": true
+            },
+            {
+              "name": "Path2",
+              "active": true
+            },
+            {
+              "name": "Path3",
+              "active": true
+            },
+            {
+              "name": "Path4",
+              "active": true
+            },
+            {
+              "name": "Path5",
+              "active": true
+            }
+          ]
+        },
+        {
+          "name": "Queue",
+          "active": true
+        },
+        {
+          "name": "QueueRed",
+          "active": true
+        },
+        {
+          "name": "Crystals",
+          "active": true,
+          "children": [
+            {
+              "name": "Recycler",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:ff8e5X/O",
+                  "enabled": true,
+                  "props": {
+                    "trigger": "→Recycler",
+                    "pool": "→BigBlueCrystalls",
+                    "_id": "f6vZp2z6tHdoc/lH/1sgHm"
+                  }
+                },
+                {
+                  "type": "BoxCollider",
+                  "enabled": true
+                },
+                {
+                  "type": "RigidBody",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "SpawnPoints",
+              "active": true,
+              "trimmed": {
+                "nodes": 1,
+                "depth": 1
+              }
+            },
+            {
+              "name": "BigCrystalls",
+              "active": true
+            },
+            {
+              "name": "SmallCrystalls",
+              "active": true
+            },
+            {
+              "name": "RedCrystalls",
+              "active": true
+            },
+            {
+              "name": "Recycler-001",
+              "active": true,
+              "components": [
+                {
+                  "type": "Script:ff8e5X/O",
+                  "enabled": true,
+                  "props": {
+                    "trigger": "→Recycler-001",
+                    "pool": "→BigRedCrystalls",
+                    "_id": "2e2JiLuxxHTpb6eK0Yk4KD"
+                  }
+                },
+                {
+                  "type": "BoxCollider",
+                  "enabled": true
+                },
+                {
+                  "type": "RigidBody",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "RedCrystallsSpawnPoints",
+              "active": true,
+              "trimmed": {
+                "nodes": 1,
+                "depth": 1
+              }
+            },
+            {
+              "name": "StopLine",
+              "active": true
+            },
+            {
+              "name": "InitialSpawnPoints",
+              "active": true,
+              "trimmed": {
+                "nodes": 5,
+                "depth": 1
+              }
+            }
+          ]
+        },
+        {
+          "name": "Zones",
+          "active": true,
+          "children": [
+            {
+              "name": "ButtonPurchaseZone",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "ab794f1c…"
+            },
+            {
+              "name": "HammerPurchaseZone",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "ab794f1c…"
+            },
+            {
+              "name": "GatePurchaseZone",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "ab794f1c…"
+            },
+            {
+              "name": "ConveyorPurchaseZone",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "ab794f1c…"
+            },
+            {
+              "name": "RedZonePurchaseZone",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "ab794f1c…"
+            },
+            {
+              "name": "StackZone",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "b77d09e2…"
+            },
+            {
+              "name": "GoldStackZone",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "b77d09e2…"
+            },
+            {
+              "name": "SellZone",
+              "active": true,
+              "components": [
+                {
+                  "type": "BoxCollider",
+                  "enabled": true
+                },
+                {
+                  "type": "Script:5d6c8DvF",
+                  "enabled": true,
+                  "props": {
+                    "trigger": "→SellZone",
+                    "_id": "ccufxnwD5HCbqZK6rbwrEU"
+                  }
+                }
+              ],
+              "children": [
+                {
+                  "name": "RenderRoot",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "RenderRoot2D",
+                      "enabled": true
+                    }
+                  ],
+                  "children": [
+                    {
+                      "name": "bg",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "UITransform",
+                          "enabled": true
+                        },
+                        {
+                          "type": "Sprite",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "RedQueuePurchaseZone",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "ab794f1c…"
+            }
+          ]
+        },
+        {
+          "name": "Crusher",
+          "active": true,
+          "pos": [
+            20.5,
+            0,
+            -4
+          ],
+          "components": [
+            {
+              "type": "Script:b7fa5kIX",
+              "enabled": true,
+              "props": {
+                "crushZone": "→Crusher",
+                "pikesNode": "→SM_Stakes",
+                "pikesRiseAmount": 1,
+                "pikesRiseDuration": 0.2,
+                "pikesHoldDuration": 0.3,
+                "pikesReturnDuration": 0.3,
+                "_id": "ffPuSEwtVAaIoiRTx7nV++"
+              }
+            },
+            {
+              "type": "BoxCollider",
+              "enabled": true
+            },
+            {
+              "type": "RigidBody",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "SM_Platforma",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "SM_Stakes",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "EndCam_A",
+          "active": true,
+          "pos": [
+            -20.5,
+            0,
+            -4.2
+          ]
+        },
+        {
+          "name": "PointArrow",
+          "active": true,
+          "components": [
+            {
+              "type": "Script:789c8+K9",
+              "enabled": true,
+              "props": {
+                "arrowNode": "→Arrow",
+                "bobAmplitude": 0.3,
+                "bobSpeed": 1,
+                "rotateSpeed": 60,
+                "showDuration": 0.35,
+                "hideDuration": 0.2,
+                "activeScale": 2,
+                "_id": "bbftq4Mw1K7pqLLQrgEPrq",
+                "offset": [
+                  0,
+                  0,
+                  0
+                ]
+              }
+            }
+          ],
+          "children": [
+            {
+              "name": "Arrow",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "VFXs",
+          "active": true
+        },
+        {
+          "name": "Cacti_V1",
+          "active": true
+        },
+        {
+          "name": "Cacti2",
+          "active": true,
+          "prefab": true,
+          "prefabSource": "bb73cd66…"
+        },
+        {
+          "name": "Cactis",
+          "active": true,
+          "children": [
+            {
+              "name": "Cacti1",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "b267cf03…"
+            },
+            {
+              "name": "Cacti2",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "b267cf03…"
+            },
+            {
+              "name": "Cacti3",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "b267cf03…"
+            }
+          ]
+        },
+        {
+          "name": "Cacti3",
+          "active": true,
+          "prefab": true,
+          "prefabSource": "bb73cd66…"
+        }
+      ]
+    },
+    {
+      "name": "[UI]",
+      "active": true,
+      "pos": [
+        540,
+        1184,
+        0
+      ],
+      "components": [
+        {
+          "type": "UITransform",
+          "enabled": true
+        },
+        {
+          "type": "Canvas",
+          "enabled": true
+        },
+        {
+          "type": "Widget",
+          "enabled": true
+        }
+      ],
+      "children": [
+        {
+          "name": "Camera",
+          "active": true,
+          "pos": [
+            0,
+            0,
+            1000
+          ],
+          "components": [
+            {
+              "type": "Camera",
+              "enabled": true
+            }
+          ]
+        },
+        {
+          "name": "JoystickContainer",
+          "active": true,
+          "components": [
+            {
+              "type": "UITransform",
+              "enabled": true
+            },
+            {
+              "type": "Widget",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "Joystick",
+              "active": true,
+              "components": [
+                {
+                  "type": "UITransform",
+                  "enabled": true
+                },
+                {
+                  "type": "Script:fe1293CZ",
+                  "enabled": true,
+                  "props": {
+                    "canvas": "→[UI]",
+                    "baseNode": "→Base",
+                    "stickNode": "→Handler",
+                    "baseSprite": "→Base",
+                    "stickSprite": "→Handler",
+                    "baseSize": 300,
+                    "stickSize": 90,
+                    "_id": "b6vJKlOgZMZoXtKENa48sS"
+                  }
+                }
+              ],
+              "children": [
+                {
+                  "name": "Base",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Sprite",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Handler",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Sprite",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "HUD",
+          "active": true,
+          "components": [
+            {
+              "type": "UITransform",
+              "enabled": true
+            },
+            {
+              "type": "Widget",
+              "enabled": true
+            },
+            {
+              "type": "SafeArea",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "Logo",
+              "active": true,
+              "components": [
+                {
+                  "type": "UITransform",
+                  "enabled": true
+                },
+                {
+                  "type": "Sprite",
+                  "enabled": true
+                },
+                {
+                  "type": "Widget",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "StoreButton",
+              "active": true,
+              "components": [
+                {
+                  "type": "UITransform",
+                  "enabled": true
+                },
+                {
+                  "type": "Sprite",
+                  "enabled": true
+                },
+                {
+                  "type": "Button",
+                  "enabled": true
+                },
+                {
+                  "type": "Widget",
+                  "enabled": true
+                },
+                {
+                  "type": "Script:5f9405q2",
+                  "enabled": true,
+                  "props": {
+                    "button": "→StoreButton",
+                    "pulseScale": 1.1,
+                    "pulseDuration": 0.6,
+                    "_id": "36lRjUdmRGRqxxYwL/Y5eP"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "GoldCounter",
+              "active": true,
+              "components": [
+                {
+                  "type": "UITransform",
+                  "enabled": true
+                },
+                {
+                  "type": "Sprite",
+                  "enabled": true
+                },
+                {
+                  "type": "Widget",
+                  "enabled": true
+                },
+                {
+                  "type": "Script:89b476SH",
+                  "enabled": true,
+                  "props": {
+                    "goldStorage": "→GoldStack",
+                    "label": "→Count",
+                    "_id": "baYfc6sE1Oo5Z24fBUU1L1"
+                  }
+                }
+              ],
+              "children": [
+                {
+                  "name": "Count",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Label",
+                      "enabled": true,
+                      "text": "30"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Tutorial",
+              "active": true,
+              "components": [
+                {
+                  "type": "UITransform",
+                  "enabled": true
+                },
+                {
+                  "type": "Script:f4a7e/A5",
+                  "enabled": true,
+                  "props": {
+                    "tutorialAnimation": "→Tutorial",
+                    "tutorialLabel": "→Label",
+                    "inactivityTime": 5,
+                    "fadeInDuration": 0.3,
+                    "fadeOutDuration": 0.25,
+                    "pulseAmplitude": 1.1,
+                    "pulseSpeed": 0.6,
+                    "_id": "6fH+ZEChlIhaXi6QhsLOzc"
+                  }
+                },
+                {
+                  "type": "Animation",
+                  "enabled": true
+                },
+                {
+                  "type": "Widget",
+                  "enabled": true
+                }
+              ],
+              "children": [
+                {
+                  "name": "Label",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Label",
+                      "enabled": true,
+                      "text": "DRAG TO MOVE"
+                    }
+                  ]
+                },
+                {
+                  "name": "Beskonechnost",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Sprite",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "Hend",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Sprite",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "CTA",
+          "active": true,
+          "components": [
+            {
+              "type": "UITransform",
+              "enabled": true
+            },
+            {
+              "type": "Widget",
+              "enabled": true
+            },
+            {
+              "type": "Script:af33246q",
+              "enabled": true,
+              "props": {
+                "fadeOverlay": "→Curtain",
+                "logo": "→Logo",
+                "ctaButton": "→StoreButton",
+                "_id": "7fr2A36vdDhbTz/hnR77mC"
+              }
+            }
+          ],
+          "children": [
+            {
+              "name": "Curtain",
+              "active": true,
+              "components": [
+                {
+                  "type": "UITransform",
+                  "enabled": true
+                },
+                {
+                  "type": "Widget",
+                  "enabled": true
+                },
+                {
+                  "type": "Sprite",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "AnimatedContainer",
+              "active": true,
+              "components": [
+                {
+                  "type": "UITransform",
+                  "enabled": true
+                }
+              ],
+              "children": [
+                {
+                  "name": "Logo",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Sprite",
+                      "enabled": true
+                    }
+                  ]
+                },
+                {
+                  "name": "StoreButton",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "UITransform",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Sprite",
+                      "enabled": true
+                    },
+                    {
+                      "type": "Button",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Dummies",
+      "active": true,
+      "children": [
+        {
+          "name": "BigCrystal",
+          "active": true,
+          "children": [
+            {
+              "name": "Cristal_Anim",
+              "active": true,
+              "prefab": true,
+              "prefabSource": "3405a2a2…"
+            }
+          ]
+        },
+        {
+          "name": "BigRedCrystal",
+          "active": true,
+          "pos": [
+            -15.8,
+            1.6,
+            -6.1
+          ],
+          "children": [
+            {
+              "name": "Cristal_Anim",
+              "active": true,
+              "components": [
+                {
+                  "type": "SkeletalAnimation",
+                  "enabled": true
+                }
+              ],
+              "children": [
+                {
+                  "name": "Armature",
+                  "active": true,
+                  "children": [
+                    {
+                      "name": "Cristal",
+                      "active": true,
+                      "components": [
+                        {
+                          "type": "SkinnedMeshRenderer",
+                          "enabled": true
+                        }
+                      ]
+                    }
+                  ],
+                  "trimmed": {
+                    "nodes": 7,
+                    "depth": 2
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "CrystalSmall",
+          "active": true,
+          "pos": [
+            -0.5,
+            0,
+            0
+          ],
+          "children": [
+            {
+              "name": "Cristal",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "truba_FX",
+          "active": true,
+          "children": [
+            {
+              "name": "SM_Truba",
+              "active": true,
+              "components": [
+                {
+                  "type": "MeshRenderer",
+                  "enabled": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "hit01",
+          "active": true,
+          "components": [
+            {
+              "type": "ParticleSystem",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "light-001",
+              "active": false,
+              "components": [
+                {
+                  "type": "ParticleSystem",
+                  "enabled": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "levelup",
+          "active": true,
+          "components": [
+            {
+              "type": "ParticleSystem",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "light",
+              "active": true,
+              "components": [
+                {
+                  "type": "ParticleSystem",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "line-001",
+              "active": true,
+              "components": [
+                {
+                  "type": "ParticleSystem",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "particle",
+              "active": true,
+              "components": [
+                {
+                  "type": "ParticleSystem",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "halo",
+              "active": true,
+              "components": [
+                {
+                  "type": "ParticleSystem",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "halo-001",
+              "active": true,
+              "components": [
+                {
+                  "type": "ParticleSystem",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "line-001",
+              "active": true,
+              "components": [
+                {
+                  "type": "ParticleSystem",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "line-002",
+              "active": true,
+              "components": [
+                {
+                  "type": "ParticleSystem",
+                  "enabled": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "RockHit",
+          "active": true,
+          "pos": [
+            -167.6,
+            103.5,
+            0
+          ],
+          "components": [
+            {
+              "type": "ParticleSystem",
+              "enabled": true
+            }
+          ],
+          "children": [
+            {
+              "name": "Explosion",
+              "active": true,
+              "components": [
+                {
+                  "type": "ParticleSystem",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "light",
+              "active": true,
+              "components": [
+                {
+                  "type": "ParticleSystem",
+                  "enabled": true
+                }
+              ]
+            },
+            {
+              "name": "smoke",
+              "active": true,
+              "components": [
+                {
+                  "type": "ParticleSystem",
+                  "enabled": true
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "ZombieBuyer",
+          "active": true,
+          "pos": [
+            540,
+            1184,
+            0
+          ],
+          "children": [
+            {
+              "name": "Zombie_1gr_colander",
+              "active": true,
+              "components": [
+                {
+                  "type": "SkeletalAnimation",
+                  "enabled": true
+                }
+              ],
+              "children": [
+                {
+                  "name": "Zombie_1gr_colander",
+                  "active": true,
+                  "components": [
+                    {
+                      "type": "SkinnedMeshRenderer",
+                      "enabled": true
+                    }
+                  ]
+                }
+              ],
+              "trimmed": {
+                "nodes": 27,
+                "depth": 9
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "prefab": true
+}

@@ -14,6 +14,7 @@ export class NodeTreeBuilder {
     #nodeFilter;
     #propExtractor;
     #detailed;
+    #assetNameResolver;
 
     /**
      * @param {SceneParser} sceneParser
@@ -28,7 +29,13 @@ export class NodeTreeBuilder {
         this.#typeFilter = typeFilter;
         this.#nodeFilter = nodeFilter;
         this.#detailed = options.detailed || false;
-        this.#propExtractor = new PropertyExtractor(sceneParser, { detailed: this.#detailed });
+        this.#assetNameResolver = options.assetNameResolver || null;
+        this.#propExtractor = new PropertyExtractor(sceneParser, {
+            detailed: this.#detailed,
+            // Richer labels for property values ("file@subId (embedded)");
+            // #assetNameResolver stays plain-name for prefabSource display
+            assetResolver: options.assetRefResolver || null
+        });
     }
 
     /**
@@ -64,8 +71,10 @@ export class NodeTreeBuilder {
         const components = this.#extractComponents(node);
         const { children, trimmedCount, trimmedMaxDepth } = this.#buildChildren(node, depth, isBone || parentIsBone);
 
-        // Skip empty intermediate nodes (but report them as trimmed to parent)
-        if (children.length === 0 && components.length === 0 && depth > 3) {
+        // Skip empty intermediate nodes (but report them as trimmed to parent).
+        // Instance stubs are always empty in the file — never trim them.
+        if (children.length === 0 && components.length === 0 && depth > 3 &&
+            !this.#sceneParser.getInstanceInfo(node)) {
             return null;
         }
 
@@ -152,8 +161,22 @@ export class NodeTreeBuilder {
     }
 
     #createMinifiedNode(node, components, children, depth, trimmedCount = 0, trimmedMaxDepth = 0) {
+        const instance = node._prefab ? this.#sceneParser.getInstanceInfo(node) : null;
+        let name = node._name;
+        let prefabSource = null;
+
+        if (instance) {
+            prefabSource = instance.assetUuid
+                ? (this.#assetNameResolver?.(instance.assetUuid)
+                    ?? `${instance.assetUuid.slice(0, 8)}…`)
+                : null;
+            // Editor shows the _name override, falling back to the asset name
+            name = name || instance.nameOverride
+                || (prefabSource ? prefabSource.replace(/\.[^.]+$/, '') : '');
+        }
+
         const minNode = {
-            name: node._name || 'unnamed',
+            name: name || 'unnamed',
             active: node._active !== false
         };
 
@@ -172,6 +195,7 @@ export class NodeTreeBuilder {
         if (components.length > 0) minNode.components = components;
         if (children.length > 0) minNode.children = children;
         if (node._prefab) minNode.prefab = true;
+        if (prefabSource) minNode.prefabSource = prefabSource;
         if (trimmedCount > 0) minNode.trimmed = { nodes: trimmedCount, depth: trimmedMaxDepth };
 
         return minNode;

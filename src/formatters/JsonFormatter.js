@@ -16,7 +16,7 @@ export class JsonFormatter extends Formatter {
      */
     configure(options = {}) {
         if (options.pretty !== undefined) this.#pretty = options.pretty;
-        if (options.indent) this.#indent = options.indent;
+        if (options.indent !== undefined) this.#indent = options.indent;
         return this;
     }
 

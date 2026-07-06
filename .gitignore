@@ -27,3 +27,9 @@ coverage/
 
 # Claude Code local settings
 .claude/
+
+# Claude Code skill — local working copy, distributed separately (not via this repo)
+skills/
+
+project-example/
+dev.mcp.json

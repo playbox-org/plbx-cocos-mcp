@@ -60,6 +60,16 @@ describe('QuerySceneGraph', () => {
             assert.ok(result.isError, 'should be error result');
         });
 
+        it('should accept filePath as an alias for scenePath via run()', async () => {
+            const result = await tool.run(
+                { filePath: 'sample-scene.json' },
+                FIXTURES
+            );
+
+            assert.ok(!result.isError, 'should not be error');
+            assert.ok(result.content[0].text.includes('TestScene'));
+        });
+
         it('should execute with detailed: true without error', async () => {
             const result = await tool.execute(
                 { scenePath: 'sample-scene.json', detailed: true },
