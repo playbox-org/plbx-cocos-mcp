@@ -5,6 +5,18 @@
  * SOLID: O - Can be extended with custom extractors
  */
 
+// Embedded value-type structs (Vec3/Color/…) → compact ordered arrays.
+// The field order per type matches the editor/API constructors.
+const VALUE_TYPE_FIELDS = {
+    'cc.Vec2': ['x', 'y'],
+    'cc.Vec3': ['x', 'y', 'z'],
+    'cc.Vec4': ['x', 'y', 'z', 'w'],
+    'cc.Quat': ['x', 'y', 'z', 'w'],
+    'cc.Color': ['r', 'g', 'b', 'a'],
+    'cc.Size': ['width', 'height'],
+    'cc.Rect': ['x', 'y', 'width', 'height']
+};
+
 export class PropertyExtractor {
     #sceneParser;
     #detailed;
@@ -28,14 +40,26 @@ export class PropertyExtractor {
      */
     extract(component) {
         const props = {};
+        // Value-type structs (Vec3/Color/…) are appended AFTER scalar/ref
+        // props so they never displace a previously-visible field under the
+        // text formatter's prop cap — keeping text output additive for
+        // main-branch clients (JSON is uncapped and shows everything).
+        const deferred = [];
 
         for (const [key, value] of Object.entries(component)) {
             if (this.#shouldSkip(key, value)) continue;
 
             const extracted = this.#extractValue(value);
-            if (extracted !== undefined) {
+            if (extracted === undefined) continue;
+
+            if (this.#isValueType(value)) {
+                deferred.push([key, extracted]);
+            } else {
                 props[key] = extracted;
             }
+        }
+        for (const [key, extracted] of deferred) {
+            props[key] = extracted;
         }
 
         // Properties overridden by cc.TargetOverrideInfo serialize as null
@@ -156,7 +180,20 @@ export class PropertyExtractor {
         return null;
     }
 
+    /** True for an embedded value-type struct (cc.Vec3, cc.Color, …) */
+    #isValueType(value) {
+        return typeof value === 'object' && value !== null &&
+            VALUE_TYPE_FIELDS[value.__type__] !== undefined;
+    }
+
     #extractValue(value) {
+        // Embedded value-type struct (cc.Vec3, cc.Size, cc.Color, …) →
+        // compact rounded array in canonical field order
+        if (this.#isValueType(value)) {
+            return VALUE_TYPE_FIELDS[value.__type__].map(k =>
+                typeof value[k] === 'number' ? Math.round(value[k] * 100) / 100 : 0);
+        }
+
         // Asset reference
         if (typeof value === 'object' && '__uuid__' in value) {
             return this.#assetLabel(value.__uuid__);

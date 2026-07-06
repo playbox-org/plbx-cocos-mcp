@@ -68,6 +68,16 @@
         "packshotView": "→CTA#1943",
         "clickBuildCount": 0,
         "_id": "a8d8FMBWxN3J+FE4p9Dsrr",
+        "crystalMoveDirection": [
+          0,
+          0,
+          1
+        ],
+        "redCrystalMoveDirection": [
+          0,
+          0,
+          1
+        ],
         "buyButtonZone__targetOverride": "→ButtonPurchaseZone#2069",
         "buyGateZone__targetOverride": "→GatePurchaseZone#2177",
         "buyConveyorZone__targetOverride": "→ConveyorPurchaseZone#2204",
@@ -226,7 +236,12 @@
             "parentNode": "→VFXs#1869",
             "playInterval": 0,
             "despawnDelay": 1.5,
-            "_id": "90sqcbT5ZIAKUUPDRZKFL3"
+            "_id": "90sqcbT5ZIAKUUPDRZKFL3",
+            "defaultScale": [
+              1,
+              1,
+              1
+            ]
           }
         }
       ],
@@ -260,7 +275,12 @@
             "parentNode": "→VFXs#1869",
             "playInterval": 0,
             "despawnDelay": 1.5,
-            "_id": "a2G3tvBclKppBYieK3QTWp"
+            "_id": "a2G3tvBclKppBYieK3QTWp",
+            "defaultScale": [
+              2,
+              2,
+              2
+            ]
           }
         }
       ],
@@ -294,7 +314,12 @@
             "parentNode": "→VFXs#1869",
             "playInterval": 0,
             "despawnDelay": 1.5,
-            "_id": "9555z0R2FJ/IjJiGLG+/g5"
+            "_id": "9555z0R2FJ/IjJiGLG+/g5",
+            "defaultScale": [
+              2.5,
+              2.5,
+              2.5
+            ]
           }
         }
       ],

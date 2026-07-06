@@ -327,7 +327,7 @@
       ◆ Script:4e2e74v3 {animationController=→Zombi_Defolt _id=4f7fGKxBZL/YUwXbXg2hBi}
       ◆ BoxCollider
       ◆ RigidBody
-      ◆ Script:e0dfa7Lq {crystalStack=→CrystalStack goldStack=→GoldStack _id=949EtfV/hBbpKW7h7u4bCe}
+      ◆ Script:e0dfa7Lq {crystalStack=→CrystalStack goldStack=→GoldStack _id=949EtfV/hBbpKW7h7u4bCe offsetWhenBothPresent=[0,0,-0.8]}
       ● CrystalStack
         ◆ Script:03f35T03 {root=→CrystalStack itemType=Crystal gridX=2 gridZ=1}
         ◆ Script:601a4FXN {stack=→CrystalStack debug=false maxFlightDuration=0.6 jitterXZ=0.05}

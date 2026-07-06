@@ -43,33 +43,33 @@
       ● Ground
         ● Grass
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
-          ◆ BoxCollider {_isTrigger=false _id=e4sPS6mE9Kvp1jKQSsvH9f}
+          ◆ BoxCollider {_isTrigger=false _id=e4sPS6mE9Kvp1jKQSsvH9f _center=[0,-5,0] _size=[12,10,12]}
         ● SM_Floor
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
-          ◆ BoxCollider {_isTrigger=false _id=d8QoyNYz1DfrcVVL/FIZ/3}
-        ● SM_Floor
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
-          ● Collider
-            ◆ BoxCollider {_isTrigger=false _id=12FT7Z1QpOXZbVVLhXH0j1}
-        ● SM_Floor
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
-          ◆ BoxCollider {_isTrigger=false _id=e46Jr+7JJCFpP/93w/nTyv}
+          ◆ BoxCollider {_isTrigger=false _id=d8QoyNYz1DfrcVVL/FIZ/3 _center=[0,-2.5,-10] _size=[31.34,5,100]}
         ● SM_Floor
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
           ● Collider
-            ◆ BoxCollider {_isTrigger=false _id=6dTCBOwPtKL7xxoKFdgg9t}
+            ◆ BoxCollider {_isTrigger=false _id=12FT7Z1QpOXZbVVLhXH0j1 _center=[0,0,0] _size=[20,1,40]}
         ● SM_Floor
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
-          ◆ BoxCollider {_isTrigger=false _id=e9veQVMH5LrLozrGucRUEu}
+          ◆ BoxCollider {_isTrigger=false _id=e46Jr+7JJCFpP/93w/nTyv _center=[0,0,10] _size=[31.34,0,100]}
         ● SM_Floor
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
-          ◆ BoxCollider {_isTrigger=false _id=afXpUN46RGCbXPG3n+3T4c}
+          ● Collider
+            ◆ BoxCollider {_isTrigger=false _id=6dTCBOwPtKL7xxoKFdgg9t _center=[0,0,0] _size=[20,1,40]}
         ● SM_Floor
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
-          ◆ BoxCollider {_isTrigger=false _id=652f33O+pHYZlF+jG0CkcX}
+          ◆ BoxCollider {_isTrigger=false _id=e9veQVMH5LrLozrGucRUEu _center=[0,-2.5,-10] _size=[31.34,5,100]}
         ● SM_Floor
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
-          ◆ BoxCollider {_isTrigger=false _id=35EPszXiFBGqW8CiebHMjd}
+          ◆ BoxCollider {_isTrigger=false _id=afXpUN46RGCbXPG3n+3T4c _center=[0,-2.5,10] _size=[31.34,5,100]}
+        ● SM_Floor
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ BoxCollider {_isTrigger=false _id=652f33O+pHYZlF+jG0CkcX _center=[0,-5,0] _size=[31.34,10,44.06]}
+        ● SM_Floor
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ BoxCollider {_isTrigger=false _id=35EPszXiFBGqW8CiebHMjd _center=[0,-5,0] _size=[31.34,10,44.06]}
       ● Cliffs
         ● Scal [P→92d27365…]
         ● Scal-001
@@ -132,14 +132,14 @@
         ● ScalBorder-001 [P→daebd1eb…]
         ● Colliders
           ● Border
-            ◆ BoxCollider {_isTrigger=false _id=27tVGkeINNQ4FL4S0r+CJm}
+            ◆ BoxCollider {_isTrigger=false _id=27tVGkeINNQ4FL4S0r+CJm _center=[33,5,-15] _size=[13,15,80]}
           ● Border-001
-            ◆ BoxCollider {_isTrigger=false _id=30ivuF5o9Gha2nKXS+oJ4X}
+            ◆ BoxCollider {_isTrigger=false _id=30ivuF5o9Gha2nKXS+oJ4X _center=[10,5,-30] _size=[10,15,35]}
           ● Border-002
-            ◆ BoxCollider {_isTrigger=false _id=a8agZa9MJBmpblt0D3WsGS}
+            ◆ BoxCollider {_isTrigger=false _id=a8agZa9MJBmpblt0D3WsGS _center=[10,5,30] _size=[5,15,35]}
       ● Fences
         ● Wall
-          ◆ BoxCollider {_isTrigger=false _id=03Tq8jHx1BQJiVvd0zaHYW}
+          ◆ BoxCollider {_isTrigger=false _id=03Tq8jHx1BQJiVvd0zaHYW _center=[0,4,-1] _size=[25,8,2]}
           ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
           ● Fence [P→7c72ba33…]
           ● Fence-001 [P→7c72ba33…]
@@ -154,7 +154,7 @@
           ● Fence-010 [P→7c72ba33…]
           ● Fence-011 [P→7c72ba33…]
         ● Wall-001
-          ◆ BoxCollider {_isTrigger=false _id=e2z2y96gpNXrx0xslDqpAK}
+          ◆ BoxCollider {_isTrigger=false _id=e2z2y96gpNXrx0xslDqpAK _center=[0,4,-1] _size=[25,8,2]}
           ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
           ● Fence [P→7c72ba33…]
           ● Fence-001
@@ -175,7 +175,7 @@
           ● Fence-010 [P→7c72ba33…]
           ● Fence-011 [P→7c72ba33…]
         ● WallDoorway
-          ◆ BoxCollider {_isTrigger=false _id=b5aX1HqA1CkJb6UYo+cEi4}
+          ◆ BoxCollider {_isTrigger=false _id=b5aX1HqA1CkJb6UYo+cEi4 _center=[0,4,-1.5] _size=[25,8,3]}
           ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
           ● Fence [P→7c72ba33…]
           ● Fence-001
@@ -203,7 +203,7 @@
           ● Border
             ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
         ● WallDoorway-001
-          ◆ BoxCollider {_isTrigger=false _id=c6mgM6lZ1IN6emt9hmHz4N}
+          ◆ BoxCollider {_isTrigger=false _id=c6mgM6lZ1IN6emt9hmHz4N _center=[0,4,-1] _size=[25,8,2]}
           ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
           ● Fence [P→7c72ba33…]
           ● Fence-001 [P→7c72ba33…]
@@ -313,7 +313,7 @@
         ● SM_Wood_07
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
     ● Gate @(20,0,2.7)
-      ◆ BoxCollider {_isTrigger=false _id=41CS2ZUrBD7bsff+fSloDV}
+      ◆ BoxCollider {_isTrigger=false _id=41CS2ZUrBD7bsff+fSloDV _center=[0,4,0] _size=[15,8,1]}
       ● SM_Gate_Wood
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
       ● SM_Gate_Wood-001
@@ -325,9 +325,9 @@
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
     ● Player
       ◆ Script:4e2e74v3 {animationController=→Zombi_Defolt#1957 _id=4f7fGKxBZL/YUwXbXg2hBi}
-      ◆ BoxCollider {_isTrigger=false _id=30wvpvwhVIQZ/TV+D3zl63}
+      ◆ BoxCollider {_isTrigger=false _id=30wvpvwhVIQZ/TV+D3zl63 _center=[0,1.8,0] _size=[1.8,3.6,1.8]}
       ◆ RigidBody {_group=1 _type=1 _mass=1 _allowSleep=true}
-      ◆ Script:e0dfa7Lq {crystalStack=→CrystalStack#2421 goldStack=→GoldStack#1908 _id=949EtfV/hBbpKW7h7u4bCe}
+      ◆ Script:e0dfa7Lq {crystalStack=→CrystalStack#2421 goldStack=→GoldStack#1908 _id=949EtfV/hBbpKW7h7u4bCe offsetWhenBothPresent=[0,0,-0.8]}
       ● CrystalStack
         ◆ Script:03f35T03 {root=→CrystalStack#2420 itemType=Crystal gridX=2 gridZ=1}
         ◆ Script:601a4FXN {stack=→CrystalStack#2421 debug=false maxFlightDuration=0.6 jitterXZ=0.05}
@@ -352,7 +352,7 @@
     ● House @(0.5,0,-8.5)
       ● SM_Dom
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
-        ◆ BoxCollider {_isTrigger=false _id=d3JghCyO1KWI3uiFIUn1GI}
+        ◆ BoxCollider {_isTrigger=false _id=d3JghCyO1KWI3uiFIUn1GI _center=[0.02,2.13,0.05] _size=[4.52,4.6,3.16]}
         ● SM_Dom_Krisha
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
         ● Window
@@ -364,7 +364,7 @@
       ● lightning [P→f874611c…]
     ● SellingStationRed @(-5,0,11.8)
       ◆ Script:8d141ySj {crystalIcon=<asset> crystalStack=→CrystallStack#1821 carActiveAnchor=→ActiveWaypoint#1833 carPool=→Cars#1849}
-      ◆ BoxCollider {_isTrigger=false _id=e9eMdU4fdKsIxtS+zs2qo1}
+      ◆ BoxCollider {_isTrigger=false _id=e9eMdU4fdKsIxtS+zs2qo1 _center=[0,1,0] _size=[2,2,5.5]}
       ● Table
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
         ● CashRegister
@@ -375,19 +375,19 @@
         ◆ Script:03f35T03 {root=→CrystallStack#1820 gridX=2 gridZ=4 spacingX=0.8}
         ◆ Script:601a4FXN {stack=→CrystallStack#1821 debug=false maxFlightDuration=0.6 jitterXZ=0.05}
       ● SellZone-001
-        ◆ BoxCollider {_isTrigger=true _id=70z5J5uIhNWow4KKNdb3NL}
+        ◆ BoxCollider {_isTrigger=true _id=70z5J5uIhNWow4KKNdb3NL _center=[0,0,0] _size=[2.5,2.5,2.5]}
         ◆ Script:5d6c8DvF {trigger=→SellZone-001#1830 _id=dfS1BkVo9FrJ94F5+hbEwZ}
         ● RenderRoot
-          ◆ UITransform {_id=925WF5z61EirqwZ/kGySoB}
+          ◆ UITransform {_id=925WF5z61EirqwZ/kGySoB _contentSize=[250,250] _anchorPoint=[0.5,0.5]}
           ◆ RenderRoot2D {_id=3cfQfDeQlHP7Cg+pV2CHM8}
           ● bg
-            ◆ UITransform {_id=3bmY2AyPRMHa90ZCYCpt63}
+            ◆ UITransform {_id=3bmY2AyPRMHa90ZCYCpt63 _contentSize=[250,250] _anchorPoint=[0.5,0.5]}
             ◆ Sprite {_customMaterial=<asset> _srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset>}
       ● Waypoints
         [+15 hidden nodes, depth 1]
     ● SellingStation @(1.2,0,11.8)
       ◆ Script:8d141ySj {crystalIcon=<asset> crystalStack=→CrystallStack#2263 carActiveAnchor=→ActiveWaypoint#2247 carPool=→Cars#1849}
-      ◆ BoxCollider {_isTrigger=false _id=c8pT0IimNMc6+nYcWK5Xz3}
+      ◆ BoxCollider {_isTrigger=false _id=c8pT0IimNMc6+nYcWK5Xz3 _center=[0,1,0] _size=[2,2,5.5]}
       ● Table
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
         ● CashRegister
@@ -401,7 +401,7 @@
         [+15 hidden nodes, depth 1]
     ● Hammer @(8.5,0,-9)
       ◆ Script:40cabRgh {hammerMesh=→SM_Hammer#2151 hitInterval=3 hitAngle=100 hitDuration=0.15}
-      ◆ BoxCollider {_isTrigger=false _id=368Sz9oIJIPpJf2PQj/Or9}
+      ◆ BoxCollider {_isTrigger=false _id=368Sz9oIJIPpJf2PQj/Or9 _center=[1,7,-1] _size=[4,15,4]}
       ● SM_BaseFrame
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
       ● SM_Hammer
@@ -444,7 +444,7 @@
         [+2 hidden nodes, depth 1]
     ● Button @(8.5,0,-4)
       ◆ Script:f1f387/0 {buttonNode=→SM_Button#2045 jumpTarget=→Foot#2046 trigger=→Button#2054 startHidden=true}
-      ◆ BoxCollider {_isTrigger=true _id=dcJQ8ofZtPOqd7OUN9XeSE}
+      ◆ BoxCollider {_isTrigger=true _id=dcJQ8ofZtPOqd7OUN9XeSE _center=[0,0.75,0] _size=[1.8,1.5,1.8]}
       ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
       ● SM_Button
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
@@ -459,11 +459,11 @@
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
       ● Cylinder
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
-        ◆ BoxCollider {_isTrigger=false _id=54AvU00X9ECqgNjWc50XO+}
+        ◆ BoxCollider {_isTrigger=false _id=54AvU00X9ECqgNjWc50XO+ _center=[0.8,0,-11.5] _size=[3.4,2.4,24.1]}
         ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
       ● Cylinder-001
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
-        ◆ BoxCollider {_isTrigger=false _id=c4CrJcxs9Da6fkoY10Ulme}
+        ◆ BoxCollider {_isTrigger=false _id=c4CrJcxs9Da6fkoY10Ulme _center=[0.8,0,-11.5] _size=[3.4,2.4,24.1]}
         ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
       ● Path1
       ● Path2
@@ -475,7 +475,7 @@
     ● Crystals
       ● Recycler
         ◆ Script:ff8e5X/O {trigger=→Recycler#2024 pool=→BigBlueCrystalls#1856 _id=f6vZp2z6tHdoc/lH/1sgHm}
-        ◆ BoxCollider {_isTrigger=true _id=09MlwxKSdHoLvtNJM1Qk3a}
+        ◆ BoxCollider {_isTrigger=true _id=09MlwxKSdHoLvtNJM1Qk3a _center=[0,2,0] _size=[15,5,5]}
         ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
       ● SpawnPoints
         [+1 hidden nodes, depth 1]
@@ -484,7 +484,7 @@
       ● RedCrystalls
       ● Recycler-001
         ◆ Script:ff8e5X/O {trigger=→Recycler-001#2032 pool=→BigRedCrystalls#1862 _id=2e2JiLuxxHTpb6eK0Yk4KD}
-        ◆ BoxCollider {_isTrigger=true _id=60MrVMr8ZGjJOrwnQG1y0B}
+        ◆ BoxCollider {_isTrigger=true _id=60MrVMr8ZGjJOrwnQG1y0B _center=[0,2,0] _size=[15,5,5]}
         ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
       ● RedCrystallsSpawnPoints
         [+1 hidden nodes, depth 1]
@@ -500,18 +500,18 @@
       ● StackZone [P→b77d09e2…]
       ● GoldStackZone [P→b77d09e2…]
       ● SellZone
-        ◆ BoxCollider {_isTrigger=true _id=38/oVJSFhKLJ76Ug6/7MrP}
+        ◆ BoxCollider {_isTrigger=true _id=38/oVJSFhKLJ76Ug6/7MrP _center=[0,0,0] _size=[2.5,2.5,2.5]}
         ◆ Script:5d6c8DvF {trigger=→SellZone#2363 _id=ccufxnwD5HCbqZK6rbwrEU}
         ● RenderRoot
-          ◆ UITransform {_id=1cPKY8W7xBCIy7bu8c54WM}
+          ◆ UITransform {_id=1cPKY8W7xBCIy7bu8c54WM _contentSize=[250,250] _anchorPoint=[0.5,0.5]}
           ◆ RenderRoot2D {_id=7b+L1D2YxLZo47W1BmD79l}
           ● bg
-            ◆ UITransform {_id=afazrkaF5CNZjCA8toAEER}
+            ◆ UITransform {_id=afazrkaF5CNZjCA8toAEER _contentSize=[250,250] _anchorPoint=[0.5,0.5]}
             ◆ Sprite {_customMaterial=<asset> _srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset>}
       ● RedQueuePurchaseZone [P→ab794f1c…]
     ● Crusher @(20.5,0,-4)
       ◆ Script:b7fa5kIX {crushZone=→Crusher#2064 pikesNode=→SM_Stakes#2061 pikesRiseAmount=1 pikesRiseDuration=0.2}
-      ◆ BoxCollider {_isTrigger=true _id=69gUx1B+5Bf4ZYSrb5eIpl}
+      ◆ BoxCollider {_isTrigger=true _id=69gUx1B+5Bf4ZYSrb5eIpl _center=[0,1,0] _size=[9.5,2,9.5]}
       ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
       ● SM_Platforma
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
@@ -531,74 +531,74 @@
       ● Cacti3 [P→b267cf03…]
     ● Cacti3 [P→bb73cd66…]
   ● [UI] @(540,1184,0)
-    ◆ UITransform {_id=c4j9T6VlBIsZF+uD7drQf3}
+    ◆ UITransform {_id=c4j9T6VlBIsZF+uD7drQf3 _contentSize=[1080,2368] _anchorPoint=[0.5,0.5]}
     ◆ Canvas {_cameraComponent=→Camera#1886 _alignCanvasWithScreen=true _id=27ETxt9y1CjI42Xinmg0H9}
     ◆ Widget {_alignFlags=45 _left=0 _right=0 _top=0}
     ● Camera @(0,0,1000)
       ◆ Camera {_projection=0 _priority=1073741824 _fov=45 _fovAxis=0}
     ● JoystickContainer
-      ◆ UITransform {_id=267EXXPalGd42p3AKf3yNq}
+      ◆ UITransform {_id=267EXXPalGd42p3AKf3yNq _contentSize=[1080,2368] _anchorPoint=[0.5,0.5]}
       ◆ Widget {_alignFlags=45 _left=0 _right=0 _top=0}
       ● Joystick
-        ◆ UITransform {_id=2cYhannrJPgKekt3zyj+7h}
+        ◆ UITransform {_id=2cYhannrJPgKekt3zyj+7h _contentSize=[300,300] _anchorPoint=[0.5,0.5]}
         ◆ Script:fe1293CZ {canvas=→[UI]#1944 baseNode=→Base#1949 stickNode=→Handler#1952 baseSprite=→Base#1951}
         ● Base
-          ◆ UITransform {_id=84O69tYghInaElVhVx8H//}
+          ◆ UITransform {_id=84O69tYghInaElVhVx8H// _contentSize=[300,300] _anchorPoint=[0.5,0.5]}
           ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
         ● Handler
-          ◆ UITransform {_id=2drQb6xb9FpIRw6nodnu/G}
+          ◆ UITransform {_id=2drQb6xb9FpIRw6nodnu/G _contentSize=[90,90] _anchorPoint=[0.5,0.5]}
           ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
     ● HUD
-      ◆ UITransform {_id=49RBvKzFZL/Lpw33CRdthb}
+      ◆ UITransform {_id=49RBvKzFZL/Lpw33CRdthb _contentSize=[1080,2368] _anchorPoint=[0.5,0.5]}
       ◆ Widget {_alignFlags=45 _left=0 _right=0 _top=0}
       ◆ SafeArea {_symmetric=true _id=3dfzInVHVCx6g8hYcFhTbq}
       ● Logo
-        ◆ UITransform {_id=c1z1MBk8ZDz6Sn+bMwGBpX}
+        ◆ UITransform {_id=c1z1MBk8ZDz6Sn+bMwGBpX _contentSize=[421.67,190.92] _anchorPoint=[0.5,0.5]}
         ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
         ◆ Widget {_alignFlags=9 _left=60 _right=0 _top=60}
       ● StoreButton
-        ◆ UITransform {_id=d0ViStspdJbIFNnAYm4gU8}
+        ◆ UITransform {_id=d0ViStspdJbIFNnAYm4gU8 _contentSize=[509,168] _anchorPoint=[0.5,0.5]}
         ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=1}
         ◆ Button {_interactable=true _transition=0 _normalSprite=<asset> _hoverSprite=<asset>}
         ◆ Widget {_alignFlags=9 _left=73 _right=0 _top=305}
         ◆ Script:5f9405q2 {button=→StoreButton#1895 pulseScale=1.1 pulseDuration=0.6 _id=36lRjUdmRGRqxxYwL/Y5eP}
       ● GoldCounter
-        ◆ UITransform {_id=4c55p1R3dEDbIShfOb0uOg}
+        ◆ UITransform {_id=4c55p1R3dEDbIShfOb0uOg _contentSize=[317,94] _anchorPoint=[0.5,0.5]}
         ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=coin_bar.png@f9941 _type=0}
         ◆ Widget {_alignFlags=33 _left=0 _right=60 _top=90}
         ◆ Script:89b476SH {goldStorage=→GoldStack#1906 label=→Count#1901 _id=baYfc6sE1Oo5Z24fBUU1L1}
         ● Count
-          ◆ UITransform {_id=d5CZCGV2ZPuKrRVP6CYklo}
+          ◆ UITransform {_id=d5CZCGV2ZPuKrRVP6CYklo _contentSize=[69.75,79.6] _anchorPoint=[0.5,0.5]}
           ◆ Label {_srcBlendFactor=2 _dstBlendFactor=4 _horizontalAlign=1 _verticalAlign=1} "30"
       ● Tutorial
-        ◆ UITransform {_id=8axy03sQZOQ7myksBIr52/}
+        ◆ UITransform {_id=8axy03sQZOQ7myksBIr52/ _contentSize=[100,100] _anchorPoint=[0.5,0.5]}
         ◆ Script:f4a7e/A5 {tutorialAnimation=→Tutorial#1922 tutorialLabel=→Label#1913 inactivityTime=5 fadeInDuration=0.3}
         ◆ Animation {playOnLoad=false _clips=["<asset>"] _defaultClip=<asset> _id=0d/eTS0FBGaaWrB4x+q9ft}
         ◆ Widget {_alignFlags=18 _left=0 _right=0 _top=0}
         ● Label
-          ◆ UITransform {_id=62AYImlYFOKJ75LrkfiN4W}
+          ◆ UITransform {_id=62AYImlYFOKJ75LrkfiN4W _contentSize=[627.44,100.8] _anchorPoint=[0.5,0.5]}
           ◆ Label {_srcBlendFactor=2 _dstBlendFactor=4 _horizontalAlign=1 _verticalAlign=1} "DRAG TO MOVE"
         ● Beskonechnost
-          ◆ UITransform {_id=77OFQZyfpIKZ/o4stECj5+}
+          ◆ UITransform {_id=77OFQZyfpIKZ/o4stECj5+ _contentSize=[300,147] _anchorPoint=[0.5,0.5]}
           ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
         ● Hend
-          ◆ UITransform {_id=edIQfVc+dAnbXcsZ1s9aab}
+          ◆ UITransform {_id=edIQfVc+dAnbXcsZ1s9aab _contentSize=[164.5,243.5] _anchorPoint=[0.39,1]}
           ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
     ● CTA
-      ◆ UITransform {_id=a2yNn2BttIBYkHOZgC1MUc}
+      ◆ UITransform {_id=a2yNn2BttIBYkHOZgC1MUc _contentSize=[1080,2368] _anchorPoint=[0.5,0.5]}
       ◆ Widget {_alignFlags=45 _left=0 _right=0 _top=0}
       ◆ Script:af33246q {fadeOverlay=→Curtain#1928 logo=→Logo#1933 ctaButton=→StoreButton#1939 _id=7fr2A36vdDhbTz/hnR77mC}
       ● Curtain
-        ◆ UITransform {_id=97hJJ/bkdCm79IkJb7WTNf}
+        ◆ UITransform {_id=97hJJ/bkdCm79IkJb7WTNf _contentSize=[1080,2368] _anchorPoint=[0.5,0.5]}
         ◆ Widget {_alignFlags=45 _left=0 _right=0 _top=0}
         ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
       ● AnimatedContainer
-        ◆ UITransform {_id=64PlzbNtlI7LcYhR3vdT2a}
+        ◆ UITransform {_id=64PlzbNtlI7LcYhR3vdT2a _contentSize=[1,1] _anchorPoint=[0.5,0.5]}
         ● Logo
-          ◆ UITransform {_id=d7RrX3brpBk7h0IzZkbe2l}
+          ◆ UITransform {_id=d7RrX3brpBk7h0IzZkbe2l _contentSize=[506,229] _anchorPoint=[0.5,0.5]}
           ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
         ● StoreButton
-          ◆ UITransform {_id=6daatnKlNGQYW1QN0S8djK}
+          ◆ UITransform {_id=6daatnKlNGQYW1QN0S8djK _contentSize=[509,168] _anchorPoint=[0.5,0.5]}
           ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=1}
           ◆ Button {_interactable=true _transition=0 _normalSprite=<asset> _hoverSprite=<asset>}
   ● Dummies

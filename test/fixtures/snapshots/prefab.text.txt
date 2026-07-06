@@ -6,7 +6,7 @@
     ◆ Script:03f35T03 {root=→CarCrystalStack gridX=2 gridZ=1 spacingX=0.8}
   ● CarIndicatorView @(0,3,0.8) [P]
     ◆ Script:c72b8Bj6 {progressFill=→Fill countLabel=→Count iconSprite=→Icon bounceTarget=→CarIndicatorView}
-    ◆ Script:84bf09ol {lockYAxis=false}
+    ◆ Script:84bf09ol {lockYAxis=false eulerOffset=[0,0,0]}
     ● Root @(0,0.6,0) [P]
       ◆ UITransform
       ◆ RenderRoot2D

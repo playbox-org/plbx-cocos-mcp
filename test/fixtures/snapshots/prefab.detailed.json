@@ -85,7 +85,12 @@
           "type": "Script:84bf09ol",
           "enabled": true,
           "props": {
-            "lockYAxis": false
+            "lockYAxis": false,
+            "eulerOffset": [
+              0,
+              0,
+              0
+            ]
           }
         }
       ],
@@ -101,7 +106,17 @@
           "components": [
             {
               "type": "UITransform",
-              "enabled": true
+              "enabled": true,
+              "props": {
+                "_contentSize": [
+                  100,
+                  100
+                ],
+                "_anchorPoint": [
+                  0.5,
+                  0.5
+                ]
+              }
             },
             {
               "type": "RenderRoot2D",
@@ -115,7 +130,17 @@
               "components": [
                 {
                   "type": "UITransform",
-                  "enabled": true
+                  "enabled": true,
+                  "props": {
+                    "_contentSize": [
+                      111,
+                      123
+                    ],
+                    "_anchorPoint": [
+                      0.5,
+                      0.5
+                    ]
+                  }
                 },
                 {
                   "type": "Sprite",
@@ -131,7 +156,17 @@
                     "_fillStart": 0,
                     "_fillRange": 0,
                     "_isTrimmedMode": true,
-                    "_useGrayscale": false
+                    "_useGrayscale": false,
+                    "_color": [
+                      255,
+                      255,
+                      255,
+                      255
+                    ],
+                    "_fillCenter": [
+                      0,
+                      0
+                    ]
                   }
                 }
               ],
@@ -142,7 +177,17 @@
                   "components": [
                     {
                       "type": "UITransform",
-                      "enabled": true
+                      "enabled": true,
+                      "props": {
+                        "_contentSize": [
+                          96.5,
+                          96
+                        ],
+                        "_anchorPoint": [
+                          0.5,
+                          0.5
+                        ]
+                      }
                     },
                     {
                       "type": "Sprite",
@@ -158,7 +203,17 @@
                         "_fillStart": 0,
                         "_fillRange": 1,
                         "_isTrimmedMode": true,
-                        "_useGrayscale": false
+                        "_useGrayscale": false,
+                        "_color": [
+                          49,
+                          204,
+                          55,
+                          255
+                        ],
+                        "_fillCenter": [
+                          0,
+                          0
+                        ]
                       }
                     }
                   ],
@@ -170,7 +225,17 @@
                   "components": [
                     {
                       "type": "UITransform",
-                      "enabled": true
+                      "enabled": true,
+                      "props": {
+                        "_contentSize": [
+                          64,
+                          61.75
+                        ],
+                        "_anchorPoint": [
+                          0.5,
+                          0.5
+                        ]
+                      }
                     },
                     {
                       "type": "Sprite",
@@ -186,7 +251,17 @@
                         "_fillStart": 0,
                         "_fillRange": 1,
                         "_isTrimmedMode": true,
-                        "_useGrayscale": false
+                        "_useGrayscale": false,
+                        "_color": [
+                          255,
+                          255,
+                          255,
+                          255
+                        ],
+                        "_fillCenter": [
+                          0,
+                          0
+                        ]
                       }
                     }
                   ],
@@ -198,7 +273,17 @@
                   "components": [
                     {
                       "type": "UITransform",
-                      "enabled": true
+                      "enabled": true,
+                      "props": {
+                        "_contentSize": [
+                          43.96,
+                          54.4
+                        ],
+                        "_anchorPoint": [
+                          0.5,
+                          0.5
+                        ]
+                      }
                     },
                     {
                       "type": "Label",
@@ -227,7 +312,29 @@
                         "_enableOutline": true,
                         "_outlineWidth": 2,
                         "_enableShadow": false,
-                        "_shadowBlur": 2
+                        "_shadowBlur": 2,
+                        "_color": [
+                          255,
+                          255,
+                          255,
+                          255
+                        ],
+                        "_outlineColor": [
+                          0,
+                          0,
+                          0,
+                          255
+                        ],
+                        "_shadowColor": [
+                          0,
+                          0,
+                          0,
+                          255
+                        ],
+                        "_shadowOffset": [
+                          2,
+                          2
+                        ]
                       }
                     }
                   ],
