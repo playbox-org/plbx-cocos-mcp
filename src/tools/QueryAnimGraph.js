@@ -49,7 +49,7 @@ export class QueryAnimGraph extends BaseTool {
 
     async execute(args, projectRoot) {
         try {
-            const assetIndex = new AssetIndex(projectRoot);
+            const assetIndex = AssetIndex.shared(projectRoot);
 
             // Accept a UUID or any path form AssetIndex knows; fall back to a
             // plain file path for graphs outside the asset index (e.g. tests)

@@ -26,7 +26,8 @@ import { randomUUID } from 'crypto';
 import { SceneDocument, isRef } from './SceneDocument.js';
 import {
     OperationError, requireString, resolveEditableNode, mergeTyped, parsePropertyPath,
-    findComponent, normalizeNodeProperty, describeComponentType, REQUIRED_COMPANIONS
+    findComponent, normalizeNodeProperty, describeComponentType, REQUIRED_COMPANIONS,
+    childInsertIndex
 } from './operations.js';
 import {
     transformValueTracked, upsertTargetOverride, dropTargetOverrides,
@@ -34,8 +35,6 @@ import {
 } from './targetOverrides.js';
 import { generateFileId } from '../utils/fileId.js';
 import { eulerToQuat } from '../utils/math3d.js';
-
-const MAX_NESTING_SCAN_DEPTH = 8;
 
 // ------------------------------------------------------- source resolution
 
@@ -162,17 +161,18 @@ function guardCycle(doc, assetUuid, ctx) {
     const ownUuid = ownAssetUuid(doc.filePath);
     if (!ownUuid) return;
 
+    // Exhaustive: `visited` alone guarantees termination, no depth cap needed
     const visited = new Set();
-    const stack = [[assetUuid, 0]];
+    const stack = [assetUuid];
     while (stack.length) {
-        const [uuid, depth] = stack.pop();
+        const uuid = stack.pop();
         const base = uuid.split('@')[0];
         if (base === ownUuid) {
             throw new OperationError(
                 `Instantiating this prefab would create a cycle (it directly or indirectly contains ${doc.filePath})`
             );
         }
-        if (visited.has(uuid) || depth >= MAX_NESTING_SCAN_DEPTH) continue;
+        if (visited.has(uuid)) continue;
         visited.add(uuid);
 
         let source;
@@ -184,7 +184,7 @@ function guardCycle(doc, assetUuid, ctx) {
         for (const obj of source.doc.objects) {
             if (obj.__type__ === 'cc.PrefabInfo' && obj.instance &&
                 typeof obj.asset?.__uuid__ === 'string') {
-                stack.push([obj.asset.__uuid__, depth + 1]);
+                stack.push(obj.asset.__uuid__);
             }
         }
     }
@@ -274,7 +274,7 @@ export function instantiatePrefab(doc, op, ctx) {
             mergeTyped({ __type__: 'cc.Vec3', x: 1, y: 1, z: 1 }, op.scale, 'scale'));
     }
 
-    const at = Math.min(op.index ?? parent._children.length, parent._children.length);
+    const at = childInsertIndex(op.index, parent._children.length);
     parent._children.splice(at, 0, { __id__: stubIdx });
 
     registerInstance(doc, stubIdx, ctx);

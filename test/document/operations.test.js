@@ -155,6 +155,18 @@ describe('add_node', () => {
         ]);
         assert.strictEqual(doc.childIndices(doc.root.idx).map(i => doc.nodeName(i))[0], 'First');
     });
+
+    test('negative index is rejected (no JS negative-splice surprises)', () => {
+        const doc = loadPrefab();
+        assert.throws(
+            () => applyOperations(doc, [{ op: 'add_node', parent: 'Table', name: 'Bad', index: -1 }]),
+            /non-negative integer/
+        );
+        assert.throws(
+            () => applyOperations(doc, [{ op: 'add_node', parent: 'Table', name: 'Bad', index: 1.5 }]),
+            /non-negative integer/
+        );
+    });
 });
 
 describe('remove_node', () => {
@@ -492,6 +504,28 @@ describe('set_component_property / set_asset_ref', () => {
                 op: 'set_asset_ref', node: 'Table', component: 'MeshRenderer',
                 property: 'mesh', asset: 'assets/Models/Missing.glb'
             }], { assetIndex }), /Asset not found/);
+    });
+
+    test('negative array "index" is rejected, not silently written as a string key', () => {
+        const doc = loadPrefab();
+        assert.throws(() =>
+            applyOperations(doc, [{
+                op: 'set_asset_ref', node: 'Table', component: 'MeshRenderer',
+                property: 'materials.-1', asset: 'assets/Materials/Dynamite.mtl'
+            }], { assetIndex }),
+            /negative array index/);
+        assert.throws(() =>
+            applyOperations(doc, [{
+                op: 'set_asset_ref', node: 'Table', component: 'MeshRenderer',
+                property: 'materials[-1]', asset: 'assets/Materials/Dynamite.mtl'
+            }], { assetIndex }),
+            /Bad property path/);
+    });
+});
+
+describe('OperationError', () => {
+    test('carries its own name (tools match on err.name)', () => {
+        assert.strictEqual(new OperationError('x').name, 'OperationError');
     });
 });
 

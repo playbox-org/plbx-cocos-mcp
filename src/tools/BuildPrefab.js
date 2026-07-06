@@ -67,7 +67,7 @@ export class BuildPrefab extends BaseTool {
             return this.error(`${args.outputPath} already exists — pass overwrite: true to replace it`);
         }
 
-        const assetIndex = new AssetIndex(projectRoot);
+        const assetIndex = AssetIndex.shared(projectRoot);
         const defaultName = path.basename(outputPath, '.prefab');
         let doc;
         let notes;
@@ -109,6 +109,7 @@ export class BuildPrefab extends BaseTool {
         if (newMeta) {
             fs.writeFileSync(metaPath, JSON.stringify(newMeta, null, 2), 'utf-8');
         }
+        AssetIndex.invalidate(projectRoot);
         const metaCreated = newMeta !== null;
 
         const lines = [

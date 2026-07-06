@@ -45,7 +45,7 @@ export class GetAssetInfo extends BaseTool {
 
     async execute(args, projectRoot) {
         try {
-            const index = new AssetIndex(projectRoot);
+            const index = AssetIndex.shared(projectRoot);
             const inspector = new AssetInspector(projectRoot, index);
             const info = inspector.inspect(args.asset);
 

@@ -21,10 +21,9 @@ import { SceneDocument, isRef } from '../document/SceneDocument.js';
 import { loadSourcePrefabByUuid } from '../document/instances.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 import { AssetInspector } from '../core/AssetInspector.js';
+import { VISUAL_ROOT_TYPES, MESH_RENDERERS } from '../document/componentTypes.js';
 
 const CHECKS = ['names', 'scales', 'wrappers', 'materials'];
-const VISUAL_ROOT_TYPES = ['cc.MeshRenderer', 'cc.SkinnedMeshRenderer', 'cc.Sprite'];
-const MESH_RENDERERS = ['cc.MeshRenderer', 'cc.SkinnedMeshRenderer'];
 const NAMED_TYPES = ['fbx', 'gltf', 'image', 'prefab', 'material', 'audio-clip', 'scene'];
 
 /** Auto-generated / meaningless name patterns (checked against the basename without extension) */
@@ -75,7 +74,7 @@ export class LintAssets extends BaseTool {
     }
 
     async execute(args, projectRoot) {
-        const index = new AssetIndex(projectRoot);
+        const index = AssetIndex.shared(projectRoot);
         const inspector = new AssetInspector(projectRoot, index);
         const checks = args.checks?.length ? args.checks : CHECKS;
         const folder = args.folder;

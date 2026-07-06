@@ -15,12 +15,12 @@ const BONE_NAMES = [
 
 // A name is a bone only when a keyword matches a whole "word": it may be
 // preceded by a separator (rig prefixes like "mixamorig:Head") and must be
-// followed by end-of-name, a separator, or a digit ("Head", "Head_L",
-// "Hand.R", "Spine1"). Plain continuations are not bones ("Header",
-// "Handle", "Armor", "RootNode").
+// followed by end-of-name, a separator, a digit, or a bare L/R side suffix
+// ("Head", "Head_L", "Hand.R", "Spine1", "EyeL"). Plain continuations are
+// not bones ("Header", "Handle", "Armor", "RootNode").
 const SEPARATOR = '[\\s_\\-.:]';
 const BONE_PATTERNS = BONE_NAMES.map(name =>
-    new RegExp(`(?:^|${SEPARATOR})${name}(?=$|${SEPARATOR}|\\d)`, 'i')
+    new RegExp(`(?:^|${SEPARATOR})${name}(?:[LR])?(?=$|${SEPARATOR}|\\d)`, 'i')
 );
 
 export class NodeFilter {

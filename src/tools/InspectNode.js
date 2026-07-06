@@ -189,7 +189,7 @@ export class InspectNode extends BaseTool {
     }
 
     #expandInstance(nodeId, stub, ctx) {
-        const assetIndex = new AssetIndex(ctx.projectRoot);
+        const assetIndex = AssetIndex.shared(ctx.projectRoot);
         const docCtx = { assetIndex, projectRoot: ctx.projectRoot };
         const source = loadSourcePrefabByUuid(docCtx, stub.assetUuid);
 

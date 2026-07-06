@@ -21,8 +21,8 @@ import { loadSourcePrefabByUuid } from './instances.js';
 import {
     mat4Identity, trsToMat4, mat4Multiply, transformAabb, mergeAabb
 } from '../utils/math3d.js';
+import { MESH_RENDERERS } from './componentTypes.js';
 
-const MESH_RENDERERS = ['cc.MeshRenderer', 'cc.SkinnedMeshRenderer'];
 const MAX_INSTANCE_DEPTH = 8;
 const IDENTITY_TRS = {
     pos: { x: 0, y: 0, z: 0 },
@@ -50,7 +50,7 @@ export class BoundsCalculator {
      */
     computeSubtree(doc, nodeIdx) {
         const out = { contributors: [], skipped: [], boxes: [] };
-        this.#enter(doc, nodeIdx, mat4Identity(), doc.nodePath(nodeIdx) ?? '/', out, 0, true);
+        this.#enter(doc, nodeIdx, mat4Identity(), doc.nodePath(nodeIdx) ?? '/', out, 0, true, new Map());
 
         let local = null;
         for (const box of out.boxes) {
@@ -78,24 +78,37 @@ export class BoundsCalculator {
      * frame — TRS applied — to the queried node's frame), then descend.
      * When `excludeOwnTrs`, `matrix` is used as-is (query root / instance root).
      */
-    #enter(doc, nodeIdx, matrix, label, out, depth, excludeOwnTrs) {
-        const node = doc.getObject(nodeIdx);
-
-        if (doc.isInstanceStub(nodeIdx)) {
-            this.#enterStub(doc, nodeIdx, matrix, label, out, depth, excludeOwnTrs);
+    #enter(doc, nodeIdx, matrix, label, out, depth, excludeOwnTrs, visiting) {
+        // Cycle guard over the current recursion path only: source-prefab docs
+        // are cached, so sibling stubs legitimately revisit the same (doc, idx)
+        let onPath = visiting.get(doc);
+        if (!onPath) visiting.set(doc, onPath = new Set());
+        if (onPath.has(nodeIdx)) {
+            out.skipped.push({ path: label, reason: 'cycle in node tree' });
             return;
         }
+        onPath.add(nodeIdx);
+        try {
+            const node = doc.getObject(nodeIdx);
 
-        const m = excludeOwnTrs ? matrix : mat4Multiply(matrix, nodeTrsMat(node));
-        this.#collectComponents(doc, nodeIdx, m, label, out);
-        for (const childIdx of doc.childIndices(nodeIdx)) {
-            const childLabel = `${label === '/' ? '' : label}/${doc.nodeName(childIdx) ?? '<unnamed>'}`;
-            this.#enter(doc, childIdx, m, childLabel, out, depth, false);
+            if (doc.isInstanceStub(nodeIdx)) {
+                this.#enterStub(doc, nodeIdx, matrix, label, out, depth, excludeOwnTrs, visiting);
+                return;
+            }
+
+            const m = excludeOwnTrs ? matrix : mat4Multiply(matrix, nodeTrsMat(node));
+            this.#collectComponents(doc, nodeIdx, m, label, out);
+            for (const childIdx of doc.childIndices(nodeIdx)) {
+                const childLabel = `${label === '/' ? '' : label}/${doc.nodeName(childIdx) ?? '<unnamed>'}`;
+                this.#enter(doc, childIdx, m, childLabel, out, depth, false, visiting);
+            }
+        } finally {
+            onPath.delete(nodeIdx);
         }
     }
 
     /** Collapsed instance: recurse into the source prefab with overrides applied */
-    #enterStub(doc, stubIdx, matrix, label, out, depth, excludeOwnTrs) {
+    #enterStub(doc, stubIdx, matrix, label, out, depth, excludeOwnTrs, visiting) {
         if (depth >= MAX_INSTANCE_DEPTH) {
             out.skipped.push({ path: label, reason: 'prefab nesting too deep' });
             return;
@@ -128,7 +141,7 @@ export class BoundsCalculator {
         this.#collectComponents(source.doc, rootIdx, m, label, out);
         for (const childIdx of source.doc.childIndices(rootIdx)) {
             const childLabel = `${label}→${source.doc.nodeName(childIdx) ?? '<unnamed>'}`;
-            this.#enter(source.doc, childIdx, m, childLabel, out, depth + 1, false);
+            this.#enter(source.doc, childIdx, m, childLabel, out, depth + 1, false, visiting);
         }
     }
 

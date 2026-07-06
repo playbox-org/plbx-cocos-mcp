@@ -110,6 +110,37 @@ describe('BoundsCalculator', () => {
         near(world.center.y, 0.5 * 3);
     });
 
+    test('cyclic _children graph is skipped, not a stack overflow', () => {
+        const doc = SceneDocument.load(MOCK('assets/Prefabs/Crate.prefab'));
+        // Corrupt the file: Visual points back at Root as its child
+        const rootIdx = doc.root.idx;
+        const visualIdx = doc.resolveNode('Visual');
+        doc.getObject(visualIdx)._children.push({ __id__: rootIdx });
+
+        const { local, skipped } = new BoundsCalculator(makeCtx())
+            .computeSubtree(doc, rootIdx);
+        assert.ok(local, 'the measurable part must still be measured');
+        assert.ok(skipped.some(s => /cycle/.test(s.reason)),
+            `expected a cycle skip entry, got ${JSON.stringify(skipped)}`);
+    });
+
+    test('two stubs of the same prefab both measure (shared source doc is not a false cycle)', () => {
+        const ctx = makeCtx();
+        const doc = SceneDocument.load(GOLDEN('Main.scene_V2.scene'));
+        applyOperations(doc, [
+            { op: 'instantiate_prefab', parent: '/', prefab: 'Prefabs/Crate.prefab', name: 'BoxA' },
+            { op: 'instantiate_prefab', parent: '/', prefab: 'Prefabs/Crate.prefab', name: 'BoxB', position: { x: 5 } }
+        ], ctx);
+
+        const calc = new BoundsCalculator(ctx);
+        const { world, skipped } = calc.computeSubtree(doc, doc.root.idx);
+        assert.ok(world, 'scene with two crates must be measurable');
+        assert.ok(!skipped.some(s => /cycle/.test(s.reason)),
+            `no false cycle reports expected, got ${JSON.stringify(skipped)}`);
+        // Both crates contribute: the merged AABB spans BoxA (x≈0) to BoxB (x≈5)
+        assert.ok(world.size.x > 4.9, `expected span > 4.9, got ${world.size.x}`);
+    });
+
     test('unmeasurable meshes are reported as skipped, not silently dropped', () => {
         const doc = SceneDocument.load(GOLDEN('TableCash.prefab'));
         const { local, skipped } = new BoundsCalculator(makeCtx())

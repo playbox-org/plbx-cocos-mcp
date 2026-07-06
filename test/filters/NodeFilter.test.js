@@ -80,6 +80,19 @@ describe('NodeFilter', () => {
             assert.strictEqual(filter.isBone('mixamorig:Head'), true);
         });
 
+        it('should identify bones with a bare L/R side suffix (no separator)', () => {
+            const filter = new NodeFilter();
+
+            assert.strictEqual(filter.isBone('EyeL'), true);
+            assert.strictEqual(filter.isBone('EyeR'), true);
+            assert.strictEqual(filter.isBone('HandR'), true);
+            assert.strictEqual(filter.isBone('FootL'), true);
+            assert.strictEqual(filter.isBone('ShoulderL'), true);
+            // ...but a suffix continuing into a word is not a side marker
+            assert.strictEqual(filter.isBone('EyeLid'), false);
+            assert.strictEqual(filter.isBone('HandRig'), false);
+        });
+
         it('should not identify regular nodes as bones', () => {
             const filter = new NodeFilter();
 

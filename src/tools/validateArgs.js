@@ -32,9 +32,21 @@ export function normalizeArgs(args, schema, aliases = {}) {
     const normalized = { ...args };
     const problems = [];
 
+    // The canonical key wins over any alias; two ALIASES of the same key with
+    // different values are a conflict — neither outranks the other.
+    const mergedFrom = new Map(); // canonical → alias that filled it
     for (const [alias, canonical] of Object.entries(aliases)) {
         if (!(alias in normalized)) continue;
-        if (!(canonical in normalized)) normalized[canonical] = normalized[alias];
+        if (!(canonical in normalized)) {
+            normalized[canonical] = normalized[alias];
+            mergedFrom.set(canonical, alias);
+        } else if (mergedFrom.has(canonical) &&
+                   JSON.stringify(normalized[canonical]) !== JSON.stringify(normalized[alias])) {
+            problems.push(
+                `conflicting values for "${canonical}": given via both ` +
+                `"${mergedFrom.get(canonical)}" and "${alias}" with different values`
+            );
+        }
         delete normalized[alias];
     }
 

@@ -66,6 +66,24 @@ describe('normalizeArgs', () => {
         assert.ok(!('filePath' in args));
     });
 
+    it('rejects two aliases of the same parameter with different values', () => {
+        const { error } = normalizeArgs(
+            { filePath: 'a.scene', path: 'b.scene' },
+            SCHEMA, { filePath: 'scenePath', path: 'scenePath' }
+        );
+        assert.match(error, /conflicting values for "scenePath"/);
+        assert.match(error, /"filePath" and "path"/);
+    });
+
+    it('accepts two aliases of the same parameter with equal values', () => {
+        const { args, error } = normalizeArgs(
+            { filePath: 'a.scene', path: 'a.scene' },
+            SCHEMA, { filePath: 'scenePath', path: 'scenePath' }
+        );
+        assert.strictEqual(error, null);
+        assert.strictEqual(args.scenePath, 'a.scene');
+    });
+
     it('checks types', () => {
         const { error } = normalizeArgs({ scenePath: 42 }, SCHEMA);
         assert.match(error, /parameter "scenePath" must be of type string, got number/);

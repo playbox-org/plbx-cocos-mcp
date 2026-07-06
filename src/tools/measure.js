@@ -6,7 +6,7 @@ import { AssetIndex } from '../core/AssetIndex.js';
 import { AssetInspector } from '../core/AssetInspector.js';
 
 export function buildBoundsContext(projectRoot) {
-    const assetIndex = new AssetIndex(projectRoot);
+    const assetIndex = AssetIndex.shared(projectRoot);
     const assetInspector = new AssetInspector(projectRoot, assetIndex);
     return { assetIndex, assetInspector, projectRoot };
 }

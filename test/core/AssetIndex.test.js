@@ -126,4 +126,29 @@ describe('AssetIndex', () => {
         assert.strictEqual(empty.entries.length, 0);
         assert.strictEqual(empty.resolve('anything'), null);
     });
+
+    describe('shared cache', () => {
+        it('returns the same instance within the TTL', () => {
+            AssetIndex.invalidate();
+            const a = AssetIndex.shared(PROJECT);
+            const b = AssetIndex.shared(PROJECT);
+            assert.strictEqual(a, b);
+        });
+
+        it('invalidate() forces a rebuild', () => {
+            const a = AssetIndex.shared(PROJECT);
+            AssetIndex.invalidate(PROJECT);
+            const b = AssetIndex.shared(PROJECT);
+            assert.notStrictEqual(a, b);
+            assert.strictEqual(a.entries.length, b.entries.length);
+        });
+
+        it('caches per project root', () => {
+            AssetIndex.invalidate();
+            const a = AssetIndex.shared(PROJECT);
+            const other = AssetIndex.shared('/nonexistent/path');
+            assert.notStrictEqual(a, other);
+            assert.strictEqual(AssetIndex.shared(PROJECT), a);
+        });
+    });
 });

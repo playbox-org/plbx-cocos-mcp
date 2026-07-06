@@ -31,6 +31,11 @@ const TYPE_ALIASES = {
     directory: ['directory']
 };
 
+// Per-projectRoot cache: the TTL bounds staleness from editor-side changes;
+// our own asset-creating writes call AssetIndex.invalidate() explicitly.
+const SHARED_CACHE = new Map(); // resolved projectRoot → {index, builtAt}
+const SHARED_TTL_MS = 5000;
+
 export class AssetIndex {
     #projectRoot;
     #entries = [];
@@ -43,6 +48,22 @@ export class AssetIndex {
     constructor(projectRoot) {
         this.#projectRoot = projectRoot;
         this.#scanDirectory(path.join(projectRoot, 'assets'));
+    }
+
+    /** Cached index for a project — the way tools should obtain one */
+    static shared(projectRoot) {
+        const key = path.resolve(projectRoot);
+        const hit = SHARED_CACHE.get(key);
+        if (hit && Date.now() - hit.builtAt < SHARED_TTL_MS) return hit.index;
+        const index = new AssetIndex(projectRoot);
+        SHARED_CACHE.set(key, { index, builtAt: Date.now() });
+        return index;
+    }
+
+    /** Drop the cached index (all projects when no root given) */
+    static invalidate(projectRoot = null) {
+        if (projectRoot === null) SHARED_CACHE.clear();
+        else SHARED_CACHE.delete(path.resolve(projectRoot));
     }
 
     #scanDirectory(dir) {

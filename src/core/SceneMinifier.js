@@ -62,7 +62,7 @@ export class SceneMinifier {
     #getAssetIndex() {
         if (this.#assetIndex === undefined) {
             try {
-                this.#assetIndex = new AssetIndex(this.#projectRoot);
+                this.#assetIndex = AssetIndex.shared(this.#projectRoot);
             } catch {
                 this.#assetIndex = null;
             }

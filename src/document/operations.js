@@ -66,7 +66,20 @@ const IMPORTER_TO_TYPE = {
     'animation-graph': 'cc.animation.AnimationGraph'
 };
 
-export class OperationError extends Error {}
+export class OperationError extends Error {
+    name = 'OperationError';
+}
+
+/** Insertion index into `_children`: undefined = append; negatives rejected (JS splice semantics) */
+export function childInsertIndex(index, length) {
+    if (index === undefined) return length;
+    if (!Number.isInteger(index) || index < 0) {
+        throw new OperationError(
+            `index must be a non-negative integer, got ${JSON.stringify(index)}`
+        );
+    }
+    return Math.min(index, length);
+}
 
 /**
  * Apply a batch of operations in order. Throws OperationError on the first
@@ -171,7 +184,13 @@ export function parsePropertyPath(path) {
     for (const part of String(path).split('.')) {
         const m = part.match(/^([^[\]]*)((?:\[\d+\])*)$/);
         if (!m) throw new OperationError(`Bad property path "${path}"`);
-        // "materials.0" ≡ "materials[0]": bare numeric segments index arrays
+        // "materials.0" ≡ "materials[0]": bare numeric segments index arrays.
+        // A negative one would become a string key JSON.stringify drops on save.
+        if (/^-\d+$/.test(m[1])) {
+            throw new OperationError(
+                `Bad property path "${path}": negative array index "${m[1]}" is not allowed`
+            );
+        }
         if (m[1] !== '') segments.push(/^\d+$/.test(m[1]) ? Number(m[1]) : m[1]);
         for (const idxMatch of m[2].matchAll(/\[(\d+)\]/g)) {
             segments.push(Number(idxMatch[1]));
@@ -472,8 +491,8 @@ function addNode(doc, op) {
         node._prefab = { __id__: infoIdx };
     }
 
-    const at = op.index ?? parent._children.length;
-    parent._children.splice(Math.min(at, parent._children.length), 0, { __id__: nodeIdx });
+    const at = childInsertIndex(op.index, parent._children.length);
+    parent._children.splice(at, 0, { __id__: nodeIdx });
 
     const path = doc.nodePath(nodeIdx);
     return {
@@ -518,17 +537,35 @@ function removeNode(doc, op) {
     const parent = doc.getObject(node._parent.__id__);
     parent._children = parent._children.filter(r => !(isRef(r) && r.__id__ === idx));
 
+    const nulled = resolveExternalRefs(
+        doc, removed, op.force, `"${path}" is referenced from outside the subtree`
+    );
+
+    return {
+        op: 'remove_node',
+        target: path,
+        summary: `removed "${path}" (${removed.size} objects${nulled ? `, nulled ${nulled} external refs` : ''})`,
+        nodeIdx: node._parent.__id__
+    };
+}
+
+/**
+ * Post-detach check shared by remove_node / remove_component: throw on
+ * reachable references into `removed` unless `force`, else null them out.
+ * Returns the number of nulled references.
+ */
+function resolveExternalRefs(doc, removed, force, subject) {
     const reachable = doc.reachableIds();
     const external = doc.externalRefsInto(removed)
         .filter(r => reachable.has(r.fromIdx));
-    if (external.length > 0 && !op.force) {
+    if (external.length > 0 && !force) {
         const list = external.slice(0, 10).map(r => {
             const from = doc.getObject(r.fromIdx);
             const owner = isRef(from.node) ? ` on node "${doc.nodePath(from.node.__id__)}"` : '';
             return `${from.__type__}${owner} → .${r.path}`;
         }).join('; ');
         throw new OperationError(
-            `"${path}" is referenced from outside the subtree (${external.length} refs): ${list}. ` +
+            `${subject} (${external.length} refs): ${list}. ` +
             `Retarget those references first, or pass force: true to null them. ` +
             `(The document is now inconsistent — discard it, do not save.)`
         );
@@ -536,13 +573,7 @@ function removeNode(doc, op) {
     for (const r of external) {
         nullifyRef(doc.getObject(r.fromIdx), r.path);
     }
-
-    return {
-        op: 'remove_node',
-        target: path,
-        summary: `removed "${path}" (${removed.size} objects${external.length ? `, nulled ${external.length} external refs` : ''})`,
-        nodeIdx: node._parent.__id__
-    };
+    return external.length;
 }
 
 /** Null out the reference at a recorded path like "_target" or "clickEvents[0].target" */
@@ -578,7 +609,7 @@ function reparent(doc, op) {
 
     oldParent._children = oldParent._children.filter(r => !(isRef(r) && r.__id__ === idx));
     const newParent = doc.getObject(newParentIdx);
-    const at = Math.min(op.index ?? newParent._children.length, newParent._children.length);
+    const at = childInsertIndex(op.index, newParent._children.length);
     newParent._children.splice(at, 0, { __id__: idx });
     node._parent = { __id__: newParentIdx };
 
@@ -749,30 +780,15 @@ function removeComponent(doc, op, ctx) {
     // override objects are unreachable now and must not count as referrers.
     node._components = node._components.filter(r => !(isRef(r) && r.__id__ === compIdx));
 
-    const reachable = doc.reachableIds();
-    const external = doc.externalRefsInto(removed)
-        .filter(r => reachable.has(r.fromIdx));
-    if (external.length > 0 && !op.force) {
-        const list = external.slice(0, 10).map(r => {
-            const from = doc.getObject(r.fromIdx);
-            const owner = isRef(from.node) ? ` on node "${doc.nodePath(from.node.__id__)}"` : '';
-            return `${from.__type__}${owner} → .${r.path}`;
-        }).join('; ');
-        throw new OperationError(
-            `${label} on "${nodePath}" is referenced from outside (${external.length} refs): ${list}. ` +
-            `Retarget those references first, or pass force: true to null them. ` +
-            `(The document is now inconsistent — discard it, do not save.)`
-        );
-    }
-    for (const r of external) {
-        nullifyRef(doc.getObject(r.fromIdx), r.path);
-    }
+    const nulled = resolveExternalRefs(
+        doc, removed, op.force, `${label} on "${nodePath}" is referenced from outside`
+    );
 
     return {
         op: 'remove_component',
         target: nodePath,
         summary: `removed ${label} from "${nodePath}"` +
-            `${external.length ? ` (nulled ${external.length} external refs)` : ''}`,
+            `${nulled ? ` (nulled ${nulled} external refs)` : ''}`,
         nodeIdx: idx
     };
 }

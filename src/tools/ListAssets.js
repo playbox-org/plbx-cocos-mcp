@@ -56,7 +56,7 @@ export class ListAssets extends BaseTool {
 
     async execute(args, projectRoot) {
         try {
-            const index = new AssetIndex(projectRoot);
+            const index = AssetIndex.shared(projectRoot);
 
             if (args?.type && !index.isKnownType(args.type)) {
                 return this.error(

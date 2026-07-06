@@ -65,7 +65,7 @@ export class BuildAnimGraph extends BaseTool {
             return this.error(`${args.outputPath} already exists — pass overwrite: true to replace it`);
         }
 
-        const assetIndex = new AssetIndex(projectRoot);
+        const assetIndex = AssetIndex.shared(projectRoot);
         let doc;
         let notes;
         try {
@@ -98,6 +98,7 @@ export class BuildAnimGraph extends BaseTool {
         if (newMeta) {
             fs.writeFileSync(metaPath, JSON.stringify(newMeta, null, 2), 'utf-8');
         }
+        AssetIndex.invalidate(projectRoot);
 
         const model = parseAnimGraph(doc.objects, assetIndex);
         const lines = [

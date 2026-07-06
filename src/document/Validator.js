@@ -15,8 +15,7 @@ import { isRef } from './SceneDocument.js';
 import { loadSourcePrefabByUuid } from './instances.js';
 import { fileIdTargets } from './targetOverrides.js';
 import { eulerToQuat, quatApproxEquals } from '../utils/math3d.js';
-
-const VISUAL_ROOT_TYPES = ['cc.MeshRenderer', 'cc.SkinnedMeshRenderer', 'cc.Sprite'];
+import { VISUAL_ROOT_TYPES } from './componentTypes.js';
 
 export class Validator {
     #doc;

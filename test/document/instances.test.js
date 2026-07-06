@@ -8,6 +8,8 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { SceneDocument, isRef } from '../../src/document/SceneDocument.js';
@@ -200,6 +202,38 @@ describe('instantiate_prefab', () => {
                 { op: 'instantiate_prefab', parent: '/', prefab: 'Materials/Dynamite.mtl' }
             ], makeCtx()),
             /not a prefab/);
+    });
+
+    test('detects prefab cycles at any nesting depth (no silent scan cap)', () => {
+        // Chain P0 → P1 → … → P11 → P0 closes deeper than the old cap of 8
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plbx-cycle-'));
+        try {
+            const N = 12;
+            const uuid = (i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
+            fs.mkdirSync(path.join(tmp, 'assets'));
+            for (let i = 0; i < N; i++) {
+                const next = uuid((i + 1) % N);
+                fs.writeFileSync(path.join(tmp, 'assets', `P${i}.prefab`), JSON.stringify([
+                    { __type__: 'cc.Prefab', _name: `P${i}`, _objFlags: 0, __editorExtras__: {}, _native: '', data: { __id__: 1 }, optimizationPolicy: 0, persistent: false },
+                    { __type__: 'cc.Node', _name: `P${i}`, _objFlags: 0, __editorExtras__: {}, _parent: null, _children: [], _active: true, _components: [], _prefab: { __id__: 2 } },
+                    { __type__: 'cc.PrefabInfo', root: { __id__: 1 }, asset: { __id__: 0 }, fileId: `fileId000000000000000${i}`.slice(-22), instance: null, targetOverrides: null },
+                    // Nested-instance marker: what guardCycle scans for
+                    { __type__: 'cc.PrefabInfo', root: null, asset: { __uuid__: next, __expectedType__: 'cc.Prefab' }, fileId: '', instance: { __id__: 0 } }
+                ], null, 2));
+                fs.writeFileSync(path.join(tmp, 'assets', `P${i}.prefab.meta`), JSON.stringify({
+                    ver: '1.1.50', importer: 'prefab', imported: true, uuid: uuid(i), files: ['.json'], subMetas: {}, userData: {}
+                }, null, 2));
+            }
+            const ctx = { assetIndex: new AssetIndex(tmp), projectRoot: tmp };
+            const doc = SceneDocument.load(path.join(tmp, 'assets', 'P0.prefab'));
+            assert.throws(() =>
+                applyOperations(doc, [
+                    { op: 'instantiate_prefab', parent: '/', prefab: 'P1.prefab' }
+                ], ctx),
+                /cycle/);
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
     });
 
     test('reparenting an instance stub restores registry DFS order', () => {

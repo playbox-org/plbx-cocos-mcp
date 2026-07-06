@@ -91,7 +91,7 @@ export class ApplyEdits extends BaseTool {
             return this.error(`Cannot parse ${args.filePath}: ${err.message}`);
         }
 
-        const assetIndex = new AssetIndex(projectRoot);
+        const assetIndex = AssetIndex.shared(projectRoot);
         const ctx = { assetIndex, projectRoot, scriptNameByCompressed: this.#scriptNames(assetIndex) };
 
         let results;
