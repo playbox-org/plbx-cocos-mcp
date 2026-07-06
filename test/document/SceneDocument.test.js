@@ -98,6 +98,24 @@ describe('SceneDocument basics', () => {
         assert.throws(() => prefab.resolveNode('Table/Nope'), /children: CashRegister/);
     });
 
+    test('resolveNode suggests full paths for a partial-path miss', () => {
+        const prefab = SceneDocument.load(prefabPath);
+        // "CashRegister/Monitor" is a suffix — the root-anchored path is
+        // "Table/CashRegister/Monitor"; the error must suggest it.
+        assert.throws(
+            () => prefab.resolveNode('CashRegister/Monitor'),
+            /Did you mean: "Table\/CashRegister\/Monitor"/
+        );
+    });
+
+    test('resolveNode explains that a bare number is not an address', () => {
+        const prefab = SceneDocument.load(prefabPath);
+        assert.throws(
+            () => prefab.resolveNode('8'),
+            /looks like a #N node index from inspect_node output/
+        );
+    });
+
     test('resolveNode by node _id (scene)', () => {
         const scene = SceneDocument.load(scenePath);
         // Find some node with a real _id

@@ -227,9 +227,23 @@ export class SceneDocument {
                 const available = children
                     .map((c, i) => `${this.nodeName(c) ?? '<unnamed>'}${this.isInstanceStub(c) ? ' (prefab instance)' : ''} [${i}]`)
                     .join(', ');
+                const hints = [];
+                if (/^\d+$/.test(ref)) {
+                    hints.push(
+                        `"${ref}" looks like a #N node index from inspect_node output — ` +
+                        `\`node\` takes a root-anchored path ("Canvas/Panel/BuyBtn") or a node _id string, not #N.`
+                    );
+                }
+                const suggestions = this.#pathsOfNodesNamed(
+                    ref.replace(/^\//, '').split('/').pop().replace(/\[\d+\]$/, ''), 5
+                ).filter(p => p !== ref);
+                if (suggestions.length > 0) {
+                    hints.push(`Did you mean: ${suggestions.map(p => `"${p}"`).join(', ')}?`);
+                }
                 throw new Error(
                     `Node not found: "${ref}" (no child "${rawSegment}" under "${walked.join('/') || '/'}"; ` +
-                    `children: ${available || 'none'})`
+                    `children: ${available || 'none'})` +
+                    (hints.length ? `\n${hints.join('\n')}` : '')
                 );
             }
             if (matches.length > 1) {
@@ -242,6 +256,26 @@ export class SceneDocument {
             walked.push(rawSegment);
         }
         return current;
+    }
+
+    /**
+     * Root-anchored paths of nodes with the given name — "did you mean"
+     * suggestions for a failed resolveNode() lookup.
+     * @param {string} name - Exact node name
+     * @param {number} limit - Max suggestions
+     * @returns {string[]}
+     */
+    #pathsOfNodesNamed(name, limit) {
+        if (!name) return [];
+        const paths = [];
+        const rootIdx = this.root.idx;
+        for (let i = 0; i < this.#objects.length && paths.length < limit; i++) {
+            if (i === rootIdx || !this.isNode(this.#objects[i])) continue;
+            if (this.nodeName(i) !== name) continue;
+            const p = this.nodePath(i);
+            if (p) paths.push(p);
+        }
+        return paths;
     }
 
     /**

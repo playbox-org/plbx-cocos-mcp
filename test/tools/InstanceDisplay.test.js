@@ -130,7 +130,8 @@ describe('collapsed instance display in read pipeline', () => {
 
         assert.ok(!result.isError, text(result));
         assert.match(text(result), /Found: 1/);
-        assert.match(text(result), /● Reward/);
+        assert.match(text(result), /● Table\/Reward #\d+/,
+            'match line shows the root-anchored path and #N id');
     });
 
     test('inspect_node expands an instance stub into source internals + overrides', async () => {

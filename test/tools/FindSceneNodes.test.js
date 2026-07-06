@@ -35,6 +35,19 @@ describe('FindSceneNodes', () => {
             assert.ok(text.includes('Player'));
         });
 
+        it('should show the root-anchored path and #N id for each match', async () => {
+            const result = await tool.execute(
+                { scenePath: 'sample-scene.json', pattern: '^Player$' },
+                FIXTURES
+            );
+
+            const text = result.content[0].text;
+            assert.match(text, /● Level\/Player #\d+ \[/,
+                'match line is "path #id [components]"');
+            assert.ok(text.includes('root-anchored `node` addresses'),
+                'output explains how to reuse the printed values');
+        });
+
         it('should find nodes with regex pattern', async () => {
             const result = await tool.execute(
                 { scenePath: 'sample-scene.json', pattern: 'Enemy.*' },

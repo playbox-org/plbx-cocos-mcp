@@ -103,7 +103,7 @@ export class InspectNode extends BaseTool {
             return this.error(`Node #${args.nodeId} not found or has no content`);
         }
 
-        return this.#formatResult(graph, args.nodeId, args.format);
+        return this.#formatResult(graph, args.nodeId, args.format, minifier.nodeAddress(args.nodeId));
     }
 
     #inspectByName(minifier, args, ctx) {
@@ -118,11 +118,11 @@ export class InspectNode extends BaseTool {
         if (matches.length === 0) {
             if (candidates.length > 0) {
                 const list = candidates.map(m =>
-                    `- ${m.name}#${m.id} (${m.path || 'root'})`
+                    `- ${m.name}#${m.id} → "${minifier.nodeAddress(m.id) ?? (m.path || 'root')}"`
                 ).join('\n');
                 return this.error(
                     `No node at path "${ref}". Nodes named "${leaf}" exist at:\n${list}\n` +
-                    `Use the full path or nodeId.`
+                    `Use the quoted root-anchored path or nodeId.`
                 );
             }
             const inInstances = minifier.findInInstanceSources(leaf);
@@ -141,14 +141,15 @@ export class InspectNode extends BaseTool {
         // Multiple matches — return disambiguation list
         if (matches.length > 1) {
             const list = matches.map(m =>
-                `- ${m.name}#${m.id} (${m.path || 'root'})`
+                `- ${m.name}#${m.id} → "${minifier.nodeAddress(m.id) ?? (m.path || 'root')}"`
             ).join('\n');
 
             return this.success(
                 `# Multiple nodes named "${ref}"\n\n` +
                 `Found: ${matches.length}\n\n` +
                 `${list}\n\n` +
-                `Use nodeId parameter to inspect a specific one.`
+                `Use nodeId to inspect a specific one; the quoted root-anchored path works ` +
+                `as the \`node\` argument everywhere.`
             );
         }
 
@@ -164,7 +165,7 @@ export class InspectNode extends BaseTool {
             return this.error(`Node "${args.nodeName}"#${matches[0].id} has no content`);
         }
 
-        return this.#formatResult(graph, matches[0].id, args.format);
+        return this.#formatResult(graph, matches[0].id, args.format, minifier.nodeAddress(matches[0].id));
     }
 
     /**
@@ -180,7 +181,7 @@ export class InspectNode extends BaseTool {
             // Fall back to the plain (collapsed) view rather than failing
             const graph = minifier.inspectNode(nodeId);
             if (!graph) return this.error(`Node #${nodeId} not found or has no content`);
-            const result = this.#formatResult(graph, nodeId, format);
+            const result = this.#formatResult(graph, nodeId, format, minifier.nodeAddress(nodeId));
             result.content[0].text += `\n\n(instance internals unavailable: ${err.message})`;
             return result;
         }
@@ -365,14 +366,18 @@ export class InspectNode extends BaseTool {
         return this.success(lines.join('\n'));
     }
 
-    #formatResult(graph, nodeId, format) {
+    #formatResult(graph, nodeId, format, address = null) {
         if (format === 'json') {
             const formatter = new JsonFormatter().configure({ pretty: true });
-            return this.success(formatter.format(graph));
+            const out = address ? { name: graph.name, path: address, ...graph } : graph;
+            return this.success(formatter.format(out));
         }
 
         const formatter = new TextFormatter().configure({ maxProps: Infinity });
-        return this.success(`# Node: ${graph.name}#${nodeId}\n\n${formatter.format(graph)}`);
+        const pathLine = address
+            ? `Path: "${address}" — use as \`node\` in apply_edits / get_node_bounds / compute_fit_scale.\n\n`
+            : '';
+        return this.success(`# Node: ${graph.name}#${nodeId}\n\n${pathLine}${formatter.format(graph)}`);
     }
 }
 

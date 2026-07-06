@@ -83,6 +83,30 @@ describe('InspectNode', () => {
             assert.ok(text.includes('Player'), 'should include node name');
         });
 
+        it('should print the root-anchored path in the header', async () => {
+            const result = await tool.execute(
+                { filePath: 'sample-scene.json', nodeName: 'Player' },
+                FIXTURES
+            );
+
+            assert.ok(!result.isError, 'should not be error');
+            assert.match(result.content[0].text,
+                /Path: "Level\/Player" — use as `node`/,
+                'header carries the address reusable in other tools');
+        });
+
+        it('should include the path field in json format', async () => {
+            const result = await tool.execute(
+                { filePath: 'sample-scene.json', nodeName: 'Player', format: 'json' },
+                FIXTURES
+            );
+
+            assert.ok(!result.isError, 'should not be error');
+            const parsed = JSON.parse(result.content[0].text);
+            assert.strictEqual(parsed.path, 'Level/Player');
+            assert.strictEqual(parsed.name, 'Player');
+        });
+
         it('should return disambiguation list for duplicate names', async () => {
             // roadside-c4 has 9 nodes named "root"
             const result = await tool.execute(

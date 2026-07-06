@@ -1,5 +1,7 @@
 # Node: ButtonPurchaseZone#2069
 
+Path: "[WORLD]/Zones/ButtonPurchaseZone" — use as `node` in apply_edits / get_node_bounds / compute_fit_scale.
+
 ● ButtonPurchaseZone [P→ab794f1c…]
 
 (instance internals unavailable: Source prefab asset ab794f1c-d08a-4e9c-97ba-f5b777f7e9ff not found in the project)

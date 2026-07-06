@@ -200,11 +200,13 @@ export class SceneMinifier {
         const regex = new RegExp(pattern, 'i');
         const matches = [];
 
-        for (const [_, node] of this.#sceneParser.nodes) {
+        for (const [id, node] of this.#sceneParser.nodes) {
             const name = this.#displayName(node);
             if (name && regex.test(name)) {
                 matches.push({
                     name,
+                    id,
+                    path: this.nodeAddress(id),
                     active: node._active !== false,
                     components: this.#getComponentTypes(node)
                 });
@@ -212,6 +214,25 @@ export class SceneMinifier {
         }
 
         return matches;
+    }
+
+    /**
+     * Write-side address of a node: path from the root with the root itself
+     * excluded ("[WORLD]/Player"), or "/" for the root — the form the `node`
+     * argument of apply_edits / get_node_bounds / compute_fit_scale accepts.
+     * @param {number} nodeId - Node index in the scene array
+     * @returns {string|null}
+     */
+    nodeAddress(nodeId) {
+        let node = this.#sceneParser.getNode(nodeId);
+        if (!node) return null;
+        const parts = [];
+        while (node._parent?.__id__ !== undefined) {
+            parts.unshift(this.#displayName(node) ?? '<unnamed>');
+            node = this.#sceneParser.getObject(node._parent.__id__);
+            if (!node) return null;
+        }
+        return parts.length ? parts.join('/') : '/';
     }
 
     /**
