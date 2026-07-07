@@ -296,6 +296,105 @@ export function dropTargetOverridesInto(doc, stubIdx, localID) {
     return before - registry.targetOverrides.length;
 }
 
+// ------------------------------------------------------------ dangling prune
+
+/**
+ * Structurally dead TargetOverrideInfo records: broken forms the engine
+ * skips on load (applyTargetOverrides bails on an unresolvable endpoint)
+ * but that block apply_edits because they fail validation. Editor-authored
+ * benign forms are NOT flagged — target: null occurs in the golden corpus
+ * and stays. Scans every PrefabInfo.targetOverrides array (the editor
+ * leaves stale records on instance-stub PrefabInfos too, not just the
+ * document root registry).
+ *
+ * @returns {Array<{ownerIdx: number, idx: number, obj: object,
+ *   propertyPath: string, reasons: string[]}>}
+ */
+export function findDanglingOverrides(doc) {
+    const dead = [];
+    doc.objects.forEach((owner, ownerIdx) => {
+        if (owner.__type__ !== 'cc.PrefabInfo' || !Array.isArray(owner.targetOverrides)) return;
+        for (const ref of owner.targetOverrides) {
+            if (!isRef(ref)) continue;
+            const obj = doc.getObject(ref.__id__);
+            if (obj?.__type__ !== 'cc.TargetOverrideInfo') continue;
+            const reasons = overrideDeadReasons(doc, obj);
+            if (reasons.length > 0) {
+                dead.push({
+                    ownerIdx,
+                    idx: ref.__id__,
+                    obj,
+                    propertyPath: Array.isArray(obj.propertyPath)
+                        ? obj.propertyPath.join('.') : String(obj.propertyPath),
+                    reasons
+                });
+            }
+        }
+    });
+    return dead;
+}
+
+/** Why the engine would skip this record on load ([] = record is live) */
+function overrideDeadReasons(doc, obj) {
+    const reasons = [];
+
+    if (!isRef(obj.source)) {
+        reasons.push('source is null — the referencing component no longer exists');
+    } else {
+        const src = doc.getObject(obj.source.__id__);
+        const ownerNodeIdx = doc.isNode(src) ? obj.source.__id__
+            : isRef(src?.node) ? src.node.__id__ : null;
+        if (ownerNodeIdx === null || doc.nodePath(ownerNodeIdx) === null) {
+            reasons.push('source is detached from the node hierarchy');
+        }
+    }
+
+    if (!Array.isArray(obj.propertyPath) || obj.propertyPath.length === 0 ||
+        obj.propertyPath.some(s => typeof s !== 'string')) {
+        reasons.push('propertyPath is empty or invalid');
+    }
+
+    const info = isRef(obj.targetInfo) ? doc.getObject(obj.targetInfo.__id__) : null;
+    if (info?.__type__ !== 'cc.TargetInfo' ||
+        !Array.isArray(info.localID) || info.localID.length === 0 ||
+        info.localID.some(s => typeof s !== 'string')) {
+        reasons.push('targetInfo is missing or invalid');
+    }
+
+    // target: null is a legal editor form (kept); a reference must land on
+    // a node that is still attached to the hierarchy.
+    if (obj.target !== null && obj.target !== undefined) {
+        if (!isRef(obj.target)) {
+            reasons.push('target is not a reference');
+        } else if (!doc.isNode(doc.getObject(obj.target.__id__))) {
+            reasons.push('target is not a node');
+        } else if (doc.nodePath(obj.target.__id__) === null) {
+            reasons.push('target node is detached from the node hierarchy');
+        }
+    }
+    return reasons;
+}
+
+/**
+ * Remove every dangling record found by findDanglingOverrides from its
+ * owning PrefabInfo. An emptied targetOverrides array becomes null (the
+ * editor's no-overrides form). Orphaned TargetInfo objects and detached
+ * target nodes become unreachable and are dropped by renumber().
+ *
+ * @returns {Array<{propertyPath: string, reasons: string[]}>} removed records
+ */
+export function pruneDanglingOverrides(doc) {
+    const dead = findDanglingOverrides(doc);
+    const deadIds = new Set(dead.map(d => d.idx));
+    for (const ownerIdx of new Set(dead.map(d => d.ownerIdx))) {
+        const owner = doc.getObject(ownerIdx);
+        owner.targetOverrides = owner.targetOverrides.filter(
+            r => !(isRef(r) && deadIds.has(r.__id__)));
+        if (owner.targetOverrides.length === 0) owner.targetOverrides = null;
+    }
+    return dead.map(({ propertyPath, reasons }) => ({ propertyPath, reasons }));
+}
+
 // ------------------------------------------------------------ read helpers
 
 /**

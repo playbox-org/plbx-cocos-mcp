@@ -21,7 +21,7 @@ import {
     removeInstanceComponent, restoreInstanceComponent
 } from './instances.js';
 import {
-    dropTargetOverrides, upsertTargetOverride, transformValueTracked
+    dropTargetOverrides, upsertTargetOverride, transformValueTracked, pruneDanglingOverrides
 } from './targetOverrides.js';
 import {
     createComponent, createScriptComponent, resolveTemplateType, templateTypes
@@ -116,7 +116,8 @@ const HANDLERS = {
     instantiate_prefab: instantiatePrefab,
     set_instance_property: setInstanceProperty,
     remove_instance_override: removeInstanceOverride,
-    restore_instance_component: restoreInstanceComponent
+    restore_instance_component: restoreInstanceComponent,
+    prune_dangling_overrides: pruneDanglingOverridesOp
 };
 
 export function applyOperation(doc, op, ctx = {}) {
@@ -203,8 +204,12 @@ export function parsePropertyPath(path) {
 /**
  * Navigate to the property container. The head segment tolerates the
  * serialized underscore prefix ("spriteFrame" matches "_spriteFrame").
+ * Intermediate `{__id__}` references are followed into their standalone
+ * objects (cc.Line._width → cc.CurveRange, MeshRenderer.bakeSettings, …),
+ * so "width.constant" edits the referenced object instead of corrupting
+ * the reference.
  */
-function locateProperty(component, path, { allowCreate = false } = {}) {
+function locateProperty(doc, component, path, { allowCreate = false } = {}) {
     const segments = parsePropertyPath(path);
     if (typeof segments[0] === 'string' && !(segments[0] in component)) {
         const underscored = `_${segments[0]}`;
@@ -220,7 +225,8 @@ function locateProperty(component, path, { allowCreate = false } = {}) {
     }
     let container = component;
     for (let i = 0; i < segments.length - 1; i++) {
-        const next = container[segments[i]];
+        let next = container[segments[i]];
+        if (isRef(next)) next = doc.getObject(next.__id__);
         if (next === null || typeof next !== 'object') {
             throw new OperationError(
                 `Cannot navigate "${path}": "${segments.slice(0, i + 1).join('.')}" is not an object/array`
@@ -815,7 +821,7 @@ function syncPairedField(component, container, key, value) {
 
 function setPropertyOnComponent(doc, compIdx, property, rawValue, ctx, { isScript }) {
     const component = doc.getObject(compIdx);
-    const { container, key, segments } = locateProperty(component, property, { allowCreate: isScript });
+    const { container, key, segments } = locateProperty(doc, component, property, { allowCreate: isScript });
     const pathStrings = segments.map(String);
 
     // A write supersedes any target override it covers — otherwise the stale
@@ -830,7 +836,25 @@ function setPropertyOnComponent(doc, compIdx, property, rawValue, ctx, { isScrip
     const existing = container[key];
     const isReference = value && typeof value === 'object' &&
         ('__id__' in value || '__uuid__' in value);
-    container[key] = isReference ? value : mergeTyped(existing, value, property);
+
+    // Write THROUGH a reference to a standalone value object (cc.Line._width
+    // → cc.CurveRange etc.): merge into the referenced object, keep the ref.
+    // Nodes/components stay plain replacements — they are retargeted, not
+    // edited, through a property write.
+    const standalone = !isReference && isRef(existing) ? doc.getObject(existing.__id__) : null;
+    const isValueObject = standalone?.__type__ &&
+        !doc.isNode(standalone) && !isRef(standalone.node);
+    if (isValueObject && value !== null) {
+        if (typeof value !== 'object' || Array.isArray(value)) {
+            throw new OperationError(
+                `"${property}" is a standalone ${standalone.__type__} object — ` +
+                `set its fields instead (e.g. "${property}.constant") or pass an object to merge`
+            );
+        }
+        doc.objects[existing.__id__] = mergeTyped(standalone, value, property);
+    } else {
+        container[key] = isReference ? value : mergeTyped(existing, value, property);
+    }
     syncPairedField(component, container, key, container[key]);
 
     for (const ref of refs) {
@@ -861,6 +885,27 @@ function setComponentProperty(doc, op, ctx) {
     };
 }
 
+/**
+ * Editor crashes/reworks leave broken cc.TargetOverrideInfo records behind
+ * (null source, targets pointing at detached leftover nodes). The engine
+ * skips them on load, but they fail validation and block every apply_edits
+ * batch on the file. This op removes exactly the records the engine would
+ * skip; the detached nodes/TargetInfos they referenced are GC'd on save.
+ * Idempotent — running it on a clean document is a no-op.
+ */
+function pruneDanglingOverridesOp(doc) {
+    const removed = pruneDanglingOverrides(doc);
+    return {
+        op: 'prune_dangling_overrides',
+        target: '/',
+        summary: removed.length === 0
+            ? 'no dangling target-override records found'
+            : `removed ${removed.length} dangling target-override record(s): ` +
+              removed.map(r => `"${r.propertyPath}" (${r.reasons.join('; ')})`).join(', '),
+        nodeIdx: doc.root.idx
+    };
+}
+
 function setAssetRef(doc, op, ctx) {
     const idx = resolveEditableNode(doc, requireString(op, 'node'));
     const property = requireString(op, 'property');
@@ -870,7 +915,7 @@ function setAssetRef(doc, op, ctx) {
     const value = op.asset === null
         ? null
         : resolveAssetValue(ctx, requireString(op, 'asset'), op.expectedType);
-    const { container, key, segments } = locateProperty(component, property, {
+    const { container, key, segments } = locateProperty(doc, component, property, {
         allowCreate: !component.__type__.startsWith('cc.')
     });
     // Same supersede rule as setPropertyOnComponent (asset values are never

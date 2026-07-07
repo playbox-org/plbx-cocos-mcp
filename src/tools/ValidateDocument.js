@@ -10,6 +10,7 @@ import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
 import { SceneDocument } from '../document/SceneDocument.js';
 import { Validator } from '../document/Validator.js';
+import { findDanglingOverrides } from '../document/targetOverrides.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 
 export class ValidateDocument extends BaseTool {
@@ -65,6 +66,16 @@ export class ValidateDocument extends BaseTool {
             if (warnings.length) {
                 lines.push('', `⚠️ ${warnings.length} warning(s):`);
                 warnings.forEach(w => lines.push(`- ${w}`));
+            }
+            if (errors.length > 0) {
+                const dangling = findDanglingOverrides(doc);
+                if (dangling.length > 0) {
+                    lines.push('',
+                        `💡 ${dangling.length} dangling target-override record(s) detected ` +
+                        `(${dangling.map(d => `"${d.propertyPath}"`).join(', ')}) — the engine ignores ` +
+                        `them, but they block apply_edits. Repair with: ` +
+                        `apply_edits {filePath: "${args.filePath}", ops: [{op: "prune_dangling_overrides"}]}`);
+                }
             }
         }
         return this.success(lines.join('\n'));

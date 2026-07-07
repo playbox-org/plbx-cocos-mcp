@@ -628,6 +628,92 @@ describe('cc.animation.AnimationController', () => {
     });
 });
 
+describe('cc.Line', () => {
+    /** Prefab with a Line on a fresh child node; returns the component */
+    function prefabWithLine(props) {
+        const doc = loadPrefab();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'RopeVisual' },
+            { op: 'add_component', node: 'RopeVisual', type: 'Line', ...(props ? { properties: props } : {}) }
+        ]);
+        const compIdx = doc.componentIndices(doc.resolveNode('RopeVisual'))[0];
+        return { doc, compIdx, comp: doc.getObject(compIdx) };
+    }
+
+    test('template wires standalone CurveRange/GradientRange (editor shape from Rope.prefab)', () => {
+        const { doc, comp } = prefabWithLine();
+        assert.strictEqual(comp.__type__, 'cc.Line');
+        assert.deepStrictEqual(doc.getObject(comp._width.__id__),
+            { __type__: 'cc.CurveRange', mode: 0, constant: 1, multiplier: 1 });
+        const gradient = doc.getObject(comp._color.__id__);
+        assert.deepStrictEqual(Object.keys(gradient), ['__type__', '_mode', 'color']);
+        assert.deepStrictEqual(gradient.color, { __type__: 'cc.Color', r: 255, g: 255, b: 255, a: 255 });
+        assert.deepStrictEqual(comp._materials, []);
+        assert.strictEqual(comp._worldSpace, false);
+        assert.deepStrictEqual(comp._positions, []);
+        assert.strictEqual(doc.getObject(comp.__prefab.__id__).__type__, 'cc.CompPrefabInfo');
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('canonical layout: CompPrefabInfo → CurveRange → GradientRange follow the component', () => {
+        const { doc } = prefabWithLine();
+        doc.renumber();
+        const lineIdx = doc.objects.findIndex(o => o.__type__ === 'cc.Line');
+        assert.strictEqual(doc.objects[lineIdx + 1].__type__, 'cc.CompPrefabInfo');
+        assert.strictEqual(doc.objects[lineIdx + 2].__type__, 'cc.CurveRange');
+        assert.strictEqual(doc.objects[lineIdx + 3].__type__, 'cc.GradientRange');
+        // fixed point: renumber must already be an identity
+        const first = doc.serialize();
+        const reloaded = new SceneDocument(JSON.parse(first));
+        reloaded.renumber();
+        assert.strictEqual(reloaded.serialize(), first);
+    });
+
+    test('"width.constant" writes into the referenced CurveRange, keeping the reference', () => {
+        const { doc, comp } = prefabWithLine();
+        const widthIdx = comp._width.__id__;
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'RopeVisual', component: 'cc.Line',
+            property: 'width.constant', value: 0.08
+        }]);
+        assert.deepStrictEqual(comp._width, { __id__: widthIdx }, 'reference must stay intact');
+        assert.strictEqual(doc.getObject(widthIdx).constant, 0.08);
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('object value for "width" merges through the reference', () => {
+        const { doc, comp } = prefabWithLine({ width: { constant: 0.05 } });
+        const width = doc.getObject(comp._width.__id__);
+        assert.strictEqual(width.constant, 0.05);
+        assert.strictEqual(width.mode, 0, 'unset CurveRange fields survive the merge');
+        assert.strictEqual(width.multiplier, 1);
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('primitive write to a standalone value object is rejected with a hint', () => {
+        const { doc } = prefabWithLine();
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: 'RopeVisual', component: 'cc.Line',
+            property: 'width', value: 0.08
+        }]), /standalone cc\.CurveRange.*width\.constant/s);
+    });
+
+    test('color.color merges Color channels through the reference', () => {
+        const { doc, comp } = prefabWithLine();
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'RopeVisual', component: 'Line',
+            property: 'color.color', value: { r: 87, g: 45, b: 0 }
+        }]);
+        const gradient = doc.getObject(comp._color.__id__);
+        assert.deepStrictEqual(gradient.color, { __type__: 'cc.Color', r: 87, g: 45, b: 0, a: 255 });
+        doc.renumber();
+        assertValid(doc);
+    });
+});
+
 describe('canonical fixed point after editing', () => {
     test('edited prefab survives load→renumber→serialize unchanged', () => {
         const doc = loadPrefab();

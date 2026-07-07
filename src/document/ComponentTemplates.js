@@ -239,6 +239,33 @@ const TEMPLATES = {
         }]
     }),
 
+    // Field set/order from an editor-saved sample (project-example
+    // Rope.prefab); _width/_color are standalone cc.CurveRange /
+    // cc.GradientRange objects referenced by id, exactly as the editor
+    // serializes them. CurveRange in Constant mode serializes only
+    // [mode, constant, multiplier] (engine _onBeforeSerialize). Width
+    // defaults to 1 — the engine default 0 renders an invisible line.
+    'cc.Line': () => ({
+        component: {
+            ...head('cc.Line'),
+            _materials: [],
+            _visFlags: 0,
+            _texture: null,
+            _material: null,
+            _worldSpace: false,
+            _positions: [],
+            _width: { __ref__: 0 },
+            _color: { __ref__: 1 },
+            _tile: vec2(1, 1),
+            _offset: vec2(0, 0),
+            _id: ''
+        },
+        extras: [
+            { __type__: 'cc.CurveRange', mode: 0, constant: 1, multiplier: 1 },
+            { __type__: 'cc.GradientRange', _mode: 0, color: color() }
+        ]
+    }),
+
     'cc.BoxCollider': () => ({
         component: {
             ...head('cc.BoxCollider'),
