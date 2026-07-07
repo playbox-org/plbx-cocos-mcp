@@ -29,8 +29,12 @@ export class BuildPrefab extends BaseTool {
                'visual?: {mesh: "path[@subId]"| sprite: "path.png", material?, scale?: number|{x,y,z}, position?, rotation?}, ' +
                'root?: {components?: [{type, properties?}], children?: [{name, position?, rotation?, scale?, layer?, active?, ' +
                'mesh?, sprite?, material?, components?, children?}]}}. ' +
-               'Component types: cc.* templates (UITransform, Sprite, Label, Button, Widget, MeshRenderer, ' +
-               'BoxCollider, SphereCollider, CapsuleCollider, RigidBody, Animation) or custom script names.';
+               'Component types: any of the ~44 built-in cc.* templates — UI/2D (UITransform, Sprite, Label, ' +
+               'RichText, Button, Widget, Canvas, SafeArea, Mask, Graphics, Layout, ProgressBar, Slider...), ' +
+               '3D (MeshRenderer, SkinnedMeshRenderer, SpriteRenderer, Camera, lights, Line, Billboard), ' +
+               'physics 3D+2D (RigidBody, colliders), particles (ParticleSystem, ParticleSystem2D), ' +
+               'Animation/SkeletalAnimation/AnimationController/AudioSource — or custom script names ' +
+               '(an unknown type returns the full template list).';
     }
 
     get inputSchema() {

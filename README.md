@@ -71,7 +71,7 @@ LLM никогда не редактирует `.scene`/`.prefab` напряму
 
 - `set_node_property` — name/active/layer/mobility/position/rotation/scale (euler автоматически синхронизирует кватернион)
 - `add_node`, `remove_node` (+ чистка реестра инстансов и внешних ссылок), `reparent`
-- `add_component` — шаблон `cc.*` или кастомный скрипт по имени
+- `add_component` — шаблон `cc.*` или кастомный скрипт по имени. Каталог из ~44 встроенных шаблонов: UI/2D (UITransform, Sprite, Label, RichText, Button, Widget, Canvas, SafeArea, Mask, Graphics, Layout, ProgressBar, Slider, UIOpacity, BlockInputEvents, RenderRoot2D, Sorting, UIMeshRenderer), 3D (MeshRenderer, SkinnedMeshRenderer, SpriteRenderer, Line, Billboard, Camera, DirectionalLight, SphereLight, SpotLight, Animation, SkeletalAnimation, AnimationController, AudioSource), физика 3D+2D (RigidBody, Box/Sphere/Capsule/Cylinder/Mesh-Collider, RigidBody2D, Box/Circle/Polygon-Collider2D), партиклы (ParticleSystem со всеми модулями и renderer, ParticleSystem2D). Наборы и порядок полей сверены с редакторскими файлами боевых проектов, значения — дефолты движка 3.8.7
 - `remove_component` — снятие компонента с обычной ноды; внешние ссылки на компонент блокируют операцию (`force: true` обнуляет их); `cc.UITransform` защищён, пока на ноде есть зависимые UI-компоненты. На префаб-инстансе (`target` — путь внутри исходного префаба) удаление записывается в `removedComponents` инстанса, исходный префаб не трогается
 - `set_component_property` — формы значений `$node`/`$asset`/`$component`, слияние value-типов; `$node`/`$component` могут указывать **внутрь** свёрнутого префаб-инстанса (см. targetOverrides в format notes)
 - `set_asset_ref` — ссылка на ассет по пути/UUID/`uuid@subId`

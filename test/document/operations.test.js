@@ -15,6 +15,7 @@ import { applyOperations, OperationError } from '../../src/document/operations.j
 import { Validator } from '../../src/document/Validator.js';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
 import { compressUuid } from '../../src/utils/uuid.js';
+import { templateTypes } from '../../src/document/ComponentTemplates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GOLDEN = (f) => path.join(__dirname, '..', 'fixtures', 'golden', f);
@@ -390,7 +391,7 @@ describe('add_component', () => {
     test('unknown cc.* type lists available templates', () => {
         const doc = loadPrefab();
         assert.throws(() =>
-            applyOperations(doc, [{ op: 'add_component', node: 'Table', type: 'cc.ParticleSystem' }]),
+            applyOperations(doc, [{ op: 'add_component', node: 'Table', type: 'cc.TiledMap' }]),
             /Available cc\.\* templates/);
     });
 });
@@ -709,6 +710,150 @@ describe('cc.Line', () => {
         }]);
         const gradient = doc.getObject(comp._color.__id__);
         assert.deepStrictEqual(gradient.color, { __type__: 'cc.Color', r: 87, g: 45, b: 0, a: 255 });
+        doc.renumber();
+        assertValid(doc);
+    });
+});
+
+describe('every component template', () => {
+    // Companions the editor would have added before the type is allowed
+    const PRE = (type) => {
+        if (type === 'cc.UITransform') return [];
+        const pre = ['cc.UITransform'];
+        if (type === 'cc.SafeArea') pre.push('cc.Widget');
+        if (type === 'cc.LabelOutline') pre.push('cc.Label');
+        return pre;
+    };
+    const opsForAllTemplates = () => templateTypes().flatMap((type, i) => {
+        const name = `Holder${i}`;
+        return [
+            { op: 'add_node', parent: '/', name },
+            ...PRE(type).map(t => ({ op: 'add_component', node: name, type: t })),
+            { op: 'add_component', node: name, type }
+        ];
+    });
+
+    test('adds cleanly to a prefab, validates, keeps the canonical fixed point', () => {
+        const doc = loadPrefab();
+        applyOperations(doc, opsForAllTemplates());
+        doc.renumber();
+        assertValid(doc);
+        const first = doc.serialize();
+        const reloaded = new SceneDocument(JSON.parse(first));
+        reloaded.renumber();
+        assert.strictEqual(reloaded.serialize(), first);
+        // every component got a CompPrefabInfo and an empty _id
+        for (const obj of doc.objects) {
+            if (obj.__type__ && templateTypes().includes(obj.__type__)) {
+                assert.strictEqual(obj._id, '', obj.__type__);
+                assert.ok(obj.__prefab?.__id__ !== undefined, `${obj.__type__} missing __prefab`);
+            }
+        }
+    });
+
+    test('adds cleanly to a scene, validates, keeps the canonical fixed point', () => {
+        const doc = loadScene();
+        applyOperations(doc, opsForAllTemplates());
+        doc.renumber();
+        assertValid(doc);
+        const first = doc.serialize();
+        const reloaded = new SceneDocument(JSON.parse(first));
+        reloaded.renumber();
+        assert.strictEqual(reloaded.serialize(), first);
+        for (const obj of doc.objects) {
+            if (obj.__type__ && templateTypes().includes(obj.__type__)) {
+                assert.match(obj._id, /^[A-Za-z0-9+/]{22,23}$/, obj.__type__);
+                assert.strictEqual(obj.__prefab, null, obj.__type__);
+            }
+        }
+    });
+
+    test('no template leaves an unwired __ref__ or __self_node__ placeholder', () => {
+        const doc = loadPrefab();
+        applyOperations(doc, opsForAllTemplates());
+        doc.renumber();
+        const flat = JSON.stringify(doc.objects);
+        assert.ok(!flat.includes('__ref__'), 'unwired __ref__ placeholder');
+        assert.ok(!flat.includes('__self_node__'), 'unwired __self_node__ placeholder');
+    });
+});
+
+describe('cc.ParticleSystem', () => {
+    const addPS = () => {
+        const doc = loadPrefab();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'FX' },
+            { op: 'add_component', node: 'FX', type: 'ParticleSystem' }
+        ]);
+        const compIdx = doc.componentIndices(doc.resolveNode('FX'))[0];
+        return { doc, compIdx, comp: doc.getObject(compIdx) };
+    };
+
+    test('template wires modules, aliased curves and the renderer (editor shape)', () => {
+        const { doc, compIdx, comp } = addPS();
+        // startSize aliases startSizeX; startRotation aliases startRotationZ
+        assert.strictEqual(comp.startSize.__id__, comp.startSizeX.__id__);
+        assert.strictEqual(comp.startRotation.__id__, comp.startRotationZ.__id__);
+        assert.strictEqual(doc.getObject(comp.startSizeX.__id__).constant, 1);
+        // renderer is a headless data object
+        const renderer = doc.getObject(comp.renderer.__id__);
+        assert.strictEqual(renderer.__type__, 'cc.ParticleSystemRenderer');
+        assert.strictEqual(renderer.node, undefined);
+        // trail module points back at the owning component
+        const trail = doc.getObject(comp._trailModule.__id__);
+        assert.strictEqual(trail._particleSystem.__id__, compIdx);
+        // module → own curve (nested extras→extras wiring)
+        const shape = doc.getObject(comp._shapeModule.__id__);
+        assert.strictEqual(doc.getObject(shape.arcSpeed.__id__).__type__, 'cc.CurveRange');
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('nested segments map the underscore prefix and reject typos', () => {
+        const { doc, comp } = addPS();
+        applyOperations(doc, [
+            { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem', property: 'shapeModule.enable', value: true }
+        ]);
+        const shape = doc.getObject(comp._shapeModule.__id__);
+        assert.strictEqual(shape._enable, true);
+        assert.ok(!('enable' in shape), 'no stray "enable" key created');
+        assert.throws(() =>
+            applyOperations(doc, [
+                { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem', property: 'shapeModule.radiuss', value: 1 }
+            ]), /has no property "radiuss".*Available/s);
+    });
+
+    test('writes through refs edit the shared curve and sync getter pairs', () => {
+        const { doc, comp } = addPS();
+        applyOperations(doc, [
+            { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem', property: 'startSizeX.constant', value: 3.5 },
+            { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem', property: '_shapeModule.shapeType', value: 1 },
+            { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem', property: 'enableCulling', value: true }
+        ]);
+        // shared object → the alias sees the same value
+        assert.strictEqual(doc.getObject(comp.startSize.__id__).constant, 3.5);
+        // getter/setter pair inside the module mirrored
+        const shape = doc.getObject(comp._shapeModule.__id__);
+        assert.strictEqual(shape.shapeType, 1);
+        assert.strictEqual(shape._shapeType, 1);
+        // deprecated alias pair on the component itself mirrored
+        assert.strictEqual(comp._dataCulling, true);
+        doc.renumber();
+        assertValid(doc);
+    });
+});
+
+describe('light components', () => {
+    test('illuminance twins stay in sync and StaticLightSettings is wired', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Sun' },
+            { op: 'add_component', node: 'Sun', type: 'DirectionalLight' },
+            { op: 'set_component_property', node: 'Sun', component: 'cc.DirectionalLight', property: '_illuminanceHDR', value: 90000 }
+        ]);
+        const comp = doc.getObject(doc.componentIndices(doc.resolveNode('Sun'))[0]);
+        assert.strictEqual(comp._illuminance, 90000);
+        assert.strictEqual(doc.getObject(comp._staticSettings.__id__).__type__, 'cc.StaticLightSettings');
         doc.renumber();
         assertValid(doc);
     });

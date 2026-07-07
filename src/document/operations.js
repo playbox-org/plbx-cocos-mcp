@@ -202,29 +202,39 @@ export function parsePropertyPath(path) {
 }
 
 /**
- * Navigate to the property container. The head segment tolerates the
- * serialized underscore prefix ("spriteFrame" matches "_spriteFrame").
- * Intermediate `{__id__}` references are followed into their standalone
- * objects (cc.Line._width → cc.CurveRange, MeshRenderer.bakeSettings, …),
- * so "width.constant" edits the referenced object instead of corrupting
- * the reference.
+ * Navigate to the property container. Every string segment tolerates the
+ * serialized underscore prefix ("spriteFrame" matches "_spriteFrame",
+ * "shapeModule.enable" matches "_shapeModule._enable") and must exist —
+ * a typo'd key is rejected with the container's field list instead of
+ * silently creating a stray key (scripts may create top-level fields via
+ * allowCreate). Intermediate `{__id__}` references are followed into their
+ * standalone objects (cc.Line._width → cc.CurveRange, particle modules,
+ * MeshRenderer.bakeSettings, …), so "width.constant" edits the referenced
+ * object instead of corrupting the reference.
  */
+const HIDDEN_FIELDS = ['__type__', '_objFlags', '__editorExtras__', 'node', '__prefab'];
+
 function locateProperty(doc, component, path, { allowCreate = false } = {}) {
     const segments = parsePropertyPath(path);
-    if (typeof segments[0] === 'string' && !(segments[0] in component)) {
-        const underscored = `_${segments[0]}`;
-        if (underscored in component) segments[0] = underscored;
-        else if (!allowCreate || segments.length > 1) {
-            const fields = Object.keys(component)
-                .filter(k => !['__type__', '_objFlags', '__editorExtras__', 'node', '__prefab'].includes(k));
-            throw new OperationError(
-                `Component ${component.__type__} has no property "${segments[0]}". ` +
-                `Available: ${fields.join(', ')}`
-            );
-        }
-    }
     let container = component;
-    for (let i = 0; i < segments.length - 1; i++) {
+    for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const last = i === segments.length - 1;
+        if (typeof seg === 'string' && !Array.isArray(container) && !(seg in container)) {
+            const underscored = `_${seg}`;
+            if (underscored in container) {
+                segments[i] = underscored;
+            } else if (!(allowCreate && last)) {
+                const owner = i === 0
+                    ? `Component ${component.__type__}`
+                    : `"${segments.slice(0, i).join('.')}" (${container.__type__ ?? 'object'})`;
+                const fields = Object.keys(container).filter(k => !HIDDEN_FIELDS.includes(k));
+                throw new OperationError(
+                    `${owner} has no property "${seg}". Available: ${fields.join(', ')}`
+                );
+            }
+        }
+        if (last) break;
         let next = container[segments[i]];
         if (isRef(next)) next = doc.getObject(next.__id__);
         if (next === null || typeof next !== 'object') {
@@ -701,16 +711,21 @@ function addComponent(doc, op, ctx) {
         component.__prefab = { __id__: infoIdx };
     }
 
-    // Wire template placeholders
+    // Wire template placeholders — deep walk: extras may reference other
+    // extras (particle modules point at their own CurveRanges), and two keys
+    // may share one __ref__ (startSize/startSizeX alias the same object)
     const extraIndices = extras.map(e => doc.addObject(e));
-    for (const [key, value] of Object.entries(component)) {
-        if (value && typeof value === 'object' && '__ref__' in value) {
-            component[key] = { __id__: extraIndices[value.__ref__] };
+    const wire = (obj) => {
+        for (const [key, value] of Object.entries(obj)) {
+            if (!value || typeof value !== 'object') continue;
+            if ('__ref__' in value) obj[key] = { __id__: extraIndices[value.__ref__] };
+            else if (value.__self_node__) obj[key] = { __id__: idx };
+            else if (value.__self_component__) obj[key] = { __id__: compIdx };
+            else wire(value);
         }
-        if (value && typeof value === 'object' && value.__self_node__) {
-            component[key] = { __id__: idx };
-        }
-    }
+    };
+    wire(component);
+    for (const extra of extras) wire(extra);
 
     node._components.push({ __id__: compIdx });
 
@@ -738,8 +753,10 @@ export const REQUIRED_COMPANIONS = {
     'cc.UITransform': [
         'cc.Sprite', 'cc.Label', 'cc.RichText', 'cc.Button', 'cc.Layout',
         'cc.Widget', 'cc.Mask', 'cc.Graphics', 'cc.ProgressBar', 'cc.Slider',
-        'cc.ScrollView', 'cc.PageView', 'cc.EditBox', 'cc.Toggle'
-    ]
+        'cc.ScrollView', 'cc.PageView', 'cc.EditBox', 'cc.Toggle', 'cc.Canvas'
+    ],
+    'cc.Widget': ['cc.SafeArea'],
+    'cc.Label': ['cc.LabelOutline']
 };
 
 function removeComponent(doc, op, ctx) {
@@ -803,18 +820,33 @@ function removeComponent(doc, op, ctx) {
  * Fields the engine serializes twice as a getter/setter pair — a write to one
  * must mirror into the other (verified on the golden scene's
  * cc.animation.AnimationController: _graph and graph always match).
+ * Keyed by the __type__ of the object holding the field, so pairs inside
+ * standalone value objects (particle-system modules reached through refs)
+ * sync too.
  */
 const PAIRED_FIELDS = {
-    'cc.animation.AnimationController': { _graph: 'graph', graph: '_graph' }
+    'cc.animation.AnimationController': { _graph: 'graph', graph: '_graph' },
+    // Particle-system pairs (editor serializes both halves, values equal):
+    // enableCulling is the deprecated serialized alias of dataCulling
+    'cc.ParticleSystem': { _dataCulling: 'enableCulling', enableCulling: '_dataCulling' },
+    'cc.ShapeModule': { _shapeType: 'shapeType', shapeType: '_shapeType' },
+    'cc.TextureAnimationModule': {
+        _numTilesX: 'numTilesX', numTilesX: '_numTilesX',
+        _numTilesY: 'numTilesY', numTilesY: '_numTilesY'
+    },
+    'cc.ParticleSystem2D': { _preview: 'preview', preview: '_preview' },
+    // Light components: the HDR field and its formerlySerializedAs twin
+    'cc.DirectionalLight': { _illuminanceHDR: '_illuminance', _illuminance: '_illuminanceHDR' },
+    'cc.SphereLight': { _luminanceHDR: '_luminance', _luminance: '_luminanceHDR' },
+    'cc.SpotLight': { _luminanceHDR: '_luminance', _luminance: '_luminanceHDR' }
 };
 
 function syncPairedField(component, container, key, value) {
-    if (container !== component) return;
-    const twin = PAIRED_FIELDS[component.__type__]?.[key];
+    const twin = PAIRED_FIELDS[container?.__type__]?.[key];
     if (!twin) return;
     // Deep-copy: the twins must not alias one object (renumber rewrites
     // every {__id__} it visits, and would hit a shared one twice)
-    component[twin] = value !== null && typeof value === 'object'
+    container[twin] = value !== null && typeof value === 'object'
         ? JSON.parse(JSON.stringify(value))
         : value;
 }
