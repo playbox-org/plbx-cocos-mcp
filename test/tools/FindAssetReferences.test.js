@@ -63,7 +63,7 @@ describe('builtins table', () => {
         assert.ok(missing, 'the golden scene does reference assets outside the mock project');
         assert.ok(!missing.includes(PRIMITIVES_UUID),
             'builtin uuids must not appear in the missing-assets warning');
-        assert.match(missing, /not known 3\.8 engine built-ins/);
+        assert.match(missing, /not in the 3\.8 engine built-in table/);
     });
 });
 
@@ -110,6 +110,30 @@ describe('find_asset_references', () => {
         const result = await tool.execute({ asset: 'certainly/not/an/asset.xyz' }, MOCK_PROJECT);
         assert.ok(result.isError);
         assert.match(result.content[0].text, /not UUID-shaped/);
+    });
+
+    test('script asset: references found via compressed __type__, not __uuid__', async (t) => {
+        fs.copyFileSync(GOLDEN_SCENE, sceneCopy);
+        t.after(() => fs.rmSync(sceneCopy, { force: true }));
+        AssetIndex.invalidate(MOCK_PROJECT);
+
+        const result = await tool.execute({ asset: 'Scripts/PlayerController.ts' }, MOCK_PROJECT);
+        const text = result.content[0].text;
+        assert.ok(!result.isError, text);
+        // A script is referenced as a component's __type__ (compressed uuid) —
+        // must be found and attributed, never reported as unused.
+        assert.ok(!/No references — the asset is unused/.test(text),
+            'script attached to nodes must not report as unused');
+        assert.match(text, /## assets\/__refs_test\.scene \(\d+\)/);
+        assert.match(text, /PlayerController.*\(attached component\)/);
+        AssetIndex.invalidate(MOCK_PROJECT);
+    });
+
+    test('folder outside the project is rejected (no prefix-sharing escape)', async () => {
+        const result = await tool.execute(
+            { asset: PRIMITIVES_UUID, folder: '../mock-project-sibling' }, MOCK_PROJECT);
+        assert.ok(result.isError);
+        assert.match(result.content[0].text, /Folder not found/);
     });
 
     test('folder filter narrows the scan', async (t) => {

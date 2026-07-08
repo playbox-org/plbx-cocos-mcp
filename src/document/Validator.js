@@ -548,8 +548,9 @@ export class Validator {
         if (missing.size > 0) {
             const sample = [...missing.keys()].slice(0, 5).join(', ');
             warnings.push(
-                `${missing.size} referenced asset UUID(s) not found under assets/ and not ` +
-                `known 3.8 engine built-ins (likely broken references): ` +
+                `${missing.size} referenced asset UUID(s) not found under assets/ and not in the ` +
+                `3.8 engine built-in table — likely broken references (or, more rarely, assets ` +
+                `from an editor plugin or a different engine version): ` +
                 `${sample}${missing.size > 5 ? ', …' : ''}`
             );
         }

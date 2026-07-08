@@ -841,6 +841,21 @@ describe('cc.ParticleSystem', () => {
         doc.renumber();
         assertValid(doc);
     });
+
+    test('whole-object merge through a ref syncs the module getter pair (#3)', () => {
+        const { doc, comp } = addPS();
+        // The whole-object merge form (not the dotted "shapeModule.shapeType"):
+        // both twins inside the standalone cc.ShapeModule must stay in sync.
+        applyOperations(doc, [
+            { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem',
+              property: 'shapeModule', value: { shapeType: 0 } }
+        ]);
+        const shape = doc.getObject(comp._shapeModule.__id__);
+        assert.strictEqual(shape.shapeType, 0);
+        assert.strictEqual(shape._shapeType, 0, '_shapeType (the deserialized field) must mirror');
+        doc.renumber();
+        assertValid(doc);
+    });
 });
 
 describe('light components', () => {

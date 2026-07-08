@@ -645,6 +645,57 @@ describe('prune_dangling_overrides', () => {
             'the live tableView override must survive');
     });
 
+    test('live override sourced from a mounted-child node is not pruned (#2)', () => {
+        const ctx = makeCtx();
+        const doc = sceneWithDeskAndHolder(ctx);
+        const stubIdx = doc.resolveNode('Desk');
+        const instance = doc.instanceOf(stubIdx);
+        const rootFileId = doc.getObject(doc.getObject(stubIdx)._prefab.__id__).fileId;
+
+        // Mounted-child node: serialized with _parent: null, so nodePath() is
+        // null even though the engine resolves it at load.
+        const childIdx = doc.addObject({
+            __type__: 'cc.Node', _name: 'MountedChild', _parent: null,
+            _children: [], _components: [], _prefab: null
+        });
+        const compIdx = doc.addObject({
+            __type__: 'cc.MeshRenderer', node: { __id__: childIdx }, __prefab: null
+        });
+        doc.getObject(childIdx)._components.push({ __id__: compIdx });
+
+        // A well-formed, LIVE B1 override sourced from that mounted-child comp.
+        const ovIdx = doc.addObject({
+            __type__: 'cc.TargetOverrideInfo',
+            source: { __id__: compIdx },
+            sourceInfo: null,
+            propertyPath: ['someRef'],
+            target: { __id__: stubIdx },
+            targetInfo: {
+                __id__: doc.addObject({ __type__: 'cc.TargetInfo', localID: ['innerFileId00000000'] })
+            }
+        });
+        const registry = doc.getObject(doc.root.node._prefab.__id__);
+        (registry.targetOverrides ??= []).push({ __id__: ovIdx });
+
+        // Sanity: without a MountedChildrenInfo, the _parent:null source reads
+        // as detached and IS flagged — proving the check still fires.
+        assert.ok(findDanglingOverrides(doc).some(d => d.idx === ovIdx),
+            'sanity: an unregistered _parent:null source is flagged');
+
+        // Register the node as a mounted child of the instance.
+        const mciIdx = doc.addObject({
+            __type__: 'cc.MountedChildrenInfo',
+            targetInfo: {
+                __id__: doc.addObject({ __type__: 'cc.TargetInfo', localID: [rootFileId] })
+            },
+            nodes: [{ __id__: childIdx }]
+        });
+        (instance.mountedChildren ??= []).push({ __id__: mciIdx });
+
+        assert.ok(!findDanglingOverrides(doc).some(d => d.idx === ovIdx),
+            'a live override sourced from a mounted-child node must survive pruning');
+    });
+
     test('idempotent: clean document is a no-op', () => {
         const ctx = makeCtx();
         const doc = sceneWithDeskAndHolder(ctx);

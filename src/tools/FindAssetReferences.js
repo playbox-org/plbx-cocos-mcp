@@ -86,7 +86,10 @@ export class FindAssetReferences extends BaseTool {
                     if (!isDeep && !SHALLOW_EXTENSIONS.includes(ext)) continue;
                     scanned++;
                     const content = fs.readFileSync(file, 'utf-8');
-                    if (!content.includes(needle)) continue;
+                    // Scripts are referenced only as a component's __type__
+                    // (compressed uuid), never via __uuid__ — search that form.
+                    const contentNeedle = target.scriptType ?? needle;
+                    if (!content.includes(contentNeedle)) continue;
 
                     const rel = path.relative(projectRoot, file).replaceAll(path.sep, '/');
                     if (isDeep) {
@@ -95,7 +98,7 @@ export class FindAssetReferences extends BaseTool {
                             hits: attributeMatches(file, target, scriptNames)
                         });
                     } else {
-                        const count = content.split(needle).length - 1;
+                        const count = content.split(contentNeedle).length - 1;
                         shallow.push({ file: rel, count });
                     }
                 }
@@ -117,12 +120,17 @@ function identifyTarget(ref, assetIndex) {
     const resolved = assetIndex.resolve(ref);
     if (resolved) {
         const { entry, subAsset } = resolved;
+        // A script is referenced by its compressed uuid in component __type__,
+        // not by __uuid__ — carry the compressed form as the search key.
+        const isScript = !subAsset &&
+            (entry.importer === 'typescript' || entry.importer === 'javascript');
         return {
             kind: 'project',
             label: subAsset ? `${entry.path}@${subAsset.id}` : entry.path,
             uuid: entry.uuid,
             subId: subAsset?.id ?? null,
-            needle: subAsset ? `${entry.uuid}@${subAsset.id}` : entry.uuid
+            needle: subAsset ? `${entry.uuid}@${subAsset.id}` : entry.uuid,
+            scriptType: isScript ? compressUuid(entry.uuid) : null
         };
     }
     const builtin = resolveBuiltin(ref);
@@ -133,17 +141,18 @@ function identifyTarget(ref, assetIndex) {
             label: `db://internal/${entry.path}${subAsset ? `@${subAsset.id}` : ''}`,
             uuid: entry.uuid,
             subId: subAsset?.id ?? null,
-            needle: subAsset ? `${entry.uuid}@${subAsset.id}` : entry.uuid
+            needle: subAsset ? `${entry.uuid}@${subAsset.id}` : entry.uuid,
+            scriptType: null
         };
     }
     const { uuid, subId } = splitSubAssetRef(ref);
     if (isFullUuid(uuid)) {
-        return { kind: 'unknown', label: ref, uuid, subId, needle: subId ? `${uuid}@${subId}` : uuid };
+        return { kind: 'unknown', label: ref, uuid, subId, needle: subId ? `${uuid}@${subId}` : uuid, scriptType: null };
     }
     if (isCompressedUuid(uuid)) {
         const full = decompressUuid(uuid);
         if (full) {
-            return { kind: 'unknown', label: ref, uuid: full, subId, needle: subId ? `${full}@${subId}` : full };
+            return { kind: 'unknown', label: ref, uuid: full, subId, needle: subId ? `${full}@${subId}` : full, scriptType: null };
         }
     }
     return null;
@@ -155,9 +164,12 @@ function scanRoots(projectRoot, folder) {
         return fs.existsSync(assets) ? [assets] : [];
     }
     const normalized = folder.replaceAll('\\', '/').replace(/\/$/, '');
+    const root = path.resolve(projectRoot);
     for (const candidate of [normalized, `assets/${normalized}`]) {
         const abs = path.resolve(projectRoot, candidate);
-        if (abs.startsWith(path.resolve(projectRoot)) && fs.existsSync(abs)) return [abs];
+        // Stay inside the project: exact root or a real subdirectory, never a
+        // prefix-sharing sibling ("/a/game-backup" vs "/a/game").
+        if ((abs === root || abs.startsWith(root + path.sep)) && fs.existsSync(abs)) return [abs];
     }
     return [];
 }
@@ -180,6 +192,20 @@ function* walkFiles(dir) {
 function attributeMatches(filePath, target, scriptNames) {
     const doc = SceneDocument.load(filePath);
     const matches = [];
+
+    // A script reference is a component of that type — attribute it to the
+    // owning node directly (no property path, no uuid value).
+    if (target.scriptType) {
+        doc.objects.forEach((obj, idx) => {
+            if (obj?.__type__ === target.scriptType && isRef(obj.node)) {
+                const node = doc.nodePath(obj.node.__id__) ?? `#${obj.node.__id__}`;
+                const name = scriptNames.get(target.scriptType) ?? target.scriptType;
+                matches.push({ node, component: name, property: null, uuid: null });
+            }
+        });
+        return matches;
+    }
+
     doc.objects.forEach((obj, idx) => {
         const walk = (value, trail) => {
             if (value === null || typeof value !== 'object') return;
@@ -282,9 +308,14 @@ function render(args, target, deep, shallow, scanned) {
             const where = h.node
                 ? `${h.node}${h.component ? ` ▸ ${h.component}` : ''}`
                 : `(${h.component})`;
-            const subId = h.uuid.split('@')[1];
-            const line = `- ${where} .${h.property}` +
-                (h.uuid !== target.needle ? ` [${subId ? `sub-asset @${subId}` : h.uuid}]` : '');
+            let line;
+            if (h.property === null) {
+                line = `- ${where} (attached component)`;
+            } else {
+                const subId = h.uuid.split('@')[1];
+                line = `- ${where} .${h.property}` +
+                    (h.uuid !== target.needle ? ` [${subId ? `sub-asset @${subId}` : h.uuid}]` : '');
+            }
             counts.set(line, (counts.get(line) ?? 0) + 1);
         }
         for (const [line, count] of counts) {

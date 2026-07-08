@@ -913,7 +913,12 @@ const PAIRED_FIELDS = {
         _numTilesY: 'numTilesY', numTilesY: '_numTilesY'
     },
     'cc.ParticleSystem2D': { _preview: 'preview', preview: '_preview' },
-    // Light components: the HDR field and its formerlySerializedAs twin
+    // Light components: the HDR field and its formerlySerializedAs twin.
+    // NOTE: the LDR field (_illuminanceLDR / _luminanceLDR) is intentionally
+    // NOT mirrored — it is HDR × standard-exposure (≈ HDR/38400), not an equal
+    // twin, and the editor itself leaves it at default when HDR is bumped
+    // (3.8 defaults to the HDR pipeline). LDR-pipeline projects must set it
+    // explicitly. See CODE_REVIEW finding #8.
     'cc.DirectionalLight': { _illuminanceHDR: '_illuminance', _illuminance: '_illuminanceHDR' },
     'cc.SphereLight': { _luminanceHDR: '_luminance', _luminance: '_luminanceHDR' },
     'cc.SpotLight': { _luminanceHDR: '_luminance', _luminance: '_luminanceHDR' }
@@ -961,11 +966,17 @@ function setPropertyOnComponent(doc, compIdx, property, rawValue, ctx, { isScrip
                 `set its fields instead (e.g. "${property}.constant") or pass an object to merge`
             );
         }
-        doc.objects[existing.__id__] = mergeTyped(standalone, value, property);
+        const merged = mergeTyped(standalone, value, property);
+        doc.objects[existing.__id__] = merged;
+        // Getter/setter twins live on the standalone object (keyed by its own
+        // __type__) — mirror each field the merge touched, not the ref name.
+        for (const k of Object.keys(value)) {
+            syncPairedField(merged, merged, k, merged[k]);
+        }
     } else {
         container[key] = isReference ? value : mergeTyped(existing, value, property);
+        syncPairedField(component, container, key, container[key]);
     }
-    syncPairedField(component, container, key, container[key]);
 
     for (const ref of refs) {
         upsertTargetOverride(doc, ctx, {

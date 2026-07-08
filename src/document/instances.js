@@ -811,18 +811,25 @@ export function findMountedComponent(doc, stubIdx, op, ctx, { optional = false }
         `${describeComponentType(m.comp?.__type__ ?? '?', ctx)}` +
         `${m.mountTarget ? ` (mounted at "${m.mountTarget}")` : ''}`).join(', ');
 
+    // Source prefab unreadable → every mountTarget is null; target-based
+    // disambiguation is impossible, so it must not silently drop candidates.
+    const unresolvedTargets = all.length > 0 && all.every(m => m.mountTarget === null);
+
     if (op.component === undefined) {
         if (optional) return null;
         throw new OperationError(
-            `"component" (type/script name) is required on a prefab instance — ` +
-            `mounted components here: ${describeAll() || 'none'}`
+            `"component" (type/script name) is required on a prefab instance ` +
+            `(componentIndex alone is not enough — a mounted component has no global ` +
+            `positional index) — mounted components here: ${describeAll() || 'none'}`
         );
     }
     const matcher = componentTypeMatcher(op.component, ctx);
     let matches = all.filter(m => matcher(m.comp?.__type__));
     if (op.target !== undefined && matches.length > 0) {
         const wanted = op.target === '' ? '/' : op.target;
-        matches = matches.filter(m => m.mountTarget === wanted);
+        // Keep candidates with an unresolved (null) mount path — filtering them
+        // out would drop a component that genuinely exists (source unreadable).
+        matches = matches.filter(m => m.mountTarget === null || m.mountTarget === wanted);
     }
 
     if (matches.length === 0) {
@@ -836,14 +843,18 @@ export function findMountedComponent(doc, stubIdx, op, ctx, { optional = false }
         );
     }
     if (matches.length > 1 && op.componentIndex === undefined) {
+        if (optional) return null;
         const list = matches.map(m => m.mountTarget ? `"${m.mountTarget}"` : 'unresolved target').join(', ');
         throw new OperationError(
             `${matches.length} "${op.component}" components are mounted on this instance ` +
-            `(at ${list}) — disambiguate with target: "<mount path>" or componentIndex`
+            `(at ${list}) — disambiguate with ${unresolvedTargets ? '' : 'target: "<mount path>" or '}` +
+            `componentIndex` +
+            `${unresolvedTargets ? ' (source prefab unreadable — mount paths unresolved)' : ''}`
         );
     }
     if (op.componentIndex !== undefined &&
         (op.componentIndex < 0 || op.componentIndex >= matches.length)) {
+        if (optional) return null;
         throw new OperationError(
             `componentIndex ${op.componentIndex} out of range — ${matches.length} matching ` +
             `mounted "${op.component}" component(s)`

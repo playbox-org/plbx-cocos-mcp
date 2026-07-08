@@ -324,13 +324,14 @@ export function dropTargetOverridesInto(doc, stubIdx, localID) {
  */
 export function findDanglingOverrides(doc) {
     const dead = [];
+    const mountedNodes = mountedChildNodeIdxs(doc);
     doc.objects.forEach((owner, ownerIdx) => {
         if (owner.__type__ !== 'cc.PrefabInfo' || !Array.isArray(owner.targetOverrides)) return;
         for (const ref of owner.targetOverrides) {
             if (!isRef(ref)) continue;
             const obj = doc.getObject(ref.__id__);
             if (obj?.__type__ !== 'cc.TargetOverrideInfo') continue;
-            const reasons = overrideDeadReasons(doc, obj);
+            const reasons = overrideDeadReasons(doc, obj, mountedNodes);
             if (reasons.length > 0) {
                 dead.push({
                     ownerIdx,
@@ -346,8 +347,33 @@ export function findDanglingOverrides(doc) {
     return dead;
 }
 
+/**
+ * Node indices that are mounted children of an instance (roots + their whole
+ * subtrees). These are serialized with `_parent: null`, so `nodePath()`
+ * returns null for them even though the engine resolves them at load — they
+ * must NOT be treated as "detached" by the dangling-override check.
+ */
+function mountedChildNodeIdxs(doc) {
+    const set = new Set();
+    const addSubtree = (idx) => {
+        if (set.has(idx)) return;
+        set.add(idx);
+        for (const child of doc.childIndices(idx)) addSubtree(child);
+    };
+    doc.objects.forEach((obj) => {
+        if (obj?.__type__ !== 'cc.MountedChildrenInfo' || !Array.isArray(obj.nodes)) return;
+        for (const r of obj.nodes) if (isRef(r)) addSubtree(r.__id__);
+    });
+    return set;
+}
+
+/** A node still resolvable at load: attached to the scene, or a mounted child */
+function nodeAttached(doc, nodeIdx, mountedNodes) {
+    return doc.nodePath(nodeIdx) !== null || mountedNodes.has(nodeIdx);
+}
+
 /** Why the engine would skip this record on load ([] = record is live) */
-function overrideDeadReasons(doc, obj) {
+function overrideDeadReasons(doc, obj, mountedNodes = new Set()) {
     const reasons = [];
 
     if (!isRef(obj.source)) {
@@ -356,7 +382,7 @@ function overrideDeadReasons(doc, obj) {
         const src = doc.getObject(obj.source.__id__);
         const ownerNodeIdx = doc.isNode(src) ? obj.source.__id__
             : isRef(src?.node) ? src.node.__id__ : null;
-        if (ownerNodeIdx === null || doc.nodePath(ownerNodeIdx) === null) {
+        if (ownerNodeIdx === null || !nodeAttached(doc, ownerNodeIdx, mountedNodes)) {
             reasons.push('source is detached from the node hierarchy');
         }
     }
@@ -380,7 +406,7 @@ function overrideDeadReasons(doc, obj) {
             reasons.push('target is not a reference');
         } else if (!doc.isNode(doc.getObject(obj.target.__id__))) {
             reasons.push('target is not a node');
-        } else if (doc.nodePath(obj.target.__id__) === null) {
+        } else if (!nodeAttached(doc, obj.target.__id__, mountedNodes)) {
             reasons.push('target node is detached from the node hierarchy');
         }
     }
