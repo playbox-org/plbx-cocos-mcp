@@ -16,7 +16,6 @@ import { applyOperations } from '../document/operations.js';
 import { Validator } from '../document/Validator.js';
 import { renderSubtree } from '../document/MiniTree.js';
 import { AssetIndex } from '../core/AssetIndex.js';
-import { compressUuid } from '../utils/uuid.js';
 
 const OPS_DOC = `Operations (applied in order, all-or-nothing):
 - set_node_property {node, property: name|active|layer|mobility|position|rotation|scale, value}
@@ -94,7 +93,7 @@ export class ApplyEdits extends BaseTool {
         }
 
         const assetIndex = AssetIndex.shared(projectRoot);
-        const ctx = { assetIndex, projectRoot, scriptNameByCompressed: this.#scriptNames(assetIndex) };
+        const ctx = { assetIndex, projectRoot, scriptNameByCompressed: assetIndex.scriptClassNames() };
 
         let results;
         try {
@@ -120,15 +119,6 @@ export class ApplyEdits extends BaseTool {
         return this.success(this.#report({ args, doc, results, warnings, dropped, dryRun, ctx }));
     }
 
-    /** compressed script UUID → readable name, for subtree rendering */
-    #scriptNames(assetIndex) {
-        const map = new Map();
-        for (const entry of assetIndex.list({ type: 'script' })) {
-            map.set(compressUuid(entry.uuid), entry.name.replace(/\.[jt]s$/, ''));
-        }
-        return map;
-    }
-
     #report({ args, doc, results, warnings, dropped, dryRun, ctx }) {
         const lines = [];
         lines.push(dryRun
@@ -143,10 +133,14 @@ export class ApplyEdits extends BaseTool {
         const shown = new Set();
         const covered = (anchor) =>
             shown.has(anchor) ||
-            [...shown].some(s => s === '/' || anchor.startsWith(`${s}/`));
+            [...shown].some(s => anchor.startsWith(`${s}/`));
         const trees = [];
         for (const r of results) {
-            const anchor = r.target === '/' ? '/' : r.target;
+            // Whole-document ops (prune_dangling_overrides) target "/" — they
+            // have no meaningful subtree and must not suppress the per-op
+            // subtrees of their sibling results.
+            if (r.target === '/') continue;
+            const anchor = r.target;
             if (covered(anchor)) continue;
             shown.add(anchor);
             try {

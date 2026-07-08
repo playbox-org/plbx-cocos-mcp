@@ -19,7 +19,6 @@ import {
 } from '../document/instances.js';
 import { fileIdTargets } from '../document/targetOverrides.js';
 import { PropertyExtractor } from '../core/PropertyExtractor.js';
-import { compressUuid } from '../utils/uuid.js';
 
 export class InspectNode extends BaseTool {
     get name() {
@@ -182,11 +181,13 @@ export class InspectNode extends BaseTool {
         // touching the source prefab, so they render even when it is missing
         const assetIndex = AssetIndex.shared(ctx.projectRoot);
         const doc = SceneDocument.load(ctx.filePath);
-        const mounted = this.#collectMounted(doc, nodeId, minifier, assetIndex);
+        // Built once and shared by every collector below (mounted + incoming refs)
+        const scriptNames = this.#scriptNames(assetIndex);
+        const mounted = this.#collectMounted(doc, nodeId, minifier, assetIndex, scriptNames);
 
         let expansion;
         try {
-            expansion = this.#expandInstance(nodeId, stub, ctx, doc, assetIndex, mounted);
+            expansion = this.#expandInstance(nodeId, stub, ctx, doc, assetIndex, mounted, scriptNames);
         } catch (err) {
             // Fall back to the plain (collapsed) view rather than failing
             const graph = minifier.inspectNode(nodeId);
@@ -200,7 +201,7 @@ export class InspectNode extends BaseTool {
         return this.#formatInstanceResult(expansion, nodeId, format);
     }
 
-    #expandInstance(nodeId, stub, ctx, doc, assetIndex, mounted) {
+    #expandInstance(nodeId, stub, ctx, doc, assetIndex, mounted, scriptNames) {
         const docCtx = { assetIndex, projectRoot: ctx.projectRoot };
         const source = loadSourcePrefabByUuid(docCtx, stub.assetUuid);
 
@@ -211,9 +212,10 @@ export class InspectNode extends BaseTool {
         annotateTargets(graph);
 
         // This instance's overrides, resolved to target paths via fileIds
-        const targets = fileIdTargets(source.doc);
+        // (memoized on the cached prefab entry — see listMountedComponents)
+        const targets = source.fileIdTargets ??= fileIdTargets(source.doc);
         const overrides = this.#collectOverrides(doc, nodeId, targets, assetIndex);
-        const incomingRefs = this.#collectIncomingRefs(doc, nodeId, targets, assetIndex);
+        const incomingRefs = this.#collectIncomingRefs(doc, nodeId, targets, scriptNames);
         const removedComponents = this.#collectRemovedComponents(doc, nodeId, targets);
         resolveMountTargets(mounted, targets);
 
@@ -236,11 +238,10 @@ export class InspectNode extends BaseTool {
      * node/component addresses so references like `pipeControllers` are
      * directly reusable.
      */
-    #collectMounted(doc, stubIdx, minifier, assetIndex) {
+    #collectMounted(doc, stubIdx, minifier, assetIndex, scriptNames) {
         const instance = doc.instanceOf(stubIdx);
         if (!instance) return { components: [], children: [] };
 
-        const scriptNames = this.#scriptNames(assetIndex);
         const describeType = (type) =>
             scriptNames.has(type) ? `${scriptNames.get(type)} (script)` : type;
         // Full addresses for {__id__} refs: node path, or "path ▸ Type" for
@@ -282,11 +283,7 @@ export class InspectNode extends BaseTool {
 
     /** compressed script uuid → class name, via the project's script metas */
     #scriptNames(assetIndex) {
-        const map = new Map();
-        for (const entry of assetIndex.list({ type: 'script' })) {
-            map.set(compressUuid(entry.uuid), entry.name.replace(/\.[jt]s$/, ''));
-        }
-        return map;
+        return assetIndex.scriptClassNames();
     }
 
     /** removedComponents entries resolved to source-prefab paths */
@@ -308,8 +305,7 @@ export class InspectNode extends BaseTool {
      * @property references resolve INTO the instance (serialized null +
      * cc.TargetOverrideInfo — see targetOverrides.js).
      */
-    #collectIncomingRefs(doc, stubIdx, targets, assetIndex) {
-        const scriptNames = this.#scriptNames(assetIndex);
+    #collectIncomingRefs(doc, stubIdx, targets, scriptNames) {
         const refs = [];
         for (const obj of doc.objects) {
             if (obj?.__type__ !== 'cc.TargetOverrideInfo') continue;
@@ -470,8 +466,8 @@ export class InspectNode extends BaseTool {
         }
         if (mounted.children.length > 0) {
             const total = mounted.children.reduce((n, m) => n + m.nodes.length, 0);
+            if (lines.length > 0) lines.push('');
             lines.push(
-                lines.length > 0 ? '' : null,
                 `## Mounted children (${total})`,
                 'Nodes added under this instance in THIS file (not part of the source prefab).'
             );
@@ -486,7 +482,7 @@ export class InspectNode extends BaseTool {
                 }
             }
         }
-        return lines.filter(l => l !== null).join('\n');
+        return lines.join('\n');
     }
 
     #formatResult(graph, nodeId, format, address = null) {

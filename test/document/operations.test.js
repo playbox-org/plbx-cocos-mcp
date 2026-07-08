@@ -715,6 +715,97 @@ describe('cc.Line', () => {
     });
 });
 
+describe('property paths through references (code-review fixes)', () => {
+    /** Prefab with a fresh child carrying `type` */
+    function prefabWith(type, name = 'Fx') {
+        const doc = loadPrefab();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name },
+            { op: 'add_component', node: name, type }
+        ]);
+        return doc;
+    }
+
+    // C1 — a mid-path node/component ref must never be followed into
+    test('C1: writing THROUGH a component\'s node ref is rejected (no host mutation)', () => {
+        const doc = prefabWith('cc.Line', 'RopeVisual');
+        const nodeIdx = doc.resolveNode('RopeVisual');
+        const before = doc.getObject(nodeIdx)._active;
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: 'RopeVisual', component: 'cc.Line',
+            property: 'node.active', value: false
+        }]), /is a node, not an editable sub-object/);
+        assert.strictEqual(doc.getObject(nodeIdx)._active, before,
+            'the host node must not have been deactivated');
+    });
+
+    test('C1: writing THROUGH node.layer does not bypass layer validation', () => {
+        const doc = prefabWith('cc.Line', 'RopeVisual');
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: 'RopeVisual', component: 'cc.Line',
+            property: 'node.layer', value: 'UI'
+        }]), /is a node, not an editable sub-object/);
+    });
+
+    // C2 — object-merge through a ref is deep, not shallow
+    test('C2: partial nested vector keeps __type__ and untouched components', () => {
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        const shape = doc.getObject(ps._shapeModule.__id__);
+        assert.strictEqual(shape.boxThickness.__type__, 'cc.Vec3');
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule', value: { boxThickness: { x: 2 } }
+        }]);
+        assert.deepStrictEqual(doc.getObject(ps._shapeModule.__id__).boxThickness,
+            { __type__: 'cc.Vec3', x: 2, y: 0, z: 0 },
+            'deep merge keeps __type__/y/z instead of flattening to {x:2}');
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('C2: overwriting a ref-valued sub-field with a scalar is rejected', () => {
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        const shape = doc.getObject(ps._shapeModule.__id__);
+        assert.ok('__id__' in shape.arcSpeed, 'arcSpeed starts as a CurveRange reference');
+        const arcSpeedIdx = shape.arcSpeed.__id__;
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule', value: { arcSpeed: 3 }
+        }]), /references a standalone object/);
+        assert.deepStrictEqual(doc.getObject(ps._shapeModule.__id__).arcSpeed,
+            { __id__: arcSpeedIdx }, 'the reference must survive the rejected write');
+    });
+
+    // C3 — a serialized field with no getter twin (_enable) is reachable
+    test('C3: short field name (enable) normalizes to its _enable twin', () => {
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule', value: { enable: true }
+        }]);
+        assert.strictEqual(doc.getObject(ps._shapeModule.__id__)._enable, true);
+        assert.ok(!('enable' in doc.getObject(ps._shapeModule.__id__)),
+            'no stray non-underscore key is created');
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('C3: paired getter/setter twin still mirrors through the merge', () => {
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule', value: { shapeType: 1 }
+        }]);
+        const shape = doc.getObject(ps._shapeModule.__id__);
+        assert.strictEqual(shape.shapeType, 1);
+        assert.strictEqual(shape._shapeType, 1, 'the _shapeType twin mirrors the write');
+    });
+});
+
 describe('every component template', () => {
     // Companions the editor would have added before the type is allowed
     const PRE = (type) => {

@@ -17,9 +17,9 @@
  */
 
 import { isRef } from './SceneDocument.js';
-import { loadSourcePrefabByUuid } from './instances.js';
+import { loadSourcePrefabByUuid, instanceOverrideValue } from './instances.js';
 import {
-    mat4Identity, trsToMat4, mat4Multiply, transformAabb, mergeAabb
+    mat4Identity, trsToMat4, mat4Multiply, transformAabb, mergeAabb, eulerToQuat
 } from '../utils/math3d.js';
 import { MESH_RENDERERS } from './componentTypes.js';
 
@@ -131,10 +131,13 @@ export class BoundsCalculator {
 
         // The stub's transform = source root TRS overridden per propertyOverrides
         const instance = doc.instanceOf(stubIdx);
+        const rot = instanceOverrideValue(doc, instance, info.fileId, '_lrot') ??
+            rootNode._lrot ??
+            (rootNode._euler ? { __type__: 'cc.Quat', ...eulerToQuat(rootNode._euler) } : IDENTITY_TRS.rot);
         const trs = {
-            pos: this.#overrideValue(doc, instance, info.fileId, '_lpos') ?? rootNode._lpos ?? IDENTITY_TRS.pos,
-            rot: this.#overrideValue(doc, instance, info.fileId, '_lrot') ?? rootNode._lrot ?? IDENTITY_TRS.rot,
-            scale: this.#overrideValue(doc, instance, info.fileId, '_lscale') ?? rootNode._lscale ?? IDENTITY_TRS.scale
+            pos: instanceOverrideValue(doc, instance, info.fileId, '_lpos') ?? rootNode._lpos ?? IDENTITY_TRS.pos,
+            rot,
+            scale: instanceOverrideValue(doc, instance, info.fileId, '_lscale') ?? rootNode._lscale ?? IDENTITY_TRS.scale
         };
         const m = excludeOwnTrs ? matrix : mat4Multiply(matrix, trsToMat4(trs.pos, trs.rot, trs.scale));
 
@@ -143,21 +146,6 @@ export class BoundsCalculator {
             const childLabel = `${label}→${source.doc.nodeName(childIdx) ?? '<unnamed>'}`;
             this.#enter(source.doc, childIdx, m, childLabel, out, depth + 1, false, visiting);
         }
-    }
-
-    #overrideValue(doc, instance, rootFileId, prop) {
-        if (!instance) return undefined;
-        for (const ref of instance.propertyOverrides ?? []) {
-            if (!isRef(ref)) continue;
-            const o = doc.getObject(ref.__id__);
-            if (o?.__type__ !== 'CCPropertyOverrideInfo') continue;
-            const target = isRef(o.targetInfo) ? doc.getObject(o.targetInfo.__id__) : null;
-            if (target?.localID?.length === 1 && target.localID[0] === rootFileId &&
-                o.propertyPath.length === 1 && o.propertyPath[0] === prop) {
-                return o.value;
-            }
-        }
-        return undefined;
     }
 
     #collectComponents(doc, nodeIdx, matrix, label, out) {
@@ -235,14 +223,15 @@ export class BoundsCalculator {
             if (doc.isInstanceStub(i)) {
                 const info = doc.getObject(node._prefab.__id__);
                 const instance = doc.instanceOf(i);
-                let pos = this.#overrideValue(doc, instance, info.fileId, '_lpos');
-                let rot = this.#overrideValue(doc, instance, info.fileId, '_lrot');
-                let scale = this.#overrideValue(doc, instance, info.fileId, '_lscale');
+                let pos = instanceOverrideValue(doc, instance, info.fileId, '_lpos');
+                let rot = instanceOverrideValue(doc, instance, info.fileId, '_lrot');
+                let scale = instanceOverrideValue(doc, instance, info.fileId, '_lscale');
                 if (pos === undefined || rot === undefined || scale === undefined) {
                     // Same fallback as #enterStub: the source prefab root's own TRS
                     const rootNode = this.#sourceRootNode(info);
                     pos ??= rootNode?._lpos ?? IDENTITY_TRS.pos;
-                    rot ??= rootNode?._lrot ?? IDENTITY_TRS.rot;
+                    rot ??= rootNode?._lrot ??
+                        (rootNode?._euler ? { __type__: 'cc.Quat', ...eulerToQuat(rootNode._euler) } : IDENTITY_TRS.rot);
                     scale ??= rootNode?._lscale ?? IDENTITY_TRS.scale;
                 }
                 m = mat4Multiply(m, trsToMat4(pos, rot, scale));

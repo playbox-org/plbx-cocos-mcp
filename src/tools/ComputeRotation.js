@@ -12,7 +12,7 @@ import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
 import { SceneDocument, isRef } from '../document/SceneDocument.js';
 import { AssetIndex } from '../core/AssetIndex.js';
-import { loadSourcePrefabByUuid } from '../document/instances.js';
+import { loadSourcePrefabByUuid, instanceOverrideValue } from '../document/instances.js';
 import {
     eulerToQuat, quatToEulerYZX, quatMultiply, quatConjugate, quatNormalize,
     quatFromAxisAngle, quatFromTo, quatRotateVec3, vec3Normalize, vec3Cross, vec3Dot
@@ -135,7 +135,7 @@ function readBase(args, projectRoot) {
     if (args.euler !== undefined) {
         return { quat: eulerToQuat(args.euler), parentQuat: null, euler: args.euler };
     }
-    if (args.mode === 'orient') return { quat: { x: 0, y: 0, z: 0, w: 1 }, parentQuat: null };
+    if (args.mode === 'orient') return { quat: IDENTITY_QUAT, parentQuat: null };
     throw new Error('Pass the base rotation: euler {x?,y?,z?}, quat {x,y,z,w}, or filePath + node');
 }
 
@@ -151,9 +151,9 @@ function nodeRotation(doc, nodeIdx, ctx) {
         const instance = doc.instanceOf(nodeIdx);
         const info = isRef(node._prefab) ? doc.getObject(node._prefab.__id__) : null;
         const rootFileId = info?.fileId;
-        const lrot = overrideValue(doc, instance, rootFileId, '_lrot');
+        const lrot = instanceOverrideValue(doc, instance, rootFileId, '_lrot');
         if (lrot) return lrot;
-        const euler = overrideValue(doc, instance, rootFileId, '_euler');
+        const euler = instanceOverrideValue(doc, instance, rootFileId, '_euler');
         if (euler) return eulerToQuat(euler);
         // No transform override — inherit the source prefab root's rotation.
         if (ctx && typeof info?.asset?.__uuid__ === 'string') {
@@ -169,25 +169,6 @@ function nodeRotation(doc, nodeIdx, ctx) {
     return node._lrot ?? (node._euler ? eulerToQuat(node._euler) : IDENTITY_QUAT);
 }
 
-/**
- * A stub's transform override for `prop`, keyed by the stub root's fileId
- * (single-hop localID). undefined when there is no such override.
- */
-function overrideValue(doc, instance, rootFileId, prop) {
-    if (!instance || rootFileId === undefined) return undefined;
-    for (const ref of instance.propertyOverrides ?? []) {
-        if (!isRef(ref)) continue;
-        const o = doc.getObject(ref.__id__);
-        if (o?.__type__ !== 'CCPropertyOverrideInfo' || !Array.isArray(o.propertyPath)) continue;
-        const target = isRef(o.targetInfo) ? doc.getObject(o.targetInfo.__id__) : null;
-        if (target?.localID?.length === 1 && target.localID[0] === rootFileId &&
-            o.propertyPath.length === 1 && o.propertyPath[0] === prop) {
-            return o.value;
-        }
-    }
-    return undefined;
-}
-
 /** World rotation of the node's PARENT chain (topmost ancestor applied first) */
 function parentChainRotation(doc, nodeIdx, ctx) {
     const chain = [];
@@ -196,7 +177,7 @@ function parentChainRotation(doc, nodeIdx, ctx) {
         chain.unshift(idx);
         idx = doc.getObject(idx)._parent?.__id__;
     }
-    let q = { x: 0, y: 0, z: 0, w: 1 };
+    let q = IDENTITY_QUAT;
     for (const ancestor of chain) {
         q = quatMultiply(q, nodeRotation(doc, ancestor, ctx));
     }
@@ -228,7 +209,7 @@ function compose(args, base) {
         return quatMultiply(base.quat, r);
     }
     // World axis: new_world = R · P · q → new_local = P⁻¹ · R · P · q
-    const p = base.parentQuat ?? { x: 0, y: 0, z: 0, w: 1 };
+    const p = base.parentQuat ?? IDENTITY_QUAT;
     return quatMultiply(quatConjugate(p), quatMultiply(r, quatMultiply(p, base.quat)));
 }
 
@@ -262,7 +243,7 @@ function orient(args, base) {
         }
     }
     // To the node's local frame (identity parents when no node was given)
-    const p = base.parentQuat ?? { x: 0, y: 0, z: 0, w: 1 };
+    const p = base.parentQuat ?? IDENTITY_QUAT;
     return quatMultiply(quatConjugate(p), world);
 }
 

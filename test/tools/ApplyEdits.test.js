@@ -152,6 +152,24 @@ describe('apply_edits tool', () => {
         assert.strictEqual(fs.readFileSync(target, 'utf-8'), before);
     });
 
+    // A3 — a whole-document op ("/" target) must not suppress the per-op
+    // subtree of a sibling result that sits deeper than the root render depth.
+    test('a leading prune_dangling_overrides does not suppress sibling subtrees', async () => {
+        const result = await new ApplyEdits().execute({
+            filePath: 'assets/Prefabs/TableCash.prefab',
+            ops: [
+                { op: 'prune_dangling_overrides' },
+                { op: 'set_node_property', node: 'Table/CashRegister/Monitor', property: 'position', value: { y: 1 } }
+            ]
+        }, projectRoot);
+
+        assert.ok(!result.isError, text(result));
+        assert.match(text(result), /## Result subtrees/);
+        // Monitor is 3 levels deep — beyond the root subtree's maxDepth 2, so it
+        // only appears if the prune's "/" target did NOT swallow the report.
+        assert.match(text(result), /Monitor/);
+    });
+
     test('missing file errors cleanly', async () => {
         const result = await new ApplyEdits().execute({
             filePath: 'assets/Nope.scene',

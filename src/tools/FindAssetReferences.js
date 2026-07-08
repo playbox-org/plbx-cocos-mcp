@@ -72,8 +72,7 @@ export class FindAssetReferences extends BaseTool {
                 return this.error(`Folder not found: ${args.folder}`);
             }
 
-            const scriptNames = new Map(assetIndex.list({ type: 'script' })
-                .map(e => [compressUuid(e.uuid), `${e.name.replace(/\.[jt]s$/, '')} (script)`]));
+            const scriptNames = assetIndex.scriptClassNames();
             const needle = target.needle;
             const deep = [];
             const shallow = [];
@@ -93,13 +92,14 @@ export class FindAssetReferences extends BaseTool {
 
                     const rel = path.relative(projectRoot, file).replaceAll(path.sep, '/');
                     if (isDeep) {
+                        // Reuse the content already read for the pre-filter — no
+                        // second disk read of the same (potentially 1MB+) file.
                         deep.push({
                             file: rel,
-                            hits: attributeMatches(file, target, scriptNames)
+                            hits: attributeMatches(content, file, target, scriptNames)
                         });
                     } else {
-                        const count = content.split(contentNeedle).length - 1;
-                        shallow.push({ file: rel, count });
+                        shallow.push({ file: rel, count: countOccurrences(content, contentNeedle) });
                     }
                 }
             }
@@ -158,6 +158,19 @@ function identifyTarget(ref, assetIndex) {
     return null;
 }
 
+/** Count non-overlapping occurrences of `needle` without allocating a split array */
+function countOccurrences(content, needle) {
+    if (!needle) return 0;
+    let count = 0;
+    let from = 0;
+    for (;;) {
+        const at = content.indexOf(needle, from);
+        if (at === -1) return count;
+        count++;
+        from = at + needle.length;
+    }
+}
+
 function scanRoots(projectRoot, folder) {
     if (!folder) {
         const assets = path.join(projectRoot, 'assets');
@@ -189,26 +202,38 @@ function* walkFiles(dir) {
  * standalone objects (override values, CurveRanges, material arrays) climb
  * to their owning component/node through reverse references.
  */
-function attributeMatches(filePath, target, scriptNames) {
-    const doc = SceneDocument.load(filePath);
+function attributeMatches(content, filePath, target, scriptNames) {
+    const doc = SceneDocument.fromContent(content, filePath);
     const matches = [];
 
     // A script reference is a component of that type — attribute it to the
     // owning node directly (no property path, no uuid value).
     if (target.scriptType) {
-        doc.objects.forEach((obj, idx) => {
+        const cls = scriptNames.get(target.scriptType);
+        const name = cls ? `${cls} (script)` : target.scriptType;
+        doc.objects.forEach((obj) => {
             if (obj?.__type__ === target.scriptType && isRef(obj.node)) {
                 const node = doc.nodePath(obj.node.__id__) ?? `#${obj.node.__id__}`;
-                const name = scriptNames.get(target.scriptType) ?? target.scriptType;
                 matches.push({ node, component: name, property: null, uuid: null });
             }
         });
         return matches;
     }
 
+    // Single pass collects both the __uuid__ matches AND the first-wins reverse
+    // reference map used to climb out of value objects — walking the full graph
+    // once instead of twice. `_parent` refs are excluded from `owners` so a
+    // child never climbs to its parent (they point child → parent).
+    const owners = new Map();
     doc.objects.forEach((obj, idx) => {
-        const walk = (value, trail) => {
+        const walk = (value, trail, underParent) => {
             if (value === null || typeof value !== 'object') return;
+            if (isRef(value)) {
+                if (!underParent && !owners.has(value.__id__)) {
+                    owners.set(value.__id__, { fromIdx: idx, trail });
+                }
+                return;
+            }
             if (typeof value.__uuid__ === 'string') {
                 const hit = target.subId
                     ? value.__uuid__ === target.needle
@@ -217,38 +242,17 @@ function attributeMatches(filePath, target, scriptNames) {
                 return;
             }
             if (Array.isArray(value)) {
-                value.forEach((v, i) => walk(v, `${trail}[${i}]`));
+                value.forEach((v, i) => walk(v, `${trail}[${i}]`, underParent));
                 return;
             }
             for (const key of Object.keys(value)) {
-                if (key !== '__id__') walk(value[key], trail ? `${trail}.${key}` : key);
+                if (key === '__id__') continue;
+                walk(value[key], trail ? `${trail}.${key}` : key, key === '_parent');
             }
         };
-        walk(obj, '');
+        walk(obj, '', false);
     });
     if (matches.length === 0) return [];
-
-    // First-wins reverse reference map for climbing out of value objects
-    const owners = new Map();
-    doc.objects.forEach((obj, idx) => {
-        const walk = (value, trail) => {
-            if (value === null || typeof value !== 'object') return;
-            if (isRef(value)) {
-                if (!owners.has(value.__id__)) owners.set(value.__id__, { fromIdx: idx, trail });
-                return;
-            }
-            if (Array.isArray(value)) {
-                value.forEach((v, i) => walk(v, `${trail}[${i}]`));
-                return;
-            }
-            for (const key of Object.keys(value)) {
-                if (key !== '__id__' && key !== '_parent') {
-                    walk(value[key], trail ? `${trail}.${key}` : key);
-                }
-            }
-        };
-        walk(obj, '');
-    });
 
     return matches.map(m => {
         const where = climbToOwner(doc, m.idx, m.trail, owners, scriptNames);
@@ -267,7 +271,8 @@ function climbToOwner(doc, idx, trail, owners, scriptNames) {
         }
         if (isRef(obj.node)) {
             const nodePath = doc.nodePath(obj.node.__id__) ?? `#${obj.node.__id__}`;
-            const type = scriptNames.get(obj.__type__) ?? obj.__type__;
+            const cls = scriptNames.get(obj.__type__);
+            const type = cls ? `${cls} (script)` : obj.__type__;
             return { node: nodePath, component: type, property };
         }
         const up = owners.get(cur);

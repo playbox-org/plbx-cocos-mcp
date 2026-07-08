@@ -326,4 +326,46 @@ describe('remove_component on mounted components', () => {
         assert.strictEqual(mountedComponentEntries(doc, instance).length, 1);
         assertValid(doc, ctx);
     });
+
+    // C4 — an ambiguous mounted match must surface the disambiguation error,
+    // not silently fall through to source-prefab removedComponents.
+    test('C4: ambiguous mounted match throws, never misroutes to source removal', () => {
+        const ctx = makeCtx();
+        const doc = shopScene(ctx);
+        mount(doc, 'Shop', TABLECASH_ROOT_FILE_ID);
+        mount(doc, 'Shop', MONITOR_NODE_FILE_ID);
+        const { instance } = stubInstance(doc, 'Shop');
+
+        assert.throws(
+            () => applyOperations(doc, [{
+                op: 'remove_component', node: 'Shop', component: 'PlayerController'
+            }], ctx),
+            /2 "PlayerController" components are mounted/
+        );
+        assert.strictEqual((instance.removedComponents ?? []).length, 0,
+            'must NOT record a removedComponents entry against the source prefab');
+        assert.strictEqual(mountedComponentEntries(doc, instance).length, 2,
+            'both mounted components stay intact');
+    });
+
+    // C5 — a sibling whose mount localID is unresolvable (mountTarget null)
+    // must not block targeting a resolvable mount when the source is readable.
+    test('C5: unresolvable-mount sibling does not block targeting the resolvable one', () => {
+        const ctx = makeCtx();
+        const doc = shopScene(ctx);
+        const rootComp = mount(doc, 'Shop', TABLECASH_ROOT_FILE_ID);      // resolves to "/"
+        const orphanComp = mount(doc, 'Shop', 'zzOrphanFileId00000000');  // fileId not in source → null
+
+        // Source prefab IS readable, so the null sibling must be dropped rather
+        // than kept — targeting "/" uniquely picks the root-mounted component.
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'Shop', target: '/',
+            component: 'PlayerController', property: '_enabled', value: false
+        }], ctx);
+
+        assert.strictEqual(doc.getObject(rootComp)._enabled, false);
+        assert.strictEqual(doc.getObject(orphanComp)._enabled, true,
+            'the unresolvable-mount sibling is untouched');
+        assertValid(doc, ctx);
+    });
 });

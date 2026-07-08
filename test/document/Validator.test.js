@@ -78,6 +78,24 @@ describe('Validator catches corruption', () => {
         assert.ok(warnings.some(w => /wrapper rule/.test(w)));
     });
 
+    // A1 — the wrapper rule must cover every world-space renderer, not just
+    // cc.Sprite/cc.MeshRenderer (SpriteRenderer/Billboard/ParticleSystem added).
+    for (const type of ['cc.SpriteRenderer', 'cc.Billboard', 'cc.ParticleSystem']) {
+        test(`wrapper rule warning for ${type} on prefab root`, () => {
+            const doc = load('TableCash.prefab');
+            const tableIdx = doc.resolveNode('Table');
+            const compIdx = doc.componentIndices(tableIdx)[0];
+            doc.getObject(tableIdx)._components = [];
+            doc.root.node._components.push({ __id__: compIdx });
+            const comp = doc.getObject(compIdx);
+            comp.node = { __id__: doc.root.idx };
+            comp.__type__ = type;
+            const { warnings } = new Validator(doc).validate();
+            assert.ok(warnings.some(w => /wrapper rule/.test(w)),
+                `${type} on a prefab root must trip the wrapper rule`);
+        });
+    }
+
     test('unreachable objects produce a warning', () => {
         const doc = load('TableCash.prefab');
         doc.addObject({ __type__: 'cc.ModelBakeSettings', texture: null });

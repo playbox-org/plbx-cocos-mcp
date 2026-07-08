@@ -162,21 +162,44 @@ export function resolveLayer(value) {
     );
 }
 
-/** Merge a plain {x,y,..} object into a serialized value-type, keeping __type__ */
+/**
+ * Merge a plain {x,y,..} object into a serialized value-type, keeping __type__.
+ * The merge is DEEP: a partial nested value (e.g. {boxThickness:{x:2}} into a
+ * cc.ShapeModule) recurses so the nested cc.Vec3 keeps its __type__ and its
+ * untouched components instead of being flattened to a bare {x:2}. Given keys
+ * tolerate the serialized underscore prefix ("enable" → "_enable"), matching
+ * locateProperty. A field that references a standalone object cannot be
+ * overwritten with a scalar (it would orphan the referenced object) — the
+ * dotted-path form must be used instead.
+ */
 export function mergeTyped(existing, given, what) {
     if (given === null || typeof given !== 'object' || Array.isArray(given)) return given;
     if (given.__type__) return given; // caller provided a full serialized value
     if (existing === null || typeof existing !== 'object' || !existing.__type__) return given;
     const allowed = new Set(Object.keys(existing));
-    for (const key of Object.keys(given)) {
+    const merged = { ...existing };
+    for (const [rawKey, val] of Object.entries(given)) {
+        let key = rawKey;
         if (!allowed.has(key)) {
-            throw new OperationError(
-                `Unknown field "${key}" for ${what} (${existing.__type__}); ` +
+            if (allowed.has(`_${key}`)) key = `_${key}`;
+            else throw new OperationError(
+                `Unknown field "${rawKey}" for ${what} (${existing.__type__}); ` +
                 `expected: ${[...allowed].filter(k => k !== '__type__').join(', ')}`
             );
         }
+        const cur = existing[key];
+        if (isRef(cur) && (val === null || typeof val !== 'object' || Array.isArray(val))) {
+            throw new OperationError(
+                `"${rawKey}" in ${what} (${existing.__type__}) references a standalone object — ` +
+                `cannot overwrite it with ${JSON.stringify(val)}. Edit it via a dotted path ` +
+                `(e.g. "${what}.${rawKey}.<field>").`
+            );
+        }
+        const recurse = cur && typeof cur === 'object' && cur.__type__ &&
+            val && typeof val === 'object' && !Array.isArray(val) && !val.__type__;
+        merged[key] = recurse ? mergeTyped(cur, val, `${what}.${rawKey}`) : val;
     }
-    return { ...existing, ...given };
+    return merged;
 }
 
 /** Parse "a.b[0].c" / "materials.0" into path segments */
@@ -236,7 +259,26 @@ function locateProperty(doc, component, path, { allowCreate = false } = {}) {
         }
         if (last) break;
         let next = container[segments[i]];
-        if (isRef(next)) next = doc.getObject(next.__id__);
+        if (isRef(next)) {
+            const ref = doc.getObject(next.__id__);
+            // Follow a ref ONLY into a standalone value object (cc.CurveRange
+            // behind cc.Line._width, particle modules, MeshRenderer.bakeSettings,
+            // …). A ref to a node or a component is a structural link, not a
+            // sub-property: navigating through it would mutate a DIFFERENT
+            // node/component and bypass layer/instance-override validation.
+            const isValueObj = ref?.__type__ && !doc.isNode(ref) && !isRef(ref.node);
+            if (!isValueObj) {
+                const kind = ref && doc.isNode(ref) ? 'a node'
+                    : ref && isRef(ref.node) ? 'another component'
+                    : 'a non-value reference';
+                throw new OperationError(
+                    `Cannot navigate "${path}": "${segments.slice(0, i + 1).join('.')}" is ` +
+                    `${kind}, not an editable sub-object — target it directly ` +
+                    `(set_node_property, or a separate set_component_property).`
+                );
+            }
+            next = ref;
+        }
         if (next === null || typeof next !== 'object') {
             throw new OperationError(
                 `Cannot navigate "${path}": "${segments.slice(0, i + 1).join('.')}" is not an object/array`
@@ -924,7 +966,7 @@ const PAIRED_FIELDS = {
     'cc.SpotLight': { _luminanceHDR: '_luminance', _luminance: '_luminanceHDR' }
 };
 
-function syncPairedField(component, container, key, value) {
+function syncPairedField(container, key, value) {
     const twin = PAIRED_FIELDS[container?.__type__]?.[key];
     if (!twin) return;
     // Deep-copy: the twins must not alias one object (renumber rewrites
@@ -969,13 +1011,15 @@ function setPropertyOnComponent(doc, compIdx, property, rawValue, ctx, { isScrip
         const merged = mergeTyped(standalone, value, property);
         doc.objects[existing.__id__] = merged;
         // Getter/setter twins live on the standalone object (keyed by its own
-        // __type__) — mirror each field the merge touched, not the ref name.
-        for (const k of Object.keys(value)) {
-            syncPairedField(merged, merged, k, merged[k]);
+        // __type__) — mirror each field the merge touched, normalizing the
+        // underscore twin the same way mergeTyped did.
+        for (const rawK of Object.keys(value)) {
+            const k = rawK in merged ? rawK : `_${rawK}`;
+            syncPairedField(merged, k, merged[k]);
         }
     } else {
         container[key] = isReference ? value : mergeTyped(existing, value, property);
-        syncPairedField(component, container, key, container[key]);
+        syncPairedField(container, key, container[key]);
     }
 
     for (const ref of refs) {
@@ -1058,7 +1102,7 @@ function setAssetRef(doc, op, ctx) {
     // instance refs, so only the drop side applies here)
     dropTargetOverrides(doc, compIdx, segments.map(String));
     container[key] = value;
-    syncPairedField(component, container, key, value);
+    syncPairedField(container, key, value);
 
     const path = doc.nodePath(idx);
     return {

@@ -10,7 +10,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { splitSubAssetRef, isFullUuid, isCompressedUuid, decompressUuid } from '../utils/uuid.js';
+import { splitSubAssetRef, isFullUuid, isCompressedUuid, decompressUuid, compressUuid } from '../utils/uuid.js';
 import { builtinLabel } from './builtins.js';
 
 /** Friendly type aliases → meta importer names (keys normalized: lowercase, no -/_) */
@@ -42,6 +42,7 @@ export class AssetIndex {
     #entries = [];
     #byUuid = new Map();
     #byPath = new Map();
+    #scriptClassNames = null;
 
     /**
      * @param {string} projectRoot - Path to Cocos project root
@@ -251,6 +252,22 @@ export class AssetIndex {
         }
 
         return result;
+    }
+
+    /**
+     * compressed script UUID → class name (the meta name with its .ts/.js
+     * extension stripped) — the form scripts appear as in component __type__.
+     * The extension-stripping regex is the load-bearing shared detail; keeping
+     * it here means every caller labels script components identically. Memoized.
+     */
+    scriptClassNames() {
+        if (!this.#scriptClassNames) {
+            this.#scriptClassNames = new Map(
+                this.list({ type: 'script' }).map(e =>
+                    [compressUuid(e.uuid), e.name.replace(/\.[jt]s$/, '')])
+            );
+        }
+        return this.#scriptClassNames;
     }
 }
 
