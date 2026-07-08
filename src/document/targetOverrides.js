@@ -31,7 +31,8 @@
 import { isRef } from './SceneDocument.js';
 import { OperationError, findComponent, resolveAssetValue } from './operations.js';
 import {
-    loadSourcePrefabByUuid, registryInfo, nodeFileId, componentFileId
+    loadSourcePrefabByUuid, registryInfo, nodeFileId, componentFileId,
+    findMountedComponent
 } from './instances.js';
 
 // -------------------------------------------------------------- resolution
@@ -118,6 +119,10 @@ export function detectNodeInstanceRef(doc, ref, ctx) {
  * {"$component": spec} whose node is (or continues into) a stub →
  * {stubIdx, localID}, else null. spec.target optionally addresses the node
  * inside the source prefab (default: its root), like set_instance_property.
+ * A component MOUNTED on the stub is a plain object of this file — it wins
+ * over source-prefab lookup and returns {direct: compIdx} for a regular
+ * {__id__} reference (the golden scene references mounted components that
+ * way).
  */
 export function detectComponentInstanceRef(doc, spec, ctx) {
     let hit = null;
@@ -129,6 +134,12 @@ export function detectComponentInstanceRef(doc, spec, ctx) {
     }
     if (exactIdx !== null) {
         if (!doc.isInstanceStub(exactIdx)) return null;
+        if (spec.target === undefined) {
+            const mounted = findMountedComponent(doc, exactIdx,
+                { component: spec.type, componentIndex: spec.componentIndex }, ctx,
+                { optional: true });
+            if (mounted) return { direct: mounted.compIdx };
+        }
         hit = openStub(doc, exactIdx, spec.target ?? '/', ctx);
     } else if (spec.target !== undefined) {
         throw new OperationError(
@@ -171,8 +182,9 @@ export function transformValueTracked(doc, value, ctx, refs, path = []) {
     if ('$component' in value) {
         const spec = value.$component;
         const hit = detectComponentInstanceRef(doc, spec, ctx);
+        if (hit?.direct !== undefined) return { __id__: hit.direct };
         if (hit) {
-            refs.push({ path, ...hit });
+            refs.push({ path, stubIdx: hit.stubIdx, localID: hit.localID });
             return null;
         }
         const nodeIdx = doc.resolveNode(spec.node);

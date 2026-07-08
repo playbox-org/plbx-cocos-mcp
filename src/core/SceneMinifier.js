@@ -192,28 +192,63 @@ export class SceneMinifier {
     }
 
     /**
-     * Find nodes by name pattern
-     * @param {string} pattern - Regex pattern
+     * Find nodes by name pattern and/or component type. `component` matches
+     * a cc.* type or a resolved script name (case-insensitive, the "cc."
+     * prefix may be omitted); on instance stubs it also matches components
+     * MOUNTED on the instance.
+     * @param {string|null} pattern - Regex pattern (null = any name)
+     * @param {string|null} [component] - Component type / script name filter
      * @returns {object[]}
      */
-    findNodes(pattern) {
-        const regex = new RegExp(pattern, 'i');
+    findNodes(pattern, component = null) {
+        const regex = pattern ? new RegExp(pattern, 'i') : null;
+        // Display names come through ScriptResolver, which strips the "cc."
+        // prefix — normalize both sides so "cc.Camera" and "Camera" match
+        const norm = (s) => s.toLowerCase().replace(/^cc\./, '');
+        const wanted = component ? norm(component) : null;
         const matches = [];
 
         for (const [id, node] of this.#sceneParser.nodes) {
             const name = this.#displayName(node);
-            if (name && regex.test(name)) {
-                matches.push({
-                    name,
-                    id,
-                    path: this.nodeAddress(id),
-                    active: node._active !== false,
-                    components: this.#getComponentTypes(node)
-                });
+            if (regex && !(name && regex.test(name))) continue;
+
+            const components = this.#getComponentTypes(node);
+            const mounted = this.#getMountedComponentTypes(node);
+            if (wanted) {
+                const hit = [...components, ...mounted].some(c => norm(c) === wanted);
+                if (!hit) continue;
             }
+
+            matches.push({
+                name,
+                id,
+                path: this.nodeAddress(id),
+                active: node._active !== false,
+                components: [...components, ...mounted.map(m => `${m} (mounted)`)]
+            });
         }
 
         return matches;
+    }
+
+    /** Resolved types of components MOUNTED on an instance stub */
+    #getMountedComponentTypes(node) {
+        const prefabInfo = node?._prefab?.__id__ !== undefined
+            ? this.#sceneParser.getObject(node._prefab.__id__) : null;
+        const instance = prefabInfo?.instance?.__id__ !== undefined
+            ? this.#sceneParser.getObject(prefabInfo.instance.__id__) : null;
+        if (!instance) return [];
+
+        const types = [];
+        for (const ref of instance.mountedComponents ?? []) {
+            const entry = ref?.__id__ !== undefined ? this.#sceneParser.getObject(ref.__id__) : null;
+            if (entry?.__type__ !== 'cc.MountedComponentsInfo') continue;
+            for (const c of entry.components ?? []) {
+                const comp = c?.__id__ !== undefined ? this.#sceneParser.getObject(c.__id__) : null;
+                if (comp?.__type__) types.push(this.#scriptResolver.resolve(comp.__type__));
+            }
+        }
+        return types;
     }
 
     /**

@@ -18,7 +18,7 @@ import * as path from 'path';
 import { isRef } from './SceneDocument.js';
 import {
     instantiatePrefab, setInstanceProperty, removeInstanceOverride, sortInstanceRegistry,
-    removeInstanceComponent, restoreInstanceComponent
+    removeInstanceComponent, restoreInstanceComponent, findMountedComponent
 } from './instances.js';
 import {
     dropTargetOverrides, upsertTargetOverride, transformValueTracked, pruneDanglingOverrides
@@ -268,15 +268,8 @@ export function findComponent(doc, nodeIdx, compRef, componentIndex, ctx) {
         return compIndices[componentIndex];
     }
 
-    const wanted = new Set([compRef]);
-    const template = resolveTemplateType(compRef);
-    if (template) wanted.add(template);
-    if (!compRef.startsWith('cc.') && !isCompressedUuid(compRef)) {
-        const uuid = resolveScriptUuid(ctx, compRef);
-        if (uuid) wanted.add(compressUuid(uuid));
-    }
-
-    const matches = compIndices.filter(i => wanted.has(doc.getObject(i).__type__));
+    const matcher = componentTypeMatcher(compRef, ctx);
+    const matches = compIndices.filter(i => matcher(doc.getObject(i).__type__));
     if (matches.length === 0) {
         const present = compIndices.map(i => describeComponentType(doc.getObject(i).__type__, ctx)).join(', ');
         throw new OperationError(
@@ -295,6 +288,21 @@ export function findComponent(doc, nodeIdx, compRef, componentIndex, ctx) {
         );
     }
     return matches[componentIndex ?? 0];
+}
+
+/**
+ * (type) => bool matcher for a component reference: exact __type__,
+ * template alias, or script class name resolved to its compressed uuid.
+ */
+export function componentTypeMatcher(compRef, ctx) {
+    const wanted = new Set([compRef]);
+    const template = resolveTemplateType(compRef);
+    if (template) wanted.add(template);
+    if (!compRef.startsWith('cc.') && !isCompressedUuid(compRef)) {
+        const uuid = resolveScriptUuid(ctx, compRef);
+        if (uuid) wanted.add(compressUuid(uuid));
+    }
+    return (type) => wanted.has(type);
 }
 
 export function describeComponentType(type, ctx) {
@@ -762,8 +770,12 @@ export const REQUIRED_COMPANIONS = {
 function removeComponent(doc, op, ctx) {
     const idx = resolveEditableNode(doc, requireString(op, 'node'), { allowStub: true });
     if (doc.isInstanceStub(idx)) {
-        // The component lives in the source prefab — removal is recorded as
-        // a removedComponents entry on the instance (instances.js).
+        // A component MOUNTED on the instance is a regular object of this
+        // file — physically removed here. Otherwise the component lives in
+        // the source prefab and removal is recorded as a removedComponents
+        // entry on the instance (instances.js).
+        const hit = findMountedComponent(doc, idx, op, ctx, { optional: true });
+        if (hit) return removeMountedComponent(doc, op, ctx, idx, hit);
         return removeInstanceComponent(doc, op, ctx);
     }
     const compIdx = findComponent(doc, idx, op.component, op.componentIndex, ctx);
@@ -813,6 +825,72 @@ function removeComponent(doc, op, ctx) {
         summary: `removed ${label} from "${nodePath}"` +
             `${nulled ? ` (nulled ${nulled} external refs)` : ''}`,
         nodeIdx: idx
+    };
+}
+
+/**
+ * Physically remove a mounted component: drop it from its
+ * cc.MountedComponentsInfo.components (an emptied record goes entirely —
+ * with its TargetInfo it becomes unreachable and is GC'd on renumber).
+ * NO removedComponents entry — the component is not from the source prefab.
+ * External-reference rules mirror plain remove_component.
+ */
+function removeMountedComponent(doc, op, ctx, stubIdx, hit) {
+    const component = hit.comp;
+    const nodePath = doc.nodePath(stubIdx);
+    const label = describeComponentType(component.__type__, ctx);
+    const where = hit.mountTarget && hit.mountTarget !== '/'
+        ? `${nodePath}→${hit.mountTarget}` : nodePath;
+
+    // Same editor rule as on plain nodes, judged against the other
+    // components mounted at the same target node. force does not bypass.
+    const dependents = (REQUIRED_COMPANIONS[component.__type__] ?? []).filter(dep =>
+        hit.entry.componentIndices.some(c =>
+            c !== hit.compIdx && doc.getObject(c)?.__type__ === dep));
+    if (dependents.length > 0) {
+        throw new OperationError(
+            `Cannot remove mounted ${component.__type__} from "${where}" — required by ` +
+            `${dependents.join(', ')} mounted on the same node. Remove those components first.`
+        );
+    }
+
+    const removed = new Set([hit.compIdx]);
+
+    // Prune targetOverrides sourced from the dying component (mirror of
+    // plain remove_component)
+    for (let i = 0; i < doc.objects.length; i++) {
+        if (removed.has(i)) continue;
+        const obj = doc.getObject(i);
+        if (obj.__type__ !== 'cc.PrefabInfo' || !Array.isArray(obj.targetOverrides)) continue;
+        obj.targetOverrides = obj.targetOverrides.filter(r => {
+            if (!isRef(r)) return true;
+            const override = doc.getObject(r.__id__);
+            return !(isRef(override?.source) && removed.has(override.source.__id__));
+        });
+    }
+
+    // Detach first, then judge remaining references by reachability
+    hit.entry.obj.components = hit.entry.obj.components.filter(
+        r => !(isRef(r) && r.__id__ === hit.compIdx));
+    let droppedEntry = false;
+    if (hit.entry.obj.components.length === 0) {
+        const instance = doc.instanceOf(stubIdx);
+        instance.mountedComponents = instance.mountedComponents.filter(
+            r => !(isRef(r) && r.__id__ === hit.entry.ref.__id__));
+        droppedEntry = true;
+    }
+
+    const nulled = resolveExternalRefs(
+        doc, removed, op.force, `mounted ${label} on "${where}" is referenced from outside`
+    );
+
+    return {
+        op: 'remove_component',
+        target: nodePath,
+        summary: `removed mounted ${label} from "${where}"` +
+            `${droppedEntry ? ' (last one — dropped the MountedComponentsInfo record)' : ''}` +
+            `${nulled ? ` (nulled ${nulled} external refs)` : ''}`,
+        nodeIdx: stubIdx
     };
 }
 
@@ -900,10 +978,9 @@ function setPropertyOnComponent(doc, compIdx, property, rawValue, ctx, { isScrip
 }
 
 function setComponentProperty(doc, op, ctx) {
-    const idx = resolveEditableNode(doc, requireString(op, 'node'));
+    const idx = doc.resolveNode(requireString(op, 'node'));
     const property = requireString(op, 'property');
-    const compIdx = findComponent(doc, idx, op.component, op.componentIndex, ctx);
-    const component = doc.getObject(compIdx);
+    const { compIdx, component, mounted } = resolveWritableComponent(doc, idx, op, ctx);
     const isScript = !component.__type__.startsWith('cc.');
 
     setPropertyOnComponent(doc, compIdx, property, op.value, ctx, { isScript });
@@ -912,9 +989,26 @@ function setComponentProperty(doc, op, ctx) {
     return {
         op: 'set_component_property',
         target: path,
-        summary: `${path}.${describeComponentType(component.__type__, ctx)}.${property} = ${JSON.stringify(op.value)}`,
+        summary: `${path}.${describeComponentType(component.__type__, ctx)}` +
+            `${mounted ? ' (mounted)' : ''}.${property} = ${JSON.stringify(op.value)}`,
         nodeIdx: idx
     };
+}
+
+/**
+ * Component addressed by a property-write op. On a plain node — the node's
+ * own components; on a collapsed instance stub — the components MOUNTED on
+ * it (regular objects of this file, so set_component_property/set_asset_ref
+ * apply verbatim). Source-prefab components are rejected with the
+ * set_instance_property hint (inside findMountedComponent).
+ */
+function resolveWritableComponent(doc, idx, op, ctx) {
+    if (doc.isInstanceStub(idx)) {
+        const hit = findMountedComponent(doc, idx, op, ctx);
+        return { compIdx: hit.compIdx, component: hit.comp, mounted: true };
+    }
+    const compIdx = findComponent(doc, idx, op.component, op.componentIndex, ctx);
+    return { compIdx, component: doc.getObject(compIdx), mounted: false };
 }
 
 /**
@@ -939,10 +1033,9 @@ function pruneDanglingOverridesOp(doc) {
 }
 
 function setAssetRef(doc, op, ctx) {
-    const idx = resolveEditableNode(doc, requireString(op, 'node'));
+    const idx = doc.resolveNode(requireString(op, 'node'));
     const property = requireString(op, 'property');
-    const compIdx = findComponent(doc, idx, op.component, op.componentIndex, ctx);
-    const component = doc.getObject(compIdx);
+    const { compIdx, component } = resolveWritableComponent(doc, idx, op, ctx);
 
     const value = op.asset === null
         ? null

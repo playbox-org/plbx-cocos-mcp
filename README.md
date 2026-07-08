@@ -25,7 +25,7 @@ LLM никогда не редактирует `.scene`/`.prefab` напряму
 | **JetBrains AI** | ✅ | AI Assistant settings |
 | **Zed** | ✅ | MCP settings |
 
-## MCP Tools (16)
+## MCP Tools (18)
 
 ### Чтение
 
@@ -35,16 +35,17 @@ LLM никогда не редактирует `.scene`/`.prefab` напряму
 | `query_prefab_graph` | Минифицированная иерархия префаба |
 | `query_animgraph` | Компактная сводка анимационного графа (`.animgraph`): переменные, стейты по слоям (клипы — именами), переходы с условиями (`Speed > 0.1`, `trigger Jump`, `[exit]`) и длительностями |
 | `list_scene_scripts` | Список TypeScript скриптов сцены |
-| `find_scene_nodes` | Поиск нодов по паттерну (regex) |
-| `inspect_node` | Полное поддерево конкретного нода без фильтрации; asset-ссылки резолвятся в имена (встроенные fbx-материалы помечены `(embedded)`); на свёрнутом префаб-инстансе разворачивает внутренности исходного префаба (read-only, с target-путями для `set_instance_property`) и список overrides |
+| `find_scene_nodes` | Поиск нодов по паттерну (regex) и/или по компоненту (`component`: тип `cc.*` или имя скрипта; mounted-компоненты инстансов тоже матчатся) |
+| `inspect_node` | Полное поддерево конкретного нода без фильтрации; asset-ссылки резолвятся в имена (встроенные fbx-материалы помечены `(embedded)`, engine built-ins — `builtin:<имя>`); на свёрнутом префаб-инстансе разворачивает внутренности исходного префаба (read-only, с target-путями для `set_instance_property`), список overrides и секции **Mounted components / Mounted children** — компоненты/ноды, добавленные поверх инстанса в этом файле, с полными свойствами (ссылки — адресами нод/компонентов) |
 
 ### Интроспекция проекта и ассетов
 
 | Tool | Описание |
 |------|----------|
 | `get_project_info` | Версия движка, designResolution, слои, физика |
-| `get_asset_info` | Детали ассета: спрайт (rect/trim/9-slice), меш (AABB), префаб, материал; вход — путь или UUID (полный/сжатый/суб-ассет) |
+| `get_asset_info` | Детали ассета: спрайт (rect/trim/9-slice), меш (AABB), префаб, материал; вход — путь или UUID (полный/сжатый/суб-ассет); UUID встроенных ассетов движка отвечают карточкой «engine built-in» (`db://internal`, таблица `src/assets-data/builtins-3.8.json`) |
 | `list_assets` | Каталог ассетов с фильтрами (тип/папка/маска), путь+UUID |
+| `find_asset_references` | Обратный поиск «кто использует ассет»: скан сцен/префабов с атрибуцией `файл → путь ноды → компонент.свойство` (материалы/анимации — на уровне файлов); неизвестные UUID классифицируются: ассет проекта / engine built-in / битая ссылка |
 
 ### Запись
 
@@ -61,6 +62,7 @@ LLM никогда не редактирует `.scene`/`.prefab` напряму
 |------|----------|
 | `get_node_bounds` | World/local AABB поддерева (меши, UITransform, свёрнутые префаб-инстансы); local — готовые center/size для BoxCollider |
 | `compute_fit_scale` | Точный масштаб под целевой размер (fit-inside по нескольким осям), готовый op в ответе |
+| `compute_rotation` | Точная математика поворотов: `convert` (quat↔euler YZX), `compose` («повернуть на N° вокруг мировой/локальной оси» — с учётом поворотов родителей при `filePath+node`, стабы читаются через override `_lrot`), `orient` («локальная ось A смотрит в мировое направление D», опц. `up`); в ответе euler+quat+готовый op |
 | `lint_assets` | Криптоимена (`mesh_001`, `Sprite(2)`), разброс размеров моделей, нарушения wrapper-правила, консистентность материалов (встроенный fbx-материал vs материал проекта на одном меше) |
 
 ## Редактирование сцен
@@ -72,8 +74,8 @@ LLM никогда не редактирует `.scene`/`.prefab` напряму
 - `set_node_property` — name/active/layer/mobility/position/rotation/scale (euler автоматически синхронизирует кватернион)
 - `add_node`, `remove_node` (+ чистка реестра инстансов и внешних ссылок), `reparent`
 - `add_component` — шаблон `cc.*` или кастомный скрипт по имени. Каталог из ~44 встроенных шаблонов: UI/2D (UITransform, Sprite, Label, RichText, Button, Widget, Canvas, SafeArea, Mask, Graphics, Layout, ProgressBar, Slider, UIOpacity, BlockInputEvents, RenderRoot2D, Sorting, UIMeshRenderer), 3D (MeshRenderer, SkinnedMeshRenderer, SpriteRenderer, Line, Billboard, Camera, DirectionalLight, SphereLight, SpotLight, Animation, SkeletalAnimation, AnimationController, AudioSource), физика 3D+2D (RigidBody, Box/Sphere/Capsule/Cylinder/Mesh-Collider, RigidBody2D, Box/Circle/Polygon-Collider2D), партиклы (ParticleSystem со всеми модулями и renderer, ParticleSystem2D). Наборы и порядок полей сверены с редакторскими файлами боевых проектов, значения — дефолты движка 3.8.7
-- `remove_component` — снятие компонента с обычной ноды; внешние ссылки на компонент блокируют операцию (`force: true` обнуляет их); `cc.UITransform` защищён, пока на ноде есть зависимые UI-компоненты. На префаб-инстансе (`target` — путь внутри исходного префаба) удаление записывается в `removedComponents` инстанса, исходный префаб не трогается
-- `set_component_property` — формы значений `$node`/`$asset`/`$component`, слияние value-типов; `$node`/`$component` могут указывать **внутрь** свёрнутого префаб-инстанса (см. targetOverrides в format notes)
+- `remove_component` — снятие компонента с обычной ноды; внешние ссылки на компонент блокируют операцию (`force: true` обнуляет их); `cc.UITransform` защищён, пока на ноде есть зависимые UI-компоненты. На префаб-инстансе: mounted-компонент удаляется физически (пустая `MountedComponentsInfo` уходит целиком, записи в `removedComponents` не создаются); иначе (`target` — путь внутри исходного префаба) удаление записывается в `removedComponents` инстанса, исходный префаб не трогается
+- `set_component_property` — формы значений `$node`/`$asset`/`$component`, слияние value-типов; `$node`/`$component` могут указывать **внутрь** свёрнутого префаб-инстанса (см. targetOverrides в format notes), а `{"$component": {node: "Stub", type}}` без `target` предпочитает компонент, **смонтированный** на стабе (обычный `{"__id__"}`). На стабе `component` адресует mounted-компоненты инстанса (неоднозначность решается `target: "<mount path>"` или `componentIndex`); свойства компонентов исходного префаба — через `set_instance_property` (ошибка перечисляет mounted-компоненты и подсказывает это)
 - `set_asset_ref` — ссылка на ассет по пути/UUID/`uuid@subId`
 - `instantiate_prefab` — свёрнутый инстанс (стаб + overrides), принимает `.prefab`, модель (gltf-scene из `library/`) или `model@subId`
 - `set_instance_property` / `remove_instance_override` — overrides инстансов; `target` — путь внутри исходного префаба; значения-ссылки поддерживаются: `$node`/`$component` на plain-объекты сцены сериализуются в значение override, ссылки внутрь инстансов — редакторской формой targetOverride с `sourceInfo`
@@ -170,6 +172,7 @@ src/
 │   ├── SceneMinifier.js     # Фасад-оркестратор (DI)
 │   ├── AssetIndex.js        # Скан assets/**/*.meta, путь↔UUID
 │   ├── AssetInspector.js    # Детали ассетов (rect/AABB/материалы)
+│   ├── builtins.js          # Engine built-in UUID (db://internal) → имя/карточка
 │   └── ProjectInfoReader.js # Версия движка, настройки проекта
 ├── document/                # Запись (lossless)
 │   ├── SceneDocument.js     # load → mutate → validate → save; канон = DFS-перенумерация
@@ -185,8 +188,9 @@ src/
 │   └── MiniTree.js          # Компактные поддеревья для ответов
 ├── filters/                 # Расширяемые фильтры шума
 ├── formatters/              # Text / Json / Stats
-├── utils/                   # uuid (компрессия), glb, math3d, fileId
-├── tools/                   # 16 MCP-тулов (BaseTool + реестр index.js)
+├── utils/                   # uuid (компрессия), glb, math3d (quat/euler YZX, mat4), fileId
+├── assets-data/             # builtins-3.8.json — engine built-in UUID (harvest: scripts/harvest-builtins.mjs)
+├── tools/                   # 18 MCP-тулов (BaseTool + реестр index.js)
 └── server/McpServer.js      # MCP protocol handler (stdio)
 ```
 
@@ -202,6 +206,8 @@ src/
 - **Ссылки внутрь свёрнутых инстансов** (`cc.TargetOverrideInfo`, верифицировано на golden-корпусе: 43 в сцене + 4 в префабе): ссылка «компонент → объект внутри инстанса» **не** сериализуется как `{"__id__"}` — свойство у источника пишется `null` (или ключ опускается редактором вовсе), а в реестровом PrefabInfo (`targetOverrides`) появляется `cc.TargetOverrideInfo {source: <компонент>, sourceInfo: null, propertyPath: ["prop"] | ["arr", "0"] (сегменты — всегда строки), target: <нода-стаб>, targetInfo: cc.TargetInfo {localID: [<fileId цели в исходном префабе>]}}`. При загрузке движок резолвит `target` → корень инстанса → `localID` и перезаписывает `null`. Живой override **затеняет** сериализованное значение — при перезаписи свойства обычным значением запись targetOverride обязана удаляться (иначе тихий откат при загрузке); `apply_edits` делает это автоматически. Формы `target: null` (резолв от корня документа) и multi-hop `localID` встречаются в editor-файлах — читаются и сохраняются как есть, но не генерируются.
 - **Источник внутри инстанса** (`sourceInfo != null`, 24 из 43 записей golden-сцены): когда ссылку хранит компонент, сам лежащий в свёрнутом инстансе, `source` = **нода-стаб** этого инстанса, `sourceInfo` = `cc.TargetInfo {localID: [<CompPrefabInfo.fileId компонента-источника>]}` — движок резолвит источник через targetMap инстанса (`applyTargetOverrides`, исходники 3.8.7). Так пишет `set_instance_property` со значением `$node`/`$component`, указывающим внутрь инстанса (этого же или другого). Ссылка из инстанса на **plain-объект сцены** — другой механизм: обычный `{"__id__"}` прямо в значении `CCPropertyOverrideInfo` (golden: `playerGoldStorage`, 9 записей).
 - **`removedComponents`** (удаление компонента с инстанса): массив ссылок на `cc.TargetInfo {localID: [<CompPrefabInfo.fileId>]}` в `cc.PrefabInstance` — форма выведена из `applyRemovedComponents` в исходниках движка 3.8.7 (движок резолвит компонент через targetMap и снимает его с ноды); **editor re-save верификация pending** — в golden-корпусе массив всегда пуст. `remove_component` на стабе дедуплицирует записи, чистит property-overrides умершего компонента и его исходящие targetOverrides; входящие targetOverrides блокируют операцию без `force: true`.
+- **Mounted components/children** (компоненты/ноды, добавленные поверх инстанса; верифицировано на golden-сцене: 8 × `cc.MountedComponentsInfo` c 10 компонентами + 1 × `cc.MountedChildrenInfo`): `cc.PrefabInstance.mountedComponents[] → cc.MountedComponentsInfo {targetInfo → cc.TargetInfo {localID: [fileId узла монтирования в исходном префабе]}, components: [{__id__}]}` — компоненты лежат **обычными сериализованными объектами в файле сцены** (`node` → нода-стаб, `__prefab: null`, `__editorExtras__.mountedRoot` → стаб). `MountedChildrenInfo.nodes` — обычные `cc.Node` с `_parent: null`. Ссылки в свойствах mounted-компонента на plain-объекты сцены — прямые `{"__id__"}` (golden: `pipeControllers`); ссылки внутрь инстансов — обычный targetOverride-механизм с `source` = mounted-компонент (форма B1). Поэтому `set_component_property`/`set_asset_ref`/`remove_component` работают на них как на обычных нодах — не хватало только адресации (**editor re-save верификация записи pending**); **создание** новых mounted-записей через MCP не реализовано.
+- **Engine built-ins**: сцены свободно ссылаются на UUID из внутренней базы редактора (`db://internal` — примитивы `primitives.fbx`, default-материалы/effects/spriteFrames/шрифты), которых нет ни в одном `.meta` проекта. Статическая таблица `src/assets-data/builtins-3.8.json` (407 ассетов, собрана `scripts/harvest-builtins.mjs` из установленного Cocos Creator 3.8.7) резолвит их в имена: read-вывод помечает `builtin:<имя>`, `get_asset_info` отвечает карточкой, валидатор не считает их отсутствующими — warning «not found» остаётся только для действительно подозрительных UUID.
 - `fileId` уникален только в definition-scope префаб-файла (инстансы одного префаба легитимно дублируют); `_id` уникален в файле.
 - Ссылки на ассеты: `{__uuid__: <полный dashed-UUID>, __expectedType__}`. Суб-ассеты изображений: `<uuid>@f9941` = spriteFrame, `<uuid>@6c48a` = texture2D; у моделей `@<5 hex>` — gltf-mesh/gltf-material/gltf-scene/gltf-animation.
 - AABB меша: `library/<2 hex>/<uuid>@<subId>.json` → `_struct.minPosition/maxPosition`; fallback для `.glb` — glTF accessors POSITION min/max. Для `.fbx` без `library/` кэша AABB недоступен. Скомпилированный gltf-scene префаб модели тоже лежит в `library/` — без него модель можно инстанцировать только через `.prefab`.
@@ -212,7 +218,7 @@ src/
 - designResolution: `settings/v2/packages/project.json` → `general.designResolution`; версия движка: `package.json` игры → `creator.version`; физика — `settings/v2/packages/` (`project.json` → `physics`, активный движок в `engine.json`).
 - Спрайт-мета: subMetas с rect/trim/9-slice границами; PNG в 3D-проекте может быть импортирован как `type: "texture"` без sprite-frame вовсе.
 
-Известные ограничения (кандидаты на развитие): multi-hop overrides внутрь вложенных инстансов, mountedChildren/mountedComponents (добавление нод/компонентов в инстанс), editor re-save верификация `removedComponents` и `sourceInfo`-записей на реальном проекте (V2/V5 из плана M6), editor-bridge для live-режима, CLI-валидация для CI.
+Известные ограничения (кандидаты на развитие): multi-hop overrides внутрь вложенных инстансов, **создание** новых mounted components/children (чтение и правка существующих реализованы), editor re-save верификация `removedComponents`, `sourceInfo`-записей и правок mounted-компонентов на реальном проекте, editor-bridge для live-режима, CLI-валидация для CI.
 
 ## Тестирование
 

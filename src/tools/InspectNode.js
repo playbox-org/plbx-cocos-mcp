@@ -13,8 +13,12 @@ import { AssetIndex } from '../core/AssetIndex.js';
 import { TextFormatter } from '../formatters/TextFormatter.js';
 import { JsonFormatter } from '../formatters/JsonFormatter.js';
 import { SceneDocument, isRef } from '../document/SceneDocument.js';
-import { loadSourcePrefabByUuid, removedComponentEntries } from '../document/instances.js';
+import {
+    loadSourcePrefabByUuid, removedComponentEntries,
+    mountedComponentEntries, mountedChildrenEntries
+} from '../document/instances.js';
 import { fileIdTargets } from '../document/targetOverrides.js';
+import { PropertyExtractor } from '../core/PropertyExtractor.js';
 import { compressUuid } from '../utils/uuid.js';
 
 export class InspectNode extends BaseTool {
@@ -174,22 +178,29 @@ export class InspectNode extends BaseTool {
      * plus this instance's override list.
      */
     #inspectInstance(minifier, nodeId, stub, format, ctx) {
+        // Mounted components/children live in THIS file — collect them before
+        // touching the source prefab, so they render even when it is missing
+        const assetIndex = AssetIndex.shared(ctx.projectRoot);
+        const doc = SceneDocument.load(ctx.filePath);
+        const mounted = this.#collectMounted(doc, nodeId, minifier, assetIndex);
+
         let expansion;
         try {
-            expansion = this.#expandInstance(nodeId, stub, ctx);
+            expansion = this.#expandInstance(nodeId, stub, ctx, doc, assetIndex, mounted);
         } catch (err) {
             // Fall back to the plain (collapsed) view rather than failing
             const graph = minifier.inspectNode(nodeId);
             if (!graph) return this.error(`Node #${nodeId} not found or has no content`);
             const result = this.#formatResult(graph, nodeId, format, minifier.nodeAddress(nodeId));
             result.content[0].text += `\n\n(instance internals unavailable: ${err.message})`;
+            const mountedText = this.#formatMountedText(doc.nodePath(nodeId), mounted);
+            if (mountedText) result.content[0].text += `\n\n${mountedText}`;
             return result;
         }
         return this.#formatInstanceResult(expansion, nodeId, format);
     }
 
-    #expandInstance(nodeId, stub, ctx) {
-        const assetIndex = AssetIndex.shared(ctx.projectRoot);
+    #expandInstance(nodeId, stub, ctx, doc, assetIndex, mounted) {
         const docCtx = { assetIndex, projectRoot: ctx.projectRoot };
         const source = loadSourcePrefabByUuid(docCtx, stub.assetUuid);
 
@@ -200,11 +211,11 @@ export class InspectNode extends BaseTool {
         annotateTargets(graph);
 
         // This instance's overrides, resolved to target paths via fileIds
-        const doc = SceneDocument.load(ctx.filePath);
         const targets = fileIdTargets(source.doc);
         const overrides = this.#collectOverrides(doc, nodeId, targets, assetIndex);
         const incomingRefs = this.#collectIncomingRefs(doc, nodeId, targets, assetIndex);
         const removedComponents = this.#collectRemovedComponents(doc, nodeId, targets);
+        resolveMountTargets(mounted, targets);
 
         return {
             name: stub.name ?? graph.name,
@@ -213,8 +224,69 @@ export class InspectNode extends BaseTool {
             overrides,
             incomingRefs,
             removedComponents,
+            mounted,
             graph
         };
+    }
+
+    /**
+     * Mounted components/children of a stub: regular serialized objects of
+     * this file, attached on top of the instance (cc.MountedComponentsInfo /
+     * cc.MountedChildrenInfo). Component properties render with full
+     * node/component addresses so references like `pipeControllers` are
+     * directly reusable.
+     */
+    #collectMounted(doc, stubIdx, minifier, assetIndex) {
+        const instance = doc.instanceOf(stubIdx);
+        if (!instance) return { components: [], children: [] };
+
+        const scriptNames = this.#scriptNames(assetIndex);
+        const describeType = (type) =>
+            scriptNames.has(type) ? `${scriptNames.get(type)} (script)` : type;
+        // Full addresses for {__id__} refs: node path, or "path ▸ Type" for
+        // components (mounted-child internals have no path — name fallback)
+        const refResolver = (id) => {
+            const obj = doc.getObject(id);
+            if (!obj) return null;
+            if (doc.isNode(obj)) return doc.nodePath(id);
+            if (isRef(obj.node)) {
+                const nodePath = doc.nodePath(obj.node.__id__);
+                return nodePath ? `${nodePath} ▸ ${describeType(obj.__type__)}` : null;
+            }
+            return null;
+        };
+        const extractor = new PropertyExtractor(doc, {
+            detailed: true,
+            refResolver,
+            assetResolver: (uuid) => assetIndex.label(uuid)
+        });
+
+        const components = mountedComponentEntries(doc, instance).map(e => ({
+            target: null, // filled from the source prefab when it resolves
+            localID: e.localID,
+            components: e.componentIndices.map(idx => {
+                const comp = doc.getObject(idx);
+                return {
+                    type: comp ? describeType(comp.__type__) : '?',
+                    properties: comp ? (extractor.extract(comp) ?? {}) : {}
+                };
+            })
+        }));
+        const children = mountedChildrenEntries(doc, instance).map(e => ({
+            target: null,
+            localID: e.localID,
+            nodes: e.nodeIndices.map(idx => minifier.inspectNode(idx)).filter(Boolean)
+        }));
+        return { components, children };
+    }
+
+    /** compressed script uuid → class name, via the project's script metas */
+    #scriptNames(assetIndex) {
+        const map = new Map();
+        for (const entry of assetIndex.list({ type: 'script' })) {
+            map.set(compressUuid(entry.uuid), entry.name.replace(/\.[jt]s$/, ''));
+        }
+        return map;
     }
 
     /** removedComponents entries resolved to source-prefab paths */
@@ -237,11 +309,7 @@ export class InspectNode extends BaseTool {
      * cc.TargetOverrideInfo — see targetOverrides.js).
      */
     #collectIncomingRefs(doc, stubIdx, targets, assetIndex) {
-        const scriptNames = new Map();
-        for (const entry of assetIndex.list({ type: 'script' })) {
-            scriptNames.set(compressUuid(entry.uuid), entry.name.replace(/\.[jt]s$/, ''));
-        }
-
+        const scriptNames = this.#scriptNames(assetIndex);
         const refs = [];
         for (const obj of doc.objects) {
             if (obj?.__type__ !== 'cc.TargetOverrideInfo') continue;
@@ -311,6 +379,8 @@ export class InspectNode extends BaseTool {
                 overrides: expansion.overrides,
                 incomingRefs: expansion.incomingRefs,
                 removedComponents: expansion.removedComponents,
+                mountedComponents: expansion.mounted.components,
+                mountedChildren: expansion.mounted.children,
                 source: expansion.graph
             }, null, 2));
         }
@@ -324,7 +394,9 @@ export class InspectNode extends BaseTool {
             'component?: "<Type>", property, value} — target "/" is the instance root.',
             'Adding components to internal nodes requires unpacking the model in the editor.',
             'Removing one works: remove_component {node: "<stub>", target, component} records it',
-            'in removedComponents (undo with restore_instance_component).',
+            'in removedComponents (undo with restore_instance_component). Components MOUNTED',
+            'on the instance (section below, if any) are regular objects of this file —',
+            'set_component_property/set_asset_ref/remove_component edit them directly.',
             ''
         ];
 
@@ -359,11 +431,62 @@ export class InspectNode extends BaseTool {
             }
         }
 
+        const mountedText = this.#formatMountedText(expansion.stubPath, expansion.mounted);
+        if (mountedText) lines.push('', mountedText);
+
         lines.push('', `## Source internals (target paths relative to the instance root)`);
         const formatter = new TextFormatter().configure({ maxProps: Infinity });
         lines.push(formatter.format(expansion.graph));
 
         return this.success(lines.join('\n'));
+    }
+
+    /**
+     * Text sections for mounted components/children; empty string when the
+     * instance carries none. Unlike source internals these objects live in
+     * THIS file, so they are directly editable.
+     */
+    #formatMountedText(stubPath, mounted) {
+        const lines = [];
+        if (mounted.components.length > 0) {
+            const total = mounted.components.reduce((n, m) => n + m.components.length, 0);
+            lines.push(
+                `## Mounted components (${total})`,
+                'Added on top of this instance in THIS file (not part of the source prefab).',
+                `Edit directly: set_component_property {node: "${stubPath}", component: "<Type>", …}`,
+                'and remove_component work on them like on plain nodes.'
+            );
+            for (const m of mounted.components) {
+                const where = m.target !== null
+                    ? `mounted at "${m.target}"`
+                    : `mounted at localID=[${(m.localID ?? []).join(', ')}]`;
+                for (const c of m.components) {
+                    lines.push(`- ${c.type} (${where})`);
+                    for (const [key, value] of Object.entries(c.properties)) {
+                        lines.push(`    .${key} = ${formatMountedPropValue(value)}`);
+                    }
+                }
+            }
+        }
+        if (mounted.children.length > 0) {
+            const total = mounted.children.reduce((n, m) => n + m.nodes.length, 0);
+            lines.push(
+                lines.length > 0 ? '' : null,
+                `## Mounted children (${total})`,
+                'Nodes added under this instance in THIS file (not part of the source prefab).'
+            );
+            const formatter = new TextFormatter().configure({ maxProps: Infinity });
+            for (const m of mounted.children) {
+                const where = m.target !== null
+                    ? `"${m.target}"`
+                    : `localID=[${(m.localID ?? []).join(', ')}]`;
+                for (const node of m.nodes) {
+                    lines.push(`- "${node.name}" mounted under ${where}:`);
+                    lines.push(formatter.format(node).replace(/^/gm, '  '));
+                }
+            }
+        }
+        return lines.filter(l => l !== null).join('\n');
     }
 
     #formatResult(graph, nodeId, format, address = null) {
@@ -405,6 +528,23 @@ function annotateTargets(graph) {
         }
     };
     walk(graph, '');
+}
+
+/** Fill mount target paths from the source prefab's fileId map */
+function resolveMountTargets(mounted, targets) {
+    for (const m of [...mounted.components, ...mounted.children]) {
+        const hit = m.localID?.length === 1 ? targets.get(m.localID[0]) : null;
+        if (hit) m.target = hit.target;
+    }
+}
+
+/** Display form for an extracted mounted-component property value */
+function formatMountedPropValue(value) {
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) {
+        return `[${value.map(v => (typeof v === 'string' ? v : JSON.stringify(v))).join(', ')}]`;
+    }
+    return JSON.stringify(value);
 }
 
 /** Compact display form for an override value */

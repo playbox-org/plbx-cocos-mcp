@@ -11,6 +11,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { splitSubAssetRef, isFullUuid, isCompressedUuid, decompressUuid } from '../utils/uuid.js';
+import { builtinLabel } from './builtins.js';
 
 /** Friendly type aliases → meta importer names (keys normalized: lowercase, no -/_) */
 const TYPE_ALIASES = {
@@ -172,13 +173,15 @@ export class AssetIndex {
      * Short human label for a reference: "Mat.mtl" for top-level assets,
      * "Model.fbx@subId" for sub-assets — with " (embedded)" appended for
      * materials baked into a model file (they usually should be replaced by a
-     * project material). Null when the reference is not in the project.
+     * project material). Engine built-ins (db://internal) label as
+     * "builtin:<name>"; null when the reference is neither in the project
+     * nor a known builtin.
      * @param {string} ref
      * @returns {string|null}
      */
     label(ref) {
         const resolved = this.resolve(ref);
-        if (!resolved) return null;
+        if (!resolved) return builtinLabel(ref);
         const { entry, subAsset } = resolved;
         if (!subAsset) return entry.name;
         const embedded = subAsset.importer === 'gltf-material' ? ' (embedded)' : '';

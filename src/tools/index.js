@@ -18,13 +18,15 @@ import { BuildPrefab } from './BuildPrefab.js';
 import { BuildAnimGraph } from './BuildAnimGraph.js';
 import { GetNodeBounds } from './GetNodeBounds.js';
 import { ComputeFitScale } from './ComputeFitScale.js';
+import { ComputeRotation } from './ComputeRotation.js';
+import { FindAssetReferences } from './FindAssetReferences.js';
 import { LintAssets } from './LintAssets.js';
 
 export {
     BaseTool, QuerySceneGraph, ListSceneScripts, FindSceneNodes, QueryPrefabGraph,
     QueryAnimGraph, InspectNode, GetProjectInfo, GetAssetInfo, ListAssets,
     ApplyEdits, ValidateDocument, BuildPrefab, BuildAnimGraph,
-    GetNodeBounds, ComputeFitScale, LintAssets
+    GetNodeBounds, ComputeFitScale, ComputeRotation, FindAssetReferences, LintAssets
 };
 
 /**
@@ -48,6 +50,8 @@ export function createTools() {
         new BuildAnimGraph(),
         new GetNodeBounds(),
         new ComputeFitScale(),
+        new ComputeRotation(),
+        new FindAssetReferences(),
         new LintAssets()
     ];
 }
