@@ -742,7 +742,6 @@ function addComponent(doc, op, ctx) {
         label = `${type} (script)`;
     }
 
-    const { component, extras } = created;
     const taken = doc.takenIds();
 
     // Duplicate guard: the editor forbids two identical builtin components
@@ -750,33 +749,14 @@ function addComponent(doc, op, ctx) {
         throw new OperationError(`Node "${path}" already has a ${templateType}`);
     }
 
-    const compIdx = doc.addObject(component);
-    component.node = { __id__: idx };
-    component._id = doc.isScene ? generateFileId(taken) : '';
-    if (doc.isPrefab) {
-        const infoIdx = doc.addObject({
-            __type__: 'cc.CompPrefabInfo',
-            fileId: generateFileId(taken)
-        });
-        component.__prefab = { __id__: infoIdx };
-    }
+    // Auto-add missing companions BEFORE the component itself, exactly as the
+    // editor does (adding cc.Sprite inserts cc.UITransform first). Idempotent:
+    // a companion already present on the node is left as-is, never doubled —
+    // so this never adds a second cc.UITransform to a node that has one.
+    const autoAdded = [];
+    ensureCompanions(doc, idx, templateType ?? type, taken, autoAdded);
 
-    // Wire template placeholders — deep walk: extras may reference other
-    // extras (particle modules point at their own CurveRanges), and two keys
-    // may share one __ref__ (startSize/startSizeX alias the same object)
-    const extraIndices = extras.map(e => doc.addObject(e));
-    const wire = (obj) => {
-        for (const [key, value] of Object.entries(obj)) {
-            if (!value || typeof value !== 'object') continue;
-            if ('__ref__' in value) obj[key] = { __id__: extraIndices[value.__ref__] };
-            else if (value.__self_node__) obj[key] = { __id__: idx };
-            else if (value.__self_component__) obj[key] = { __id__: compIdx };
-            else wire(value);
-        }
-    };
-    wire(component);
-    for (const extra of extras) wire(extra);
-
+    const compIdx = attachCreatedComponent(doc, idx, created, taken);
     node._components.push({ __id__: compIdx });
 
     // Apply initial properties through the same code path as set_component_property
@@ -789,7 +769,9 @@ function addComponent(doc, op, ctx) {
     return {
         op: 'add_component',
         target: path,
-        summary: `added ${label} to "${path}"${applied.length ? ` (set: ${applied.join(', ')})` : ''}`,
+        summary: `added ${label} to "${path}"` +
+            `${autoAdded.length ? ` (auto-added ${autoAdded.join(', ')})` : ''}` +
+            `${applied.length ? ` (set: ${applied.join(', ')})` : ''}`,
         nodeIdx: idx
     };
 }
@@ -808,6 +790,83 @@ export const REQUIRED_COMPANIONS = {
     'cc.Widget': ['cc.SafeArea'],
     'cc.Label': ['cc.LabelOutline']
 };
+
+/**
+ * Reverse of REQUIRED_COMPANIONS: for a component type, the companions it
+ * needs present on the same node. Adding a UI component auto-creates these,
+ * exactly like the editor — cc.Sprite pulls in cc.UITransform, cc.SafeArea
+ * pulls in cc.Widget (→ cc.UITransform), cc.LabelOutline pulls in cc.Label.
+ * Without this, a UI node with no UITransform serializes "valid" but crashes
+ * the editor on scene activation (Widget.onEnable reads a null UITransform).
+ */
+const COMPANIONS_FOR = (() => {
+    const map = {};
+    for (const [companion, dependents] of Object.entries(REQUIRED_COMPANIONS)) {
+        for (const dep of dependents) (map[dep] ??= []).push(companion);
+    }
+    return map;
+})();
+
+/**
+ * Instantiate a created component ({component, extras}) onto a node: register
+ * it, stamp node / _id / (prefab CompPrefabInfo), and wire template
+ * placeholders. Returns the new component's object index. Does NOT push onto
+ * the node's _components (the caller controls ordering). Generated ids are
+ * added to `taken` so repeated calls within one op never collide.
+ */
+function attachCreatedComponent(doc, nodeIdx, created, taken) {
+    const { component, extras } = created;
+    const compIdx = doc.addObject(component);
+    component.node = { __id__: nodeIdx };
+    if (doc.isScene) {
+        component._id = generateFileId(taken);
+        taken.add(component._id);
+    } else {
+        component._id = '';
+    }
+    if (doc.isPrefab) {
+        const fileId = generateFileId(taken);
+        taken.add(fileId);
+        const infoIdx = doc.addObject({ __type__: 'cc.CompPrefabInfo', fileId });
+        component.__prefab = { __id__: infoIdx };
+    }
+
+    // Wire template placeholders — deep walk: extras may reference other
+    // extras (particle modules point at their own CurveRanges), and two keys
+    // may share one __ref__ (startSize/startSizeX alias the same object)
+    const extraIndices = extras.map(e => doc.addObject(e));
+    const wire = (obj) => {
+        for (const [key, value] of Object.entries(obj)) {
+            if (!value || typeof value !== 'object') continue;
+            if ('__ref__' in value) obj[key] = { __id__: extraIndices[value.__ref__] };
+            else if (value.__self_node__) obj[key] = { __id__: nodeIdx };
+            else if (value.__self_component__) obj[key] = { __id__: compIdx };
+            else wire(value);
+        }
+    };
+    wire(component);
+    for (const extra of extras) wire(extra);
+    return compIdx;
+}
+
+/**
+ * Ensure every companion a component needs is present on the node, adding the
+ * missing ones (and their transitive companions) first so _components ends up
+ * in editor order (e.g. UITransform → Widget → SafeArea). Idempotent: a
+ * companion already on the node is skipped, never duplicated. `added` collects
+ * the types actually created, for the op summary.
+ */
+function ensureCompanions(doc, nodeIdx, type, taken, added) {
+    for (const companion of COMPANIONS_FOR[type] ?? []) {
+        const present = doc.componentIndices(nodeIdx)
+            .some(c => doc.getObject(c).__type__ === companion);
+        if (present) continue;
+        ensureCompanions(doc, nodeIdx, companion, taken, added);
+        const compIdx = attachCreatedComponent(doc, nodeIdx, createComponent(companion), taken);
+        doc.getObject(nodeIdx)._components.push({ __id__: compIdx });
+        added.push(companion);
+    }
+}
 
 function removeComponent(doc, op, ctx) {
     const idx = resolveEditableNode(doc, requireString(op, 'node'), { allowStub: true });

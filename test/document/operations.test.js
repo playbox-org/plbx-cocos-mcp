@@ -290,6 +290,58 @@ describe('add_component', () => {
         assertValid(doc);
     });
 
+    test('adding a UI component auto-adds cc.UITransform first (editor behavior)', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Icon', layer: 'ui_2d' },
+            { op: 'add_component', node: 'Icon', type: 'cc.Sprite' }
+        ]);
+        const types = doc.componentIndices(doc.resolveNode('Icon'))
+            .map(i => doc.getObject(i).__type__);
+        // UITransform companion inserted BEFORE the Sprite
+        assert.deepStrictEqual(types, ['cc.UITransform', 'cc.Sprite']);
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('companion auto-add is idempotent — never a second cc.UITransform', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Icon', layer: 'ui_2d' },
+            { op: 'add_component', node: 'Icon', type: 'cc.UITransform' },
+            { op: 'add_component', node: 'Icon', type: 'cc.Label' },
+            { op: 'add_component', node: 'Icon', type: 'cc.Sprite' }
+        ]);
+        const types = doc.componentIndices(doc.resolveNode('Icon'))
+            .map(i => doc.getObject(i).__type__);
+        assert.strictEqual(types.filter(t => t === 'cc.UITransform').length, 1);
+        assert.deepStrictEqual(types, ['cc.UITransform', 'cc.Label', 'cc.Sprite']);
+    });
+
+    test('transitive companions — cc.SafeArea pulls in cc.Widget → cc.UITransform', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Safe', layer: 'ui_2d' },
+            { op: 'add_component', node: 'Safe', type: 'cc.SafeArea' }
+        ]);
+        const types = doc.componentIndices(doc.resolveNode('Safe'))
+            .map(i => doc.getObject(i).__type__);
+        assert.deepStrictEqual(types, ['cc.UITransform', 'cc.Widget', 'cc.SafeArea']);
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('non-UI component gets no companions', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Box' },
+            { op: 'add_component', node: 'Box', type: 'cc.BoxCollider' }
+        ]);
+        const types = doc.componentIndices(doc.resolveNode('Box'))
+            .map(i => doc.getObject(i).__type__);
+        assert.deepStrictEqual(types, ['cc.BoxCollider']);
+    });
+
     test('MeshRenderer wires bakeSettings extras', () => {
         const doc = loadPrefab();
         applyOperations(doc, [
@@ -430,7 +482,9 @@ describe('set_component_property / set_asset_ref', () => {
                 property: 'spriteFrame', asset: 'assets/Sprites/panel.png@f9941'
             }
         ], { assetIndex });
-        const sprite = doc.getObject(doc.componentIndices(doc.resolveNode('Icon'))[0]);
+        const sprite = doc.componentIndices(doc.resolveNode('Icon'))
+            .map(i => doc.getObject(i))
+            .find(c => c.__type__ === 'cc.Sprite');
         assert.deepStrictEqual(sprite._spriteFrame, {
             __uuid__: '11112222-3333-4444-8555-666677778888@f9941',
             __expectedType__: 'cc.SpriteFrame'
