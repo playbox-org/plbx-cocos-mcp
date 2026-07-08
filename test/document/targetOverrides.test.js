@@ -602,8 +602,10 @@ describe('prune_dangling_overrides', () => {
         const doc = sceneWithDeskAndHolder(ctx);
         corrupt(doc, 'Desk');
 
-        const { errors } = new Validator(doc).validate();
-        assert.ok(errors.some(e => /source must reference/.test(e)), errors.join('\n'));
+        const { errors, warnings } = new Validator(doc).validate();
+        // The dead override itself is only a warning (engine ignores it); the
+        // orphan target node it left behind is the genuine blocking error.
+        assert.ok(warnings.some(w => /engine ignores this override.*source is null/.test(w)), warnings.join('\n'));
         assert.ok(errors.some(e => /has no _id/.test(e)), errors.join('\n'));
 
         const dangling = findDanglingOverrides(doc);

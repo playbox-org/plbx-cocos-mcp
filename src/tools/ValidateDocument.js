@@ -67,15 +67,14 @@ export class ValidateDocument extends BaseTool {
                 lines.push('', `⚠️ ${warnings.length} warning(s):`);
                 warnings.forEach(w => lines.push(`- ${w}`));
             }
-            if (errors.length > 0) {
-                const dangling = findDanglingOverrides(doc);
-                if (dangling.length > 0) {
-                    lines.push('',
-                        `💡 ${dangling.length} dangling target-override record(s) detected ` +
-                        `(${dangling.map(d => `"${d.propertyPath}"`).join(', ')}) — the engine ignores ` +
-                        `them, but they block apply_edits. Repair with: ` +
-                        `apply_edits {filePath: "${args.filePath}", ops: [{op: "prune_dangling_overrides"}]}`);
-                }
+            const dangling = findDanglingOverrides(doc);
+            if (dangling.length > 0) {
+                lines.push('',
+                    `💡 ${dangling.length} dangling target-override record(s) detected ` +
+                    `(${dangling.map(d => `"${d.propertyPath}"`).join(', ')}) — the engine ignores them ` +
+                    `on load, so they no longer block apply_edits. They are harmless (the editor may ` +
+                    `even regenerate them on save); optionally tidy the file with: ` +
+                    `apply_edits {filePath: "${args.filePath}", ops: [{op: "prune_dangling_overrides"}]}`);
             }
         }
         return this.success(lines.join('\n'));

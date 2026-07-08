@@ -353,7 +353,7 @@ export function findDanglingOverrides(doc) {
  * returns null for them even though the engine resolves them at load — they
  * must NOT be treated as "detached" by the dangling-override check.
  */
-function mountedChildNodeIdxs(doc) {
+export function mountedChildNodeIdxs(doc) {
     const set = new Set();
     const addSubtree = (idx) => {
         if (set.has(idx)) return;
@@ -373,7 +373,7 @@ function nodeAttached(doc, nodeIdx, mountedNodes) {
 }
 
 /** Why the engine would skip this record on load ([] = record is live) */
-function overrideDeadReasons(doc, obj, mountedNodes = new Set()) {
+export function overrideDeadReasons(doc, obj, mountedNodes = new Set()) {
     const reasons = [];
 
     if (!isRef(obj.source)) {
