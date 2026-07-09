@@ -35,7 +35,7 @@ const OPS_DOC = `Operations (applied in order, all-or-nothing):
   node = the instance stub in this file; target = node path INSIDE the source prefab ("" = its root; discover paths with inspect_node on the stub). Without component: name|active|layer|mobility|position|rotation|scale. With component: any field (value forms as in set_component_property) — e.g. replace an embedded model material: {node: "Zombie", target: "Mesh", component: "cc.SkinnedMeshRenderer", property: "materials[0]", value: {"$asset": "Materials/Zombie.mtl"}}. Stored as propertyOverrides; same target+property updates in place. Reference values work too: {"$node"}/{"$component"} to plain scene objects serialize into the override value; references into a collapsed instance (this one or another) become a targetOverride record with sourceInfo (the editor's own form)
 - remove_instance_override {node, target?, component?, componentIndex?, property} (reverts an override — property or reference — back to the source prefab value)
 - restore_instance_component {node, target?, component?, componentIndex?} (undoes remove_component on an instance: deletes the removedComponents entry)
-- prune_dangling_overrides {} (repair: removes broken cc.TargetOverrideInfo records — null/detached source or target — that the engine ignores on load but that fail validation and block every apply_edits batch on the file; leftover detached nodes they referenced are garbage-collected on save. Idempotent.)
+- prune_dangling_overrides {} (opt-in repair: removes broken cc.TargetOverrideInfo records — null/detached source or target — that the engine ignores on load; leftover detached nodes they referenced are garbage-collected on save. These records are NON-blocking (validate_document reports each as a warning and hints at this op; apply_edits does NOT require a prune), so run it only to tidy up. Idempotent.)
 
 Node addressing: "Canvas/Panel/BuyBtn" path from root, "/" = root, node _id, "Name[i]" or "[i]" disambiguate same-named/positional siblings.
 Prefab instances inside scenes are collapsed stubs: their internals are not in the file. Inspect them with inspect_node (shows internals + target paths + mounted components), override properties with set_instance_property, edit/remove components MOUNTED on the instance with set_component_property/set_asset_ref/remove_component, remove/reparent the whole instance, or edit the source .prefab; anything else is rejected.`;
@@ -136,10 +136,11 @@ export class ApplyEdits extends BaseTool {
             [...shown].some(s => anchor.startsWith(`${s}/`));
         const trees = [];
         for (const r of results) {
-            // Whole-document ops (prune_dangling_overrides) target "/" — they
-            // have no meaningful subtree and must not suppress the per-op
-            // subtrees of their sibling results.
-            if (r.target === '/') continue;
+            // Whole-document ops (prune_dangling_overrides) have no meaningful
+            // subtree. Gate on the op name, not target === "/": ordinary
+            // root-targeted ops (add_component/set_node_property on the root)
+            // also resolve to "/" and DO want their subtree preview.
+            if (r.op === 'prune_dangling_overrides') continue;
             const anchor = r.target;
             if (covered(anchor)) continue;
             shown.add(anchor);

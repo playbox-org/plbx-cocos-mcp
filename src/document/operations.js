@@ -28,6 +28,7 @@ import {
 } from './ComponentTemplates.js';
 import { generateFileId } from '../utils/fileId.js';
 import { eulerToQuat } from '../utils/math3d.js';
+import { resolveBuiltin } from '../core/builtins.js';
 import { compressUuid, isCompressedUuid } from '../utils/uuid.js';
 
 /** Builtin engine layers (cocos/scene-graph/layers.ts) */
@@ -188,7 +189,14 @@ export function mergeTyped(existing, given, what) {
             );
         }
         const cur = existing[key];
-        if (isRef(cur) && (val === null || typeof val !== 'object' || Array.isArray(val))) {
+        // A field that references a standalone object cannot be rewritten in
+        // place: mergeTyped has no `doc`, so it cannot follow `{__id__}` into
+        // the referenced value object. A scalar/array/null would orphan the ref
+        // outright; a plain object (without its own `__id__`) would silently
+        // REPLACE the ref with a non-ref, dropping __id__/__type__ and orphaning
+        // the referenced object just the same. Reject both — the dotted-path
+        // form (which does follow the ref) is the way to edit through it.
+        if (isRef(cur) && !isRef(val)) {
             throw new OperationError(
                 `"${rawKey}" in ${what} (${existing.__type__}) references a standalone object — ` +
                 `cannot overwrite it with ${JSON.stringify(val)}. Edit it via a dotted path ` +
@@ -382,13 +390,11 @@ function findUnimportedScript(projectRoot, name) {
     return null;
 }
 
-/** Reverse script lookup: class/file name → full asset UUID */
+/** Reverse script lookup: class/file name → full asset UUID (memoized index) */
 function resolveScriptUuid(ctx, name) {
     if (!ctx.assetIndex) return null;
-    const scripts = ctx.assetIndex.list({ type: 'script' });
-    const match = scripts.find(e => e.name.replace(/\.[jt]s$/, '') === name) ??
-                  scripts.find(e => e.name.replace(/\.[jt]s$/, '').toLowerCase() === name.toLowerCase());
-    return match?.uuid ?? null;
+    const { exact, lower } = ctx.assetIndex.scriptUuidByName();
+    return exact.get(name) ?? lower.get(name.toLowerCase()) ?? null;
 }
 
 /** Resolve an asset ref via AssetIndex into {__uuid__, __expectedType__} */
@@ -396,9 +402,15 @@ export function resolveAssetValue(ctx, ref, expectedType) {
     if (!ctx.assetIndex) {
         throw new OperationError('Asset resolution requires a project (assetIndex unavailable)');
     }
-    const resolved = ctx.assetIndex.resolve(ref);
+    // Project assets first, then engine builtins (default material, primitive
+    // meshes, …). resolveBuiltin returns the same {entry, subAsset} shape, so
+    // the uuid/importer plumbing below applies unchanged — mirroring the read
+    // path (AssetIndex.label / GetAssetInfo / FindAssetReferences).
+    const resolved = ctx.assetIndex.resolve(ref) ?? resolveBuiltin(ref);
     if (!resolved) {
-        throw new OperationError(`Asset not found: "${ref}" (checked path, UUID, compressed UUID)`);
+        throw new OperationError(
+            `Asset not found: "${ref}" (checked project path, UUID, compressed UUID, engine builtins)`
+        );
     }
     const { entry, subAsset } = resolved;
     const uuid = subAsset ? `${entry.uuid}@${subAsset.id}` : entry.uuid;

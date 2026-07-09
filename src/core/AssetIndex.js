@@ -43,6 +43,7 @@ export class AssetIndex {
     #byUuid = new Map();
     #byPath = new Map();
     #scriptClassNames = null;
+    #scriptUuidByName = null;
 
     /**
      * @param {string} projectRoot - Path to Cocos project root
@@ -268,6 +269,29 @@ export class AssetIndex {
             );
         }
         return this.#scriptClassNames;
+    }
+
+    /**
+     * Reverse of scriptClassNames: class name → full script UUID, for
+     * resolving a script-name component reference to its uuid. Two maps
+     * preserve the exact-case-first, case-insensitive-fallback precedence of
+     * the old linear scan; first entry in list order wins each key. Memoized,
+     * so an apply_edits batch with many script-addressed ops scans once.
+     * @returns {{exact: Map<string,string>, lower: Map<string,string>}}
+     */
+    scriptUuidByName() {
+        if (!this.#scriptUuidByName) {
+            const exact = new Map();
+            const lower = new Map();
+            for (const e of this.list({ type: 'script' })) {
+                const cls = e.name.replace(/\.[jt]s$/, '');
+                if (!exact.has(cls)) exact.set(cls, e.uuid);
+                const lc = cls.toLowerCase();
+                if (!lower.has(lc)) lower.set(lc, e.uuid);
+            }
+            this.#scriptUuidByName = { exact, lower };
+        }
+        return this.#scriptUuidByName;
     }
 }
 

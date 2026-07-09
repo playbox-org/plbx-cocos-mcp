@@ -491,6 +491,23 @@ describe('set_component_property / set_asset_ref', () => {
         });
     });
 
+    test('set_asset_ref resolves an engine builtin (default material) by UUID', () => {
+        // Builtins are not in the project AssetIndex; resolveAssetValue falls
+        // back to the builtin table, matching the read path.
+        const doc = loadPrefab();
+        applyOperations(doc, [{
+            op: 'set_asset_ref', node: 'Table', component: 'MeshRenderer',
+            property: 'materials.0', asset: '8f8bba83-df9c-4afe-8450-e12d0dbe71b7'
+        }], { assetIndex });
+        const mr = doc.componentIndices(doc.resolveNode('Table'))
+            .map(i => doc.getObject(i))
+            .find(c => c.__type__ === 'cc.MeshRenderer');
+        assert.deepStrictEqual(mr._materials[0], {
+            __uuid__: '8f8bba83-df9c-4afe-8450-e12d0dbe71b7',
+            __expectedType__: 'cc.Material'
+        });
+    });
+
     test('componentIndex out of range for a matched type is rejected', () => {
         const doc = loadPrefab();
         assert.throws(() =>
@@ -830,6 +847,39 @@ describe('property paths through references (code-review fixes)', () => {
         }]), /references a standalone object/);
         assert.deepStrictEqual(doc.getObject(ps._shapeModule.__id__).arcSpeed,
             { __id__: arcSpeedIdx }, 'the reference must survive the rejected write');
+    });
+
+    test('C2: overwriting a ref-valued sub-field with a plain object is rejected (no orphan)', () => {
+        // Regression: mergeTyped has no `doc`, so it cannot follow the nested
+        // {__id__}→CurveRange ref. A plain-object value used to silently REPLACE
+        // the ref with a non-ref object, orphaning the CurveRange and saving a
+        // structurally invalid field with no error. The guard now rejects it.
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        const shape = doc.getObject(ps._shapeModule.__id__);
+        const arcSpeedIdx = shape.arcSpeed.__id__;
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule', value: { arcSpeed: { constant: 5 } }
+        }]), /references a standalone object/);
+        assert.deepStrictEqual(doc.getObject(ps._shapeModule.__id__).arcSpeed,
+            { __id__: arcSpeedIdx }, 'the reference must survive the rejected write');
+    });
+
+    test('C2: the nested CurveRange IS editable via a dotted path', () => {
+        // The rejection above points at the dotted-path form — verify it works.
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        const arcSpeedIdx = doc.getObject(ps._shapeModule.__id__).arcSpeed.__id__;
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule.arcSpeed.constant', value: 5
+        }]);
+        assert.strictEqual(doc.getObject(arcSpeedIdx).constant, 5);
+        assert.deepStrictEqual(doc.getObject(ps._shapeModule.__id__).arcSpeed,
+            { __id__: arcSpeedIdx }, 'the reference is preserved, edited in place');
+        doc.renumber();
+        assertValid(doc);
     });
 
     // C3 — a serialized field with no getter twin (_enable) is reachable
