@@ -1,0 +1,2967 @@
+{
+  "engine": "3.8.7",
+  "source": "editor/assets (db://internal) of Cocos Creator 3.8.7",
+  "harvestedAt": "2026-07-08",
+  "assets": [
+    {
+      "uuid": "02a04bf3-4c27-4596-81fd-dfc35224f1d1",
+      "path": "chunks/builtin/functionalities/fog.chunk",
+      "name": "fog.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "3adaa06a-e674-487c-9d49-42bc398c255b",
+      "path": "chunks/builtin/functionalities/morph-animation.chunk",
+      "name": "morph-animation.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "92ac3587-8a8c-4405-87b0-5cf026196c64",
+      "path": "chunks/builtin/functionalities/probe.chunk",
+      "name": "probe.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "c8728e39-6dca-4d22-a4ee-cc1aefb0198a",
+      "path": "chunks/builtin/functionalities/sh.chunk",
+      "name": "sh.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "d4c26490-0a2d-4b6a-9a52-55b5741f18a4",
+      "path": "chunks/builtin/functionalities/shadow-map.chunk",
+      "name": "shadow-map.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "80908463-4566-4fdf-9744-775605cd7ab7",
+      "path": "chunks/builtin/functionalities/skinning-animation-dqs.chunk",
+      "name": "skinning-animation-dqs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "258a17ce-6c50-4e8a-92aa-8ecec1a6af24",
+      "path": "chunks/builtin/functionalities/skinning-animation-lbs.chunk",
+      "name": "skinning-animation-lbs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "c2885f54-4ff2-4284-8bbc-b77bc71965b4",
+      "path": "chunks/builtin/functionalities/world-transform.chunk",
+      "name": "world-transform.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "2c3da5b6-0202-470a-a915-59f1e2968853",
+      "path": "chunks/builtin/internal/alpha-test.chunk",
+      "name": "alpha-test.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "ef4fb7de-9b39-4eeb-9ae8-d292ff94a452",
+      "path": "chunks/builtin/internal/embedded-alpha.chunk",
+      "name": "embedded-alpha.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "7a49db3a-930e-4ffc-8659-a82141dabebb",
+      "path": "chunks/builtin/internal/particle-common.chunk",
+      "name": "particle-common.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "df7d02d8-559a-4c02-9aac-3732cfc83d7a",
+      "path": "chunks/builtin/internal/particle-trail.chunk",
+      "name": "particle-trail.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "b4b00c01-eca8-4ae4-a04d-e00bbeb6d0e0",
+      "path": "chunks/builtin/internal/particle-vs-gpu.chunk",
+      "name": "particle-vs-gpu.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "6e1b48cb-69c8-448c-8055-69ab9793fbab",
+      "path": "chunks/builtin/internal/particle-vs-legacy.chunk",
+      "name": "particle-vs-legacy.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "35822e78-bb35-405f-87bd-d42af6ac9ede",
+      "path": "chunks/builtin/internal/sprite-common.chunk",
+      "name": "sprite-common.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "4b48672e-e044-4035-9029-13afb50c1aee",
+      "path": "chunks/builtin/internal/sprite-texture.chunk",
+      "name": "sprite-texture.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "c3e3500f-370c-4da1-92f9-d0d9fd806bd8",
+      "path": "chunks/builtin/uniforms/cc-csm.chunk",
+      "name": "cc-csm.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "17e8e047-4c5e-412c-85c8-a76a98742f2a",
+      "path": "chunks/builtin/uniforms/cc-diffusemap.chunk",
+      "name": "cc-diffusemap.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "cd94308c-6959-4671-9dcb-6c58342273e2",
+      "path": "chunks/builtin/uniforms/cc-environment.chunk",
+      "name": "cc-environment.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "5e0f5e6e-5008-497f-b223-4e5f1801d8fd",
+      "path": "chunks/builtin/uniforms/cc-forward-light.chunk",
+      "name": "cc-forward-light.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "1ea907a3-a36e-432a-ae38-af712c77aaad",
+      "path": "chunks/builtin/uniforms/cc-global.chunk",
+      "name": "cc-global.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "fa1c0cd1-03c6-45dd-8294-bf7a1e21aad4",
+      "path": "chunks/builtin/uniforms/cc-light-map.chunk",
+      "name": "cc-light-map.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "21b24bc9-a158-488e-b27c-b98a461fb438",
+      "path": "chunks/builtin/uniforms/cc-local-batched.chunk",
+      "name": "cc-local-batched.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "e835c2d5-a377-4197-bdb8-382037573494",
+      "path": "chunks/builtin/uniforms/cc-local.chunk",
+      "name": "cc-local.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "94d19070-32c6-4900-a288-2258fda37f29",
+      "path": "chunks/builtin/uniforms/cc-morph.chunk",
+      "name": "cc-morph.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "960cff1c-912a-47d1-a3d9-9a25a9568508",
+      "path": "chunks/builtin/uniforms/cc-reflection-probe.chunk",
+      "name": "cc-reflection-probe.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "2c62fe23-f1f4-49f1-a08f-e5e6c650682f",
+      "path": "chunks/builtin/uniforms/cc-sh.chunk",
+      "name": "cc-sh.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "e8411010-e411-43ab-8f2e-4f4865dca4cf",
+      "path": "chunks/builtin/uniforms/cc-shadow-map.chunk",
+      "name": "cc-shadow-map.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "69f8ecd8-cdc9-4655-a6ec-d39dacdffc2f",
+      "path": "chunks/builtin/uniforms/cc-shadow.chunk",
+      "name": "cc-shadow.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "99488fd6-220b-4d13-9a41-8b9439cd3944",
+      "path": "chunks/builtin/uniforms/cc-skinning.chunk",
+      "name": "cc-skinning.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "669458fe-c428-40cd-8575-51607aa8edbc",
+      "path": "chunks/builtin/uniforms/cc-world-bound.chunk",
+      "name": "cc-world-bound.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "7efbe295-0202-4979-8cda-6cfe35e086cf",
+      "path": "chunks/common/color/aces.chunk",
+      "name": "aces.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "bb213412-2e68-43b3-9de5-73ca332acace",
+      "path": "chunks/common/color/gamma.chunk",
+      "name": "gamma.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "077c9168-e907-405b-b7f6-b4d5f68ced4a",
+      "path": "chunks/common/color/tone-mapping.chunk",
+      "name": "tone-mapping.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "9d86a3e4-ec06-4e51-ba68-45f2b7739fbb",
+      "path": "chunks/common/common-define.chunk",
+      "name": "common-define.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "73866dd2-eaf5-40af-a061-1b9d38782204",
+      "path": "chunks/common/data/packing.chunk",
+      "name": "packing.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "e3e5d086-acc9-4dd8-98e8-24ac02f547d5",
+      "path": "chunks/common/data/unpack.chunk",
+      "name": "unpack.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "9c973ee8-952a-4ee3-a617-ba6397db6bac",
+      "path": "chunks/common/debug/debug-view-define.chunk",
+      "name": "debug-view-define.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "399f5890-dde1-40de-9751-a7aa91a56b93",
+      "path": "chunks/common/effect/fog.chunk",
+      "name": "fog.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "a9f88e4b-6d43-4af4-8a58-f7d918adcb73",
+      "path": "chunks/common/effect/special-effects.chunk",
+      "name": "special-effects.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "4b4d0c0f-1d50-4d50-84e7-226c8d0dbd6f",
+      "path": "chunks/common/graph-expression/base.chunk",
+      "name": "base.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "077cca29-6f66-4aad-a3a7-4f0a7ecd523f",
+      "path": "chunks/common/lighting/attenuation.chunk",
+      "name": "attenuation.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "3a85eafd-0fd0-468f-8a2e-0c81493230c7",
+      "path": "chunks/common/lighting/brdf.chunk",
+      "name": "brdf.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "5c21fcb9-179d-4081-99f8-b119f1e6176e",
+      "path": "chunks/common/lighting/bxdf.chunk",
+      "name": "bxdf.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "d360c347-a546-4967-bdd3-30cae323f123",
+      "path": "chunks/common/lighting/functions.chunk",
+      "name": "functions.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "00e591cd-469d-4611-adb9-a5ca965a0552",
+      "path": "chunks/common/lighting/light-map.chunk",
+      "name": "light-map.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "a24fb7a1-f7a5-430c-a8b2-e4c516131086",
+      "path": "chunks/common/lighting/rect-area-light.chunk",
+      "name": "rect-area-light.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "e9d8b3bb-03e4-46b2-be29-ea58fac18c18",
+      "path": "chunks/common/math/coordinates.chunk",
+      "name": "coordinates.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "9f84c121-c61b-499f-b400-81a5448d6078",
+      "path": "chunks/common/math/number.chunk",
+      "name": "number.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "41f91fc1-5aec-45dd-91ca-39ab964f8054",
+      "path": "chunks/common/math/octahedron-transform.chunk",
+      "name": "octahedron-transform.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "0de81d5f-2a3e-467e-bcf5-84f7828edab6",
+      "path": "chunks/common/math/transform.chunk",
+      "name": "transform.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "f992af76-5145-4f8e-beae-6d88be403e8e",
+      "path": "chunks/common/mesh/material.chunk",
+      "name": "material.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "1f9087ef-e3eb-44f2-8520-cfb117e8d618",
+      "path": "chunks/common/mesh/vat-animation.chunk",
+      "name": "vat-animation.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "cac4ba94-f412-4899-83b1-ce035b0c09e0",
+      "path": "chunks/common/shadow/native-pcf.chunk",
+      "name": "native-pcf.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "3931bd87-0a7b-4d2d-a5f1-9544227343a8",
+      "path": "chunks/common/texture/cubemap.chunk",
+      "name": "cubemap.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "d26f7be9-ac7f-4dfd-88ee-6657dfe3426e",
+      "path": "chunks/common/texture/texture-lod.chunk",
+      "name": "texture-lod.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "47e68d9d-c7b2-4cdf-adf9-faaeff9cb61a",
+      "path": "chunks/common/texture/texture-misc.chunk",
+      "name": "texture-misc.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "355259fc-3a13-4fed-b553-a5e2caeb2e75",
+      "path": "chunks/deprecated.chunk",
+      "name": "deprecated.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "e05f440c-0ba5-4c83-a039-5644d248bb87",
+      "path": "chunks/legacy/decode-base.chunk",
+      "name": "decode-base.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "8daa33da-9438-4294-aace-2a58d1b183ab",
+      "path": "chunks/legacy/decode-standard.chunk",
+      "name": "decode-standard.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "385a7ca1-9421-475c-aa02-38d52ef3ba7f",
+      "path": "chunks/legacy/decode.chunk",
+      "name": "decode.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "84b6c1d8-edf3-4d07-9151-8f7ec568fd69",
+      "path": "chunks/legacy/fog-base.chunk",
+      "name": "fog-base.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "5915ee07-9b06-4383-9b98-5b292bd116e9",
+      "path": "chunks/legacy/fog-fs.chunk",
+      "name": "fog-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "0bc1a9f5-9282-4192-a0d4-4818568f2b16",
+      "path": "chunks/legacy/fog-vs.chunk",
+      "name": "fog-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "f957d7e0-a3eb-480c-b3c6-43a1a5273b71",
+      "path": "chunks/legacy/input-standard.chunk",
+      "name": "input-standard.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "3b9a2995-9fa1-4862-9bcf-9b6fa2c64bd4",
+      "path": "chunks/legacy/input.chunk",
+      "name": "input.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "4b078b9b-ae79-4653-bc9d-d70e69b49f4b",
+      "path": "chunks/legacy/lighting.chunk",
+      "name": "lighting.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "1cd3229a-63b6-438b-88e9-98afa7f1c69e",
+      "path": "chunks/legacy/lightingmap-fs.chunk",
+      "name": "lightingmap-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "d22a3ca1-78fe-442c-a604-0349f5c873f7",
+      "path": "chunks/legacy/lightingmap-vs.chunk",
+      "name": "lightingmap-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "bcff50e8-1d1f-4aea-bd0c-6868a4f2a45b",
+      "path": "chunks/legacy/local-batch.chunk",
+      "name": "local-batch.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "2cdcf2a6-42f3-4142-a340-eabfe530ccbf",
+      "path": "chunks/legacy/main-functions/general-vs.chunk",
+      "name": "general-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "4864e2f6-3eb5-4f08-a87a-5c98141cdef4",
+      "path": "chunks/legacy/main-functions/outline-fs.chunk",
+      "name": "outline-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "f71444cb-cecf-4692-a310-2a5fdb96b469",
+      "path": "chunks/legacy/main-functions/outline-vs.chunk",
+      "name": "outline-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "48359533-f5f1-4346-b242-66597abd9838",
+      "path": "chunks/legacy/morph.chunk",
+      "name": "morph.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "a3c0cc1c-64de-4e52-9698-5f73f8db488e",
+      "path": "chunks/legacy/output-standard.chunk",
+      "name": "output-standard.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "713f0582-5c82-484f-81f7-5006e5a4f48f",
+      "path": "chunks/legacy/output.chunk",
+      "name": "output.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "fa7a90a4-9aa6-45b2-ad63-ec46c9826569",
+      "path": "chunks/legacy/sh-fs.chunk",
+      "name": "sh-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "ea51061e-deb7-48b9-a35a-c91be103f636",
+      "path": "chunks/legacy/sh-vs.chunk",
+      "name": "sh-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "b2d386c6-615b-4375-accd-574405611e35",
+      "path": "chunks/legacy/shading-cluster-additive.chunk",
+      "name": "shading-cluster-additive.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "a70c48b7-cf69-4c97-a857-21149cd71200",
+      "path": "chunks/legacy/shading-standard-additive.chunk",
+      "name": "shading-standard-additive.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "9ae7cfaf-c5cc-4899-95a5-d6e1215c8964",
+      "path": "chunks/legacy/shading-standard-base.chunk",
+      "name": "shading-standard-base.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "f9ba1729-bacf-4e62-8c97-0103d940c464",
+      "path": "chunks/legacy/shading-standard.chunk",
+      "name": "shading-standard.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "bbfd1dfb-8f99-4b68-9aa6-817d5b67096d",
+      "path": "chunks/legacy/shading-toon.chunk",
+      "name": "shading-toon.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "1d68b1b7-2f78-4c24-9f35-b215dc980207",
+      "path": "chunks/legacy/shadow-map-base.chunk",
+      "name": "shadow-map-base.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "5716d893-2ecc-4110-9291-88b7e939d37d",
+      "path": "chunks/legacy/shadow-map-fs.chunk",
+      "name": "shadow-map-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "b2e7c003-9c9f-40ee-82c6-32d920a759e8",
+      "path": "chunks/legacy/shadow-map-vs.chunk",
+      "name": "shadow-map-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "f1e9de44-ca95-48c8-9233-d1b5406ab544",
+      "path": "chunks/legacy/skinning.chunk",
+      "name": "skinning.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "31d0a199-05e2-422c-a019-8139a855841c",
+      "path": "chunks/legacy/standard-surface-entry.chunk",
+      "name": "standard-surface-entry.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "be2dc7d9-db45-4d0b-957b-aee1cb81bde0",
+      "path": "chunks/lighting-models/data-structures/lighting-intermediate-data.chunk",
+      "name": "lighting-intermediate-data.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "f5326068-1588-43b4-9f15-c190688fc7c0",
+      "path": "chunks/lighting-models/data-structures/lighting-misc-data.chunk",
+      "name": "lighting-misc-data.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "7646cc74-5fcc-47c4-970b-5958505c17e5",
+      "path": "chunks/lighting-models/data-structures/lighting-result.chunk",
+      "name": "lighting-result.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "9ada82f2-4c4e-433f-8090-e8bfad31fcf2",
+      "path": "chunks/lighting-models/default-functions/simple-skin.chunk",
+      "name": "simple-skin.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "060cd5a2-6634-4c9a-8473-7a5a855f952a",
+      "path": "chunks/lighting-models/default-functions/skin.chunk",
+      "name": "skin.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "eec6f0f1-607d-4613-9285-e5ab22a89e87",
+      "path": "chunks/lighting-models/default-functions/standard.chunk",
+      "name": "standard.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "6845eadb-c3d5-4485-9699-de3361cf7aaa",
+      "path": "chunks/lighting-models/default-functions/toon.chunk",
+      "name": "toon.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "e0e29596-7cc0-45b0-80bc-5193f81e818f",
+      "path": "chunks/lighting-models/includes/common.chunk",
+      "name": "common.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "cc12f5ac-3dcf-4455-aea9-b9be2dd9071e",
+      "path": "chunks/lighting-models/includes/standard.chunk",
+      "name": "standard.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "2710ad01-b6c3-4048-b5d9-b3b69cec3e94",
+      "path": "chunks/lighting-models/includes/toon.chunk",
+      "name": "toon.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "675a16ec-c6a0-44e9-b6d8-d973f74a85da",
+      "path": "chunks/lighting-models/includes/unlit.chunk",
+      "name": "unlit.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "41c84281-f2e7-43e2-88bd-6ffcaf1daf5a",
+      "path": "chunks/lighting-models/lighting-flow/common-flow.chunk",
+      "name": "common-flow.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "3341ca78-d727-4eba-9b91-1d7fa9121fb8",
+      "path": "chunks/lighting-models/lighting-flow/unlit-flow.chunk",
+      "name": "unlit-flow.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "5e057755-d68b-41d1-b089-ed7f7f65f2b8",
+      "path": "chunks/lighting-models/model-functions/standard-common.chunk",
+      "name": "standard-common.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "4c24618b-1e1d-40e4-883a-cd3fd2304233",
+      "path": "chunks/lighting-models/model-functions/standard.chunk",
+      "name": "standard.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "9276cd2c-6001-4f89-b024-f53f63628527",
+      "path": "chunks/lighting-models/model-functions/toon.chunk",
+      "name": "toon.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "60bb7684-4cd7-4d19-96c4-262e12e0b025",
+      "path": "chunks/post-process/anti-aliasing.chunk",
+      "name": "anti-aliasing.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "7dd16c65-64a1-48c0-a335-f613807810b4",
+      "path": "chunks/post-process/fxaa-hq.chunk",
+      "name": "fxaa-hq.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "0afb4a28-945f-48ac-91e5-6f483345f8ab",
+      "path": "chunks/post-process/fxaa.chunk",
+      "name": "fxaa.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "02fb5420-94d8-45e4-95d0-1c3782a91d41",
+      "path": "chunks/post-process/pipeline.chunk",
+      "name": "pipeline.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "ec870cfb-9c88-4f70-929a-ae540a33075b",
+      "path": "chunks/shading-entries/data-structures/fs-input.chunk",
+      "name": "fs-input.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "f3454fd7-28d9-48dd-a761-ebc8e26834ed",
+      "path": "chunks/shading-entries/data-structures/vs-fs.chunk",
+      "name": "vs-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "65084d4a-ae7c-4ca9-8448-f4cd405144b7",
+      "path": "chunks/shading-entries/data-structures/vs-input.chunk",
+      "name": "vs-input.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "45e6b403-a354-48de-a1e1-e59238bd30b1",
+      "path": "chunks/shading-entries/data-structures/vs-intermediate.chunk",
+      "name": "vs-intermediate.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "513eb9a6-0193-4ab1-a7da-2ab087936caa",
+      "path": "chunks/shading-entries/data-structures/vs-output.chunk",
+      "name": "vs-output.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "1d7d5670-83c4-4dab-acf3-edb7ae758881",
+      "path": "chunks/shading-entries/main-functions/misc/silhouette-edge-fs.chunk",
+      "name": "silhouette-edge-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "e25e8368-0f16-4322-981e-8b7eebc97afb",
+      "path": "chunks/shading-entries/main-functions/misc/silhouette-edge-vs.chunk",
+      "name": "silhouette-edge-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "6a27185f-415d-419c-95b0-85337e21eff9",
+      "path": "chunks/shading-entries/main-functions/misc/sky-fs.chunk",
+      "name": "sky-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "070d960d-b2b5-437c-99da-0aeb502f7273",
+      "path": "chunks/shading-entries/main-functions/misc/sky-vs.chunk",
+      "name": "sky-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "11b66af3-c63e-4cce-b1d5-a7dae06cd0b7",
+      "path": "chunks/shading-entries/main-functions/render-planar-shadow/fs.chunk",
+      "name": "fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "27506e0f-ef56-42bd-8ea1-3df805f2f32a",
+      "path": "chunks/shading-entries/main-functions/render-planar-shadow/vs.chunk",
+      "name": "vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "ea587cc9-8792-4693-a555-0c5787ce7d89",
+      "path": "chunks/shading-entries/main-functions/render-to-reflectmap/fs.chunk",
+      "name": "fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "52b875e1-87c0-4dc5-a3f7-ce32cb4d93c6",
+      "path": "chunks/shading-entries/main-functions/render-to-scene/fs.chunk",
+      "name": "fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "1101cf65-cc90-486b-b6a5-29ae060e01c7",
+      "path": "chunks/shading-entries/main-functions/render-to-scene/pipeline/deferred-fs.chunk",
+      "name": "deferred-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "349a2be0-c8d3-420c-9dd1-bf86e01a7055",
+      "path": "chunks/shading-entries/main-functions/render-to-scene/pipeline/forward-fs.chunk",
+      "name": "forward-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "4306c0df-b6d6-4733-8a45-c85907f94d29",
+      "path": "chunks/shading-entries/main-functions/render-to-scene/vs.chunk",
+      "name": "vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "a734c67a-3ce2-4978-bf57-080d1dfbbb43",
+      "path": "chunks/shading-entries/main-functions/render-to-shadowmap/fs.chunk",
+      "name": "fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "7a668e36-d75e-488d-b47a-52591e07151d",
+      "path": "chunks/shading-entries/main-functions/render-to-shadowmap/vs.chunk",
+      "name": "vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "29b8aed8-f4da-471e-a036-4fffc28868f3",
+      "path": "chunks/surfaces/data-structures/standard.chunk",
+      "name": "standard.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "7ac0dc35-81bc-4b7c-9701-a401747deccf",
+      "path": "chunks/surfaces/data-structures/toon.chunk",
+      "name": "toon.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "0e7af3e2-5ab1-403e-93be-066937593e97",
+      "path": "chunks/surfaces/data-structures/unlit.chunk",
+      "name": "unlit.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "b3d7cc71-db0a-4f76-a2e1-c145c679180f",
+      "path": "chunks/surfaces/default-functions/common-vs.chunk",
+      "name": "common-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "4512fb76-1713-488d-a5f8-af558805b9f2",
+      "path": "chunks/surfaces/default-functions/skin.chunk",
+      "name": "skin.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "57b9c877-9855-47c0-bb6f-da3a2c19414e",
+      "path": "chunks/surfaces/default-functions/standard-fs.chunk",
+      "name": "standard-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "3804c73c-5c8d-42cf-8382-6b64ab2ea7bc",
+      "path": "chunks/surfaces/default-functions/toon-fs.chunk",
+      "name": "toon-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "18379fcf-c81c-44d5-a042-9951ddf18a83",
+      "path": "chunks/surfaces/default-functions/unlit-fs.chunk",
+      "name": "unlit-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "5fb14bc4-12ef-4b8f-b2d2-e0a7df233e31",
+      "path": "chunks/surfaces/effect-macros/common-macros.chunk",
+      "name": "common-macros.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "cf7093cf-f823-42e0-b8e5-837ab49b6cc6",
+      "path": "chunks/surfaces/effect-macros/render-planar-shadow.chunk",
+      "name": "render-planar-shadow.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "f66020b7-1a8a-424a-abf4-a8cbe80e410f",
+      "path": "chunks/surfaces/effect-macros/render-to-shadowmap.chunk",
+      "name": "render-to-shadowmap.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "2f746ff4-a6d3-41ec-bcd7-52c8283f3a57",
+      "path": "chunks/surfaces/effect-macros/silhouette-edge.chunk",
+      "name": "silhouette-edge.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "dc6e17a4-b3b4-4316-8f1e-c925b6fab67c",
+      "path": "chunks/surfaces/effect-macros/sky.chunk",
+      "name": "sky.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "1de87047-07ab-491a-b418-588ff145eaec",
+      "path": "chunks/surfaces/effect-macros/terrain.chunk",
+      "name": "terrain.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "6f8da970-5221-4a6f-8402-4062ebff14e3",
+      "path": "chunks/surfaces/effect-macros/unlit.chunk",
+      "name": "unlit.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "a6451dbc-fc4c-4a10-84f5-072c6e982fa5",
+      "path": "chunks/surfaces/includes/common-fs.chunk",
+      "name": "common-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "c66380b2-694f-40bd-afd8-91a2e58d904d",
+      "path": "chunks/surfaces/includes/common-vs.chunk",
+      "name": "common-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "0d0afa06-80d6-45b8-9fa6-6f6ad947c00b",
+      "path": "chunks/surfaces/includes/standard-fs.chunk",
+      "name": "standard-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "698b9da6-3f0e-4113-8b1c-5ebc82e3ab3d",
+      "path": "chunks/surfaces/includes/standard-vs.chunk",
+      "name": "standard-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "5a2c165c-7d8d-4ed5-9142-52f895dee13c",
+      "path": "chunks/surfaces/includes/toon-fs.chunk",
+      "name": "toon-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "ef0e1f2a-454f-4613-959c-3d9da0cae4f8",
+      "path": "chunks/surfaces/includes/toon-vs.chunk",
+      "name": "toon-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "e4d97588-2b17-4da3-ae03-6bdc37e0ef5e",
+      "path": "chunks/surfaces/includes/unlit-fs.chunk",
+      "name": "unlit-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "e1feba3c-c7a2-4208-9c1f-732b7e46abd4",
+      "path": "chunks/surfaces/module-functions/common-vs.chunk",
+      "name": "common-vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "30961f82-b8ef-4d3b-a9e5-944bb5e103f1",
+      "path": "chunks/surfaces/module-functions/debug-view.chunk",
+      "name": "debug-view.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "6853f548-fd1c-4a96-94f3-ba6981fbefd4",
+      "path": "chunks/surfaces/module-functions/standard-fs.chunk",
+      "name": "standard-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "218130cc-7167-4535-b6b8-99807138bb39",
+      "path": "chunks/surfaces/module-functions/toon-fs.chunk",
+      "name": "toon-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "36dbbf58-7b56-4a32-8ad8-314cf56cd818",
+      "path": "chunks/surfaces/module-functions/unlit-fs.chunk",
+      "name": "unlit-fs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "03721795-84b1-4dcd-8eb3-c8e6b88ee535",
+      "path": "default_cubemap/back.jpg",
+      "name": "back.jpg",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "e049bea9-db6b-463b-8502-61bf426357a1",
+      "path": "default_cubemap/bottom.jpg",
+      "name": "bottom.jpg",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "86eb75aa-3b2f-4c7b-b59e-bdc2e3984665",
+      "path": "default_cubemap/front.jpg",
+      "name": "front.jpg",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "61ac0181-00bd-4c17-97f0-5fc7f4bafb3d",
+      "path": "default_cubemap/left.jpg",
+      "name": "left.jpg",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "80aabd92-9942-4765-b685-8577a1c88b4e",
+      "path": "default_cubemap/right.jpg",
+      "name": "right.jpg",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "6c895e98-967e-4a6d-8c08-bf6b035fa2c1",
+      "path": "default_cubemap/top.jpg",
+      "name": "top.jpg",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "8c76e1e2-a206-4662-aa79-42c0c858d647",
+      "path": "default_file_content/animation-clip/default.anim",
+      "name": "default.anim",
+      "importer": "animation-clip"
+    },
+    {
+      "uuid": "eb9a3479-6087-45cb-82bc-d72e2aa6e9ef",
+      "path": "default_file_content/animation-graph-variant/default.animgraphvari",
+      "name": "default.animgraphvari",
+      "importer": "animation-graph-variant"
+    },
+    {
+      "uuid": "e0a8e34d-9242-4f0f-833b-f57e1ffbf285",
+      "path": "default_file_content/animation-graph/default.animgraph",
+      "name": "default.animgraph",
+      "importer": "animation-graph"
+    },
+    {
+      "uuid": "f102759d-fcb3-4103-82e5-9a955401466a",
+      "path": "default_file_content/animation-graph/ts-animation-graph",
+      "name": "ts-animation-graph",
+      "importer": "*"
+    },
+    {
+      "uuid": "51840015-b47a-4103-a937-6c21a29e4410",
+      "path": "default_file_content/animation-mask/default.animask",
+      "name": "default.animask",
+      "importer": "animation-mask"
+    },
+    {
+      "uuid": "e220b271-6a70-47c0-8d12-850150694608",
+      "path": "default_file_content/auto-atlas/default.pac",
+      "name": "default.pac",
+      "importer": "auto-atlas"
+    },
+    {
+      "uuid": "1f505ca8-b164-4d35-b697-504d100015e4",
+      "path": "default_file_content/effect-header/chunk",
+      "name": "chunk",
+      "importer": "*"
+    },
+    {
+      "uuid": "b546c596-5f73-40be-a426-cff8df144ac8",
+      "path": "default_file_content/effect/default.effect",
+      "name": "default.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "6c68ba5e-4590-4a25-bd25-430a0ebc1544",
+      "path": "default_file_content/effect/effect-surface.effect",
+      "name": "effect-surface.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "39a1ade8-a6ad-40df-8039-970d97bdd80d",
+      "path": "default_file_content/label-atlas/default.labelatlas",
+      "name": "default.labelatlas",
+      "importer": "label-atlas"
+    },
+    {
+      "uuid": "8f8bba83-df9c-4afe-8450-e12d0dbe71b7",
+      "path": "default_file_content/material/default.mtl",
+      "name": "default.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "ad05fddb-302f-40f5-81d2-27f671ddf0b6",
+      "path": "default_file_content/physics-material/default.pmtl",
+      "name": "default.pmtl",
+      "importer": "physics-material"
+    },
+    {
+      "uuid": "97b0783e-89f6-49d8-900b-3462bb9cfb04",
+      "path": "default_file_content/prefab/default.prefab",
+      "name": "default.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "c7e748e8-be82-4f6f-b2c0-085b604e40e5",
+      "path": "default_file_content/render-pipeline/default.rpp",
+      "name": "default.rpp",
+      "importer": "render-pipeline"
+    },
+    {
+      "uuid": "22a135d0-b2ef-4c1b-86d2-5bbbd88e4875",
+      "path": "default_file_content/render-pipeline/forward-pipeline.rpp",
+      "name": "forward-pipeline.rpp",
+      "importer": "render-pipeline"
+    },
+    {
+      "uuid": "4584ab47-6c1b-44fc-a41d-e32ba87e9660",
+      "path": "default_file_content/render-pipeline/ts-render-flow",
+      "name": "ts-render-flow",
+      "importer": "*"
+    },
+    {
+      "uuid": "400f1cd3-9a46-4349-b3c1-f451e22a219b",
+      "path": "default_file_content/render-pipeline/ts-render-pipeline",
+      "name": "ts-render-pipeline",
+      "importer": "*"
+    },
+    {
+      "uuid": "aa709c4b-426b-46f3-a856-4a0f22f52d6d",
+      "path": "default_file_content/render-pipeline/ts-render-stage",
+      "name": "ts-render-stage",
+      "importer": "*"
+    },
+    {
+      "uuid": "865b04b2-bc79-40fc-9bdf-a7557665b27c",
+      "path": "default_file_content/render-texture/default.rt",
+      "name": "default.rt",
+      "importer": "render-texture",
+      "subAssets": [
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "rt-sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "3b7550e2-beea-4079-ad8d-dfef104086bd",
+      "path": "default_file_content/scene/default.scene",
+      "name": "default.scene",
+      "importer": "scene"
+    },
+    {
+      "uuid": "0359b2f1-3a37-43fa-9c1c-bbe2b353ea1f",
+      "path": "default_file_content/scene/scene-2d.scene",
+      "name": "scene-2d.scene",
+      "importer": "scene"
+    },
+    {
+      "uuid": "1d5e3139-1826-4b4a-8c4c-2e7b6874a474",
+      "path": "default_file_content/scene/scene-quality.scene",
+      "name": "scene-quality.scene",
+      "importer": "scene"
+    },
+    {
+      "uuid": "d4291b1a-5207-4c88-b981-348fbf50dc68",
+      "path": "default_file_content/terrain/default.terrain",
+      "name": "default.terrain",
+      "importer": "terrain"
+    },
+    {
+      "uuid": "3e7d59d5-5478-474a-bb27-6eddb22dc614",
+      "path": "default_file_content/typescript/ts",
+      "name": "ts",
+      "importer": "*"
+    },
+    {
+      "uuid": "c903a495-69a9-4bb1-8266-c5d8a692ee6f",
+      "path": "default_fonts/builtin-bitmap/OpenSans-Bold_0.png",
+      "name": "OpenSans-Bold_0.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "87c7bea4-faed-46d2-b01d-8d3f4dfb4666",
+      "path": "default_fonts/builtin-bitmap/OpenSans-Bold.fnt",
+      "name": "OpenSans-Bold.fnt",
+      "importer": "bitmap-font"
+    },
+    {
+      "uuid": "35ac62e8-0b7a-4367-970d-dfdfbdd023c6",
+      "path": "default_fonts/builtin-bitmap/OpenSans-BoldItalic_0.png",
+      "name": "OpenSans-BoldItalic_0.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "0e4dafe1-3c4f-4c6c-a771-ee17c40bba6f",
+      "path": "default_fonts/builtin-bitmap/OpenSans-BoldItalic.fnt",
+      "name": "OpenSans-BoldItalic.fnt",
+      "importer": "bitmap-font"
+    },
+    {
+      "uuid": "1a8fc1a3-80e2-4d20-9087-426d2162ba44",
+      "path": "default_fonts/builtin-bitmap/OpenSans-Italic_0.png",
+      "name": "OpenSans-Italic_0.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "92c25386-f55c-4016-b204-6ef59b156340",
+      "path": "default_fonts/builtin-bitmap/OpenSans-Italic.fnt",
+      "name": "OpenSans-Italic.fnt",
+      "importer": "bitmap-font"
+    },
+    {
+      "uuid": "744d520a-8483-4fbc-a47b-ab57d28d6203",
+      "path": "default_fonts/builtin-bitmap/OpenSans-Regular_0.png",
+      "name": "OpenSans-Regular_0.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "5716f722-8eba-466c-980d-652f561353d8",
+      "path": "default_fonts/builtin-bitmap/OpenSans-Regular.fnt",
+      "name": "OpenSans-Regular.fnt",
+      "importer": "bitmap-font"
+    },
+    {
+      "uuid": "b5475517-23b9-4873-bc1a-968d96616081",
+      "path": "default_fonts/builtin-freetype/OpenSans-Bold.ttf",
+      "name": "OpenSans-Bold.ttf",
+      "importer": "ttf-font"
+    },
+    {
+      "uuid": "b23391b6-52eb-46a6-8da1-6244d9d315fb",
+      "path": "default_fonts/builtin-freetype/OpenSans-BoldItalic.ttf",
+      "name": "OpenSans-BoldItalic.ttf",
+      "importer": "ttf-font"
+    },
+    {
+      "uuid": "0ed97c56-390e-4dd1-96b7-e7f2d93a98ed",
+      "path": "default_fonts/builtin-freetype/OpenSans-Italic.ttf",
+      "name": "OpenSans-Italic.ttf",
+      "importer": "ttf-font"
+    },
+    {
+      "uuid": "0835f102-5471-47a3-9a76-01c07ac9cdb2",
+      "path": "default_fonts/builtin-freetype/OpenSans-Regular.ttf",
+      "name": "OpenSans-Regular.ttf",
+      "importer": "ttf-font"
+    },
+    {
+      "uuid": "78e0584a-4343-4727-8f37-e14e65c2a2db",
+      "path": "default_materials/default-billboard-material.mtl",
+      "name": "default-billboard-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "8bbdbcdd-5cd4-4100-b6d5-b7c9625b6107",
+      "path": "default_materials/default-clear-stencil.mtl",
+      "name": "default-clear-stencil.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "c31a901b-671b-4c3d-9246-f9a6e5f14b90",
+      "path": "default_materials/default-material-transparent.mtl",
+      "name": "default-material-transparent.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "d3c7820c-2a98-4429-8bc7-b8453bc9ac41",
+      "path": "default_materials/default-material.mtl",
+      "name": "default-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "14da1725-c4c2-42b4-ab08-ee0aeb6898b3",
+      "path": "default_materials/default-particle-gpu-material.mtl",
+      "name": "default-particle-gpu-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "c0143906-9aed-447e-9436-2ae8512d1b6e",
+      "path": "default_materials/default-particle-material.mtl",
+      "name": "default-particle-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "b5d6115f-0370-4d7c-aad3-c194cc71cf98",
+      "path": "default_materials/default-spine-material.mtl",
+      "name": "default-spine-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "ade8a15a-dcca-4b3c-84c6-f6476ac875bb",
+      "path": "default_materials/default-sprite-renderer-material.mtl",
+      "name": "default-sprite-renderer-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "081cab31-dccd-428e-8652-f2404cc81c47",
+      "path": "default_materials/default-trail-material.mtl",
+      "name": "default-trail-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "bcd64cc6-2dd9-43f6-abbe-66318d332032",
+      "path": "default_materials/missing-effect-material.mtl",
+      "name": "missing-effect-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "d930590d-bb92-4cc8-8bd1-23cd027f9edf",
+      "path": "default_materials/missing-material.mtl",
+      "name": "missing-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "ea7478b0-408d-4052-b703-f0d2355e095f",
+      "path": "default_materials/particle-add.mtl",
+      "name": "particle-add.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "620b6bf3-0369-4560-837f-2a2c00b73c26",
+      "path": "default_materials/standard-material.mtl",
+      "name": "standard-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "50f4348b-c883-4e2f-8f11-ce233b859fa1",
+      "path": "default_materials/ui-alpha-test-material.mtl",
+      "name": "ui-alpha-test-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "e9aa9a3e-5b2b-4ac7-a2c7-073de2b2b24f",
+      "path": "default_materials/ui-base-material.mtl",
+      "name": "ui-base-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "f0416e68-0200-4b77-a926-4f9d16e494da",
+      "path": "default_materials/ui-graphics-material.mtl",
+      "name": "ui-graphics-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "f92806d7-1768-443f-afe8-12bcde84d0f0",
+      "path": "default_materials/ui-sprite-alpha-sep-material.mtl",
+      "name": "ui-sprite-alpha-sep-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "dd3a144d-ab7f-41f0-82b8-2e43a090d496",
+      "path": "default_materials/ui-sprite-gray-alpha-sep-material.mtl",
+      "name": "ui-sprite-gray-alpha-sep-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "efe8e2a3-eace-427b-b4f1-cb8a937ec77d",
+      "path": "default_materials/ui-sprite-gray-material.mtl",
+      "name": "ui-sprite-gray-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "fda095cb-831d-4601-ad94-846013963de8",
+      "path": "default_materials/ui-sprite-material.mtl",
+      "name": "ui-sprite-material.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "3487d118-0158-4983-93fe-c3822790e7c5",
+      "path": "default_prefab/2d/Camera.prefab",
+      "name": "Camera.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "4c33600e-9ca9-483b-b734-946008261697",
+      "path": "default_prefab/2d/ui/Canvas.prefab",
+      "name": "Canvas.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "73ce1f7f-d1f4-4942-ad93-66ca3b3041ab",
+      "path": "default_prefab/3d/Capsule.prefab",
+      "name": "Capsule.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "6350d660-e888-4acf-a552-f3b719ae9110",
+      "path": "default_prefab/3d/Cone.prefab",
+      "name": "Cone.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "30da77a1-f02d-4ede-aa56-403452ee7fde",
+      "path": "default_prefab/3d/Cube.prefab",
+      "name": "Cube.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "ab3e16f9-671e-48a7-90b7-d0884d9cbb85",
+      "path": "default_prefab/3d/Cylinder.prefab",
+      "name": "Cylinder.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "40563723-f8fc-4216-99ea-a81636435c10",
+      "path": "default_prefab/3d/Plane.prefab",
+      "name": "Plane.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "34a07346-9f62-4a84-90ae-cb83f7a426c1",
+      "path": "default_prefab/3d/Quad.prefab",
+      "name": "Quad.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "655c9519-1a37-472b-bae6-29fefac0b550",
+      "path": "default_prefab/3d/Sphere.prefab",
+      "name": "Sphere.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "d47f5d5e-c931-4ff4-987b-cc818a728b82",
+      "path": "default_prefab/3d/Torus.prefab",
+      "name": "Torus.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "bb0a6472-cd67-4afb-a031-94fca8f4cc92",
+      "path": "default_prefab/Camera.prefab",
+      "name": "Camera.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "f09a0597-10e6-49e5-8759-a148b5e85395",
+      "path": "default_prefab/effects/Particle System.prefab",
+      "name": "Particle System.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "a0e9756d-9128-4f49-8097-e041c8b733b8",
+      "path": "default_prefab/light/Directional Light.prefab",
+      "name": "Directional Light.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "50dfda40-7c45-4868-a876-2fe2a4c782f4",
+      "path": "default_prefab/light/Light Probe Group.prefab",
+      "name": "Light Probe Group.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "03029371-ee64-4f14-820a-d495ad7cdc29",
+      "path": "default_prefab/light/Point Light.prefab",
+      "name": "Point Light.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "df72d0f6-49d3-452a-b082-8b23d38b33af",
+      "path": "default_prefab/light/Ranged Directional Light.prefab",
+      "name": "Ranged Directional Light.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "d8b49b64-cfba-4cfa-be53-1e469547b28b",
+      "path": "default_prefab/light/Reflection Probe.prefab",
+      "name": "Reflection Probe.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "4182ee46-ffa0-4de2-b66b-c93cc6c7e9b8",
+      "path": "default_prefab/light/Sphere Light.prefab",
+      "name": "Sphere Light.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "7a49aa24-bd7a-40a8-b31a-b2a9da85abcd",
+      "path": "default_prefab/light/Spot Light.prefab",
+      "name": "Spot Light.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "90e8b0d4-12dc-412d-9156-ea1fdb18c15b",
+      "path": "default_prefab/Terrain.prefab",
+      "name": "Terrain.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "90bdd2a9-2838-4888-b66c-e94c8b7a5169",
+      "path": "default_prefab/ui/Button.prefab",
+      "name": "Button.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "f773db21-62b8-4540-956a-29bacf5ddbf5",
+      "path": "default_prefab/ui/Canvas.prefab",
+      "name": "Canvas.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "05e79121-8675-4551-9ad7-1b901a4025db",
+      "path": "default_prefab/ui/EditBox.prefab",
+      "name": "EditBox.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "c96e159e-43ea-4a16-8279-05bc39119d1a",
+      "path": "default_prefab/ui/Graphics.prefab",
+      "name": "Graphics.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "36008810-7ad3-47c0-8112-e30aee089e45",
+      "path": "default_prefab/ui/Label.prefab",
+      "name": "Label.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "a9ef7dfc-ea8b-4cf8-918e-36da948c4de0",
+      "path": "default_prefab/ui/Layout.prefab",
+      "name": "Layout.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "7fa63aed-f3e2-46a5-8a7c-c1a1adf6cea6",
+      "path": "default_prefab/ui/Mask.prefab",
+      "name": "Mask.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "20a5d8cb-ccad-4543-a937-fccd98c9f3de",
+      "path": "default_prefab/ui/pageView.prefab",
+      "name": "pageView.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "f396261e-3e06-41ec-bdd6-9a8b6d99026f",
+      "path": "default_prefab/ui/ParticleSystem2D.prefab",
+      "name": "ParticleSystem2D.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "0d9353c4-6fb9-49bb-bc62-77f1750078c2",
+      "path": "default_prefab/ui/ProgressBar.prefab",
+      "name": "ProgressBar.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "fc6bfcfa-8086-4326-809b-0ba1226bac7d",
+      "path": "default_prefab/ui/RichText.prefab",
+      "name": "RichText.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "c1baa707-78d6-4b89-8d5d-0b7fdf0c39bc",
+      "path": "default_prefab/ui/ScrollView.prefab",
+      "name": "ScrollView.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "2bd7e5b6-cd8c-41a1-8136-ddb8efbf6326",
+      "path": "default_prefab/ui/Slider.prefab",
+      "name": "Slider.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "9db8cd0b-cbe4-42e7-96a9-a239620c0a9d",
+      "path": "default_prefab/ui/Sprite.prefab",
+      "name": "Sprite.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "279ed042-5a65-4efe-9afb-2fc23c61e15a",
+      "path": "default_prefab/ui/SpriteRenderer.prefab",
+      "name": "SpriteRenderer.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "e5f21aad-3a69-4011-ac62-b74352ac025e",
+      "path": "default_prefab/ui/SpriteSplash.prefab",
+      "name": "SpriteSplash.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "3139fa4f-8c42-4ce6-98be-15e848d9734c",
+      "path": "default_prefab/ui/TiledMap.prefab",
+      "name": "TiledMap.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "0e89afe7-56de-4f99-96a1-cba8a75bedd2",
+      "path": "default_prefab/ui/Toggle.prefab",
+      "name": "Toggle.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "2af73429-41d1-4346-9062-7798e42945dd",
+      "path": "default_prefab/ui/ToggleContainer.prefab",
+      "name": "ToggleContainer.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "7e089eaf-fa97-40d7-8a20-741a152585df",
+      "path": "default_prefab/ui/VideoPlayer.prefab",
+      "name": "VideoPlayer.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "9c541fa2-1dc8-4d8b-813a-aec89133f5b1",
+      "path": "default_prefab/ui/WebView.prefab",
+      "name": "WebView.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "36ed4422-3542-4cc4-bf02-dc4bfc590836",
+      "path": "default_prefab/ui/Widget.prefab",
+      "name": "Widget.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "0609709f-6fe6-4f01-97f0-bbc700a973e8",
+      "path": "default_renderpipeline/builtin-color-grading.mtl",
+      "name": "builtin-color-grading.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "5d45ba66-829a-46d3-948e-2ed3fa7ee421",
+      "path": "default_renderpipeline/builtin-deferred.rpp",
+      "name": "builtin-deferred.rpp",
+      "importer": "render-pipeline"
+    },
+    {
+      "uuid": "8af64728-cb91-4594-b5e9-364a46b70c17",
+      "path": "default_renderpipeline/builtin-depth-of-field.mtl",
+      "name": "builtin-depth-of-field.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "11f3130e-c08c-47bb-a209-71d114594e6d",
+      "path": "default_renderpipeline/builtin-dof-pass.ts",
+      "name": "builtin-dof-pass.ts",
+      "importer": "typescript"
+    },
+    {
+      "uuid": "fd8ec536-a354-4a17-9c74-4f3883c378c8",
+      "path": "default_renderpipeline/builtin-forward.rpp",
+      "name": "builtin-forward.rpp",
+      "importer": "render-pipeline"
+    },
+    {
+      "uuid": "42ee9684-6100-4202-bc1a-90c9c440c410",
+      "path": "default_renderpipeline/builtin-fsr.mtl",
+      "name": "builtin-fsr.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "025b97cc-7a78-444c-96f9-d1627ac0b44c",
+      "path": "default_renderpipeline/builtin-fxaa.mtl",
+      "name": "builtin-fxaa.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "ffb54b0a-924d-4e26-9475-565d07d28443",
+      "path": "default_renderpipeline/builtin-kawase-bloom.mtl",
+      "name": "builtin-kawase-bloom.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "9c3ea99f-fd05-43ec-9067-14ce54ccf9be",
+      "path": "default_renderpipeline/builtin-mipmap-bloom.mtl",
+      "name": "builtin-mipmap-bloom.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "6f94083c-fc92-438b-a15b-a20ec61666c7",
+      "path": "default_renderpipeline/builtin-pipeline-pass.ts",
+      "name": "builtin-pipeline-pass.ts",
+      "importer": "typescript"
+    },
+    {
+      "uuid": "de1c2107-70c8-4021-8459-6399f24d01c6",
+      "path": "default_renderpipeline/builtin-pipeline-settings.ts",
+      "name": "builtin-pipeline-settings.ts",
+      "importer": "typescript"
+    },
+    {
+      "uuid": "cbf30902-517f-40dc-af90-a550bac27cf1",
+      "path": "default_renderpipeline/builtin-pipeline-types.ts",
+      "name": "builtin-pipeline-types.ts",
+      "importer": "typescript"
+    },
+    {
+      "uuid": "ff9b0199-ce04-4cfe-86cc-6c719f08d6e4",
+      "path": "default_renderpipeline/builtin-pipeline.ts",
+      "name": "builtin-pipeline.ts",
+      "importer": "typescript"
+    },
+    {
+      "uuid": "732e6703-6e2d-43d6-a5e2-6d9c0c6fe2ee",
+      "path": "default_renderpipeline/builtin-tone-mapping.mtl",
+      "name": "builtin-tone-mapping.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "016951c5-5a09-4dd0-9bb7-f4958a82d690",
+      "path": "default_renderpipeline/deferred-lighting.mtl",
+      "name": "deferred-lighting.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "85c4d630-c264-4b18-90a4-c52d594e6099",
+      "path": "default_renderpipeline/post-process.mtl",
+      "name": "post-process.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "9d9704d8-08b4-4917-ba47-9d778bc77ac6",
+      "path": "default_renderpipeline/tonemap.mtl",
+      "name": "tonemap.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "d032ac98-05e1-4090-88bb-eb640dcb5fc1",
+      "path": "default_skybox/default_skybox.hdr",
+      "name": "default_skybox.hdr",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "b47c0",
+          "name": "textureCube",
+          "importer": "erp-texture-cube"
+        }
+      ]
+    },
+    {
+      "uuid": "6f01cf7f-81bf-4a7e-bd5d-0afc19696480",
+      "path": "default_skybox/default_skybox.png",
+      "name": "default_skybox.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "b47c0",
+          "name": "textureCube",
+          "importer": "erp-texture-cube"
+        }
+      ]
+    },
+    {
+      "uuid": "e17b4526-57a2-48d3-acc9-cf09f30aa138",
+      "path": "default_ui/atom_new.plist",
+      "name": "atom_new.plist",
+      "importer": "particle"
+    },
+    {
+      "uuid": "86f25d5c-9de5-454f-a5f9-ee16603e6701",
+      "path": "default_ui/atom.plist",
+      "name": "atom.plist",
+      "importer": "particle"
+    },
+    {
+      "uuid": "24c419ea-63a8-4ea1-a9d0-7fc469489bbc",
+      "path": "default_ui/atom.png",
+      "name": "atom.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "951249e0-9f16-456d-8b85-a6ca954da16b",
+      "path": "default_ui/default_btn_disabled.png",
+      "name": "default_btn_disabled.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "20835ba4-6145-4fbc-a58a-051ce700aa3e",
+      "path": "default_ui/default_btn_normal.png",
+      "name": "default_btn_normal.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "544e49d6-3f05-4fa8-9a9e-091f98fc2ce8",
+      "path": "default_ui/default_btn_pressed.png",
+      "name": "default_btn_pressed.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "bd1bcaba-bd7d-4a71-b143-997c882383e4",
+      "path": "default_ui/default_editbox_bg.png",
+      "name": "default_editbox_bg.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "b730527c-3233-41c2-aaf7-7cdab58f9749",
+      "path": "default_ui/default_panel.png",
+      "name": "default_panel.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "9fd900dd-221b-4f89-8f2c-fba34243c835",
+      "path": "default_ui/default_progressbar_bg.png",
+      "name": "default_progressbar_bg.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "24a704da-2867-446d-8d1a-5e920c75e09d",
+      "path": "default_ui/default_progressbar.png",
+      "name": "default_progressbar.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "f12a23c4-b924-4322-a260-3d982428f1e8",
+      "path": "default_ui/default_radio_button_off.png",
+      "name": "default_radio_button_off.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "45828f25-b50d-4c52-a591-e19491a62b8c",
+      "path": "default_ui/default_radio_button_on.png",
+      "name": "default_radio_button_on.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "28765e2f-040a-4c65-8e8c-f9d0bb79d863",
+      "path": "default_ui/default_scrollbar_bg.png",
+      "name": "default_scrollbar_bg.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "ffb88a8f-af62-48f4-8f1d-3cb606443a43",
+      "path": "default_ui/default_scrollbar_vertical_bg.png",
+      "name": "default_scrollbar_vertical_bg.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "afc47931-f066-46b0-90be-9fe61f213428",
+      "path": "default_ui/default_scrollbar_vertical.png",
+      "name": "default_scrollbar_vertical.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "0da256a2-21f6-481b-90b6-d3643a09179b",
+      "path": "default_ui/default_scrollbar.png",
+      "name": "default_scrollbar.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "7d8f9b89-4fd1-4c9f-a3ab-38ec7cded7ca",
+      "path": "default_ui/default_sprite_splash.png",
+      "name": "default_sprite_splash.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "57520716-48c8-4a19-8acf-41c9f8777fb0",
+      "path": "default_ui/default_sprite.png",
+      "name": "default_sprite.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "158e7e52-3220-4cd7-9694-713e0e6e8278",
+      "path": "default_ui/default_toggle_checkmark.png",
+      "name": "default_toggle_checkmark.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "ca7e121b-293c-4763-829a-b7a5fa81f0d2",
+      "path": "default_ui/default_toggle_disabled.png",
+      "name": "default_toggle_disabled.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "11bdc4b0-64a8-4eb7-a2a7-9fb9e233e977",
+      "path": "default_ui/default_toggle_normal.png",
+      "name": "default_toggle_normal.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "a04e994f-ee49-47b6-9d08-2f59e3773fcc",
+      "path": "default_ui/default_toggle_pressed.png",
+      "name": "default_toggle_pressed.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "b5b27ab1-e740-4398-b407-848fc2b2c897",
+      "path": "Default-Particle.png",
+      "name": "Default-Particle.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "52ef29ed-bd92-4e94-ab2f-0ebc91bf3a60",
+      "path": "default-terrain/default-layer-texture.jpg",
+      "name": "default-layer-texture.jpg",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "2be36297-9abb-4fee-8049-9ed5e271da8a",
+      "path": "default-video.mp4",
+      "name": "default-video.mp4",
+      "importer": "video-clip"
+    },
+    {
+      "uuid": "10b516ad-ae94-468a-a050-11ce19d40c3d",
+      "path": "dependencies/textures/lut/original-color-grading.png",
+      "name": "original-color-grading.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "b078dcad-656d-4ba3-b76e-70c88e63e045",
+      "path": "dependencies/textures/preintegrated-skin.png",
+      "name": "preintegrated-skin.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "304a12db-3955-46e4-b712-e5e26f45258b",
+      "path": "effects/advanced/car-paint.effect",
+      "name": "car-paint.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "ded549ec-b5b6-4d05-ba54-9b3ea427a58c",
+      "path": "effects/advanced/common-functions.chunk",
+      "name": "common-functions.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "bce797be-05d4-400e-8eb8-f2816147b869",
+      "path": "effects/advanced/eye.chunk",
+      "name": "eye.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "f0475923-826e-45dc-85cc-b5d9c2b220e9",
+      "path": "effects/advanced/eye.effect",
+      "name": "eye.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "b25c7601-1d07-4a56-86c5-62e83ea7c61e",
+      "path": "effects/advanced/fabric.effect",
+      "name": "fabric.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "f288f946-150b-443d-b4b3-0227c5117c93",
+      "path": "effects/advanced/glass.effect",
+      "name": "glass.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "fc0ce5f8-063d-42da-b13a-2fad25abb951",
+      "path": "effects/advanced/hair.effect",
+      "name": "hair.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "e396231e-43c6-4547-86f5-0ef92bf154ce",
+      "path": "effects/advanced/leaf.effect",
+      "name": "leaf.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "472c676f-9f77-4c8d-b550-17825aa0176b",
+      "path": "effects/advanced/simple-skin.effect",
+      "name": "simple-skin.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "4a31bd46-8da1-4d9a-add5-9ac43967159e",
+      "path": "effects/advanced/skin.effect",
+      "name": "skin.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "6308c013-7d49-4160-9516-562dd205b480",
+      "path": "effects/advanced/sky.effect",
+      "name": "sky.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "113a72d8-20cd-42cd-ba96-37cc1046971a",
+      "path": "effects/advanced/water.effect",
+      "name": "water.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "fe0128c2-5496-4330-880a-cfee413aabf2",
+      "path": "effects/builtin-reflection-probe-preview.effect",
+      "name": "builtin-reflection-probe-preview.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "c8f66d17-351a-48da-a12c-0212d28575c4",
+      "path": "effects/builtin-standard.effect",
+      "name": "builtin-standard.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "a0fd9f76-74fe-423c-92d9-298906c189ba",
+      "path": "effects/builtin-terrain.effect",
+      "name": "builtin-terrain.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "9b20a514-6cc3-49de-b216-b6b863046249",
+      "path": "effects/builtin-toon.effect",
+      "name": "builtin-toon.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "a3cd009f-0ab0-420d-9278-b9fdab939bbc",
+      "path": "effects/builtin-unlit.effect",
+      "name": "builtin-unlit.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "c27215d8-6835-4b68-bfbb-bdeac6100c04",
+      "path": "effects/for2d/builtin-spine.effect",
+      "name": "builtin-spine.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "6ef1defe-7997-477a-9b35-c18859ff8066",
+      "path": "effects/for2d/builtin-sprite-renderer.effect",
+      "name": "builtin-sprite-renderer.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "60f7195c-ec2a-45eb-ba94-8955f60e81d0",
+      "path": "effects/for2d/builtin-sprite.effect",
+      "name": "builtin-sprite.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "bf4078d6-d2d7-4073-83bb-cd6f1802e880",
+      "path": "effects/internal/builtin-camera-texture.effect",
+      "name": "builtin-camera-texture.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "810e96e4-e456-4468-9b59-f4e8f39732c0",
+      "path": "effects/internal/builtin-clear-stencil.effect",
+      "name": "builtin-clear-stencil.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "ff9be190-20a4-4e48-b68c-76e3c7cff085",
+      "path": "effects/internal/builtin-debug-renderer.effect",
+      "name": "builtin-debug-renderer.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "4bb480dd-8384-4bc9-987f-de67cc53052a",
+      "path": "effects/internal/builtin-geometry-renderer.effect",
+      "name": "builtin-geometry-renderer.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "1c02ae6f-4492-4915-b8f8-7492a3b1e4cd",
+      "path": "effects/internal/builtin-graphics.effect",
+      "name": "builtin-graphics.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "d9937e59-61fe-4ec6-92ab-7ac5a19c89b0",
+      "path": "effects/internal/builtin-occlusion-query.effect",
+      "name": "builtin-occlusion-query.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "81127eb0-7556-453c-b147-670782dd5e53",
+      "path": "effects/internal/builtin-wireframe.effect",
+      "name": "builtin-wireframe.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "084eba38-5336-4444-8c8c-aebb75d5c627",
+      "path": "effects/internal/editor/box-height-light.effect",
+      "name": "box-height-light.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "9d6c6bde-2fe2-44ee-883b-909608948b04",
+      "path": "effects/internal/editor/gizmo.effect",
+      "name": "gizmo.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "cb2c332a-fa5e-4235-a129-f011634bb7ad",
+      "path": "effects/internal/editor/grid-2d.effect",
+      "name": "grid-2d.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "4736e978-c8fa-449f-9cf6-fe0158ded9d7",
+      "path": "effects/internal/editor/grid-stroke.effect",
+      "name": "grid-stroke.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "ba35f02e-a81c-464c-bfc5-c788328da667",
+      "path": "effects/internal/editor/grid.effect",
+      "name": "grid.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "5967a800-25ad-4c00-9872-5c4ba7840d17",
+      "path": "effects/internal/editor/light-probe-visualization.effect",
+      "name": "light-probe-visualization.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "e4e4cb19-8dd2-450d-ad20-1a818263b8d3",
+      "path": "effects/internal/editor/light.effect",
+      "name": "light.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "a3e72674-c38f-4336-a285-1826b1799cd7",
+      "path": "effects/internal/editor/terrain-circle-brush.effect",
+      "name": "terrain-circle-brush.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "7a115de7-2d94-4620-8b89-766d7f8cbff9",
+      "path": "effects/internal/editor/terrain-image-brush.effect",
+      "name": "terrain-image-brush.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "9b4d3fa5-89bf-4715-b69a-dbbd1efaf6a5",
+      "path": "effects/internal/editor/terrain-select-brush.effect",
+      "name": "terrain-select-brush.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "1baf0fc9-befa-459c-8bdd-af1a450a0319",
+      "path": "effects/legacy/standard.effect",
+      "name": "standard.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "1d08ef62-a503-4ce2-8b9a-46c90873f7d3",
+      "path": "effects/legacy/terrain.effect",
+      "name": "terrain.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "a7612b54-35e3-4238-a1a9-4a7b54635839",
+      "path": "effects/legacy/toon.effect",
+      "name": "toon.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "711ebe11-f673-4cd9-9a83-63c60ba54c5b",
+      "path": "effects/particles/builtin-billboard.effect",
+      "name": "builtin-billboard.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "971bdb23-3ff6-43eb-b422-1c30165a3663",
+      "path": "effects/particles/builtin-particle-gpu.effect",
+      "name": "builtin-particle-gpu.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "17debcc3-0a6b-4b8a-b00b-dc58b885581e",
+      "path": "effects/particles/builtin-particle-trail.effect",
+      "name": "builtin-particle-trail.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "e38f81af-70ec-4f7a-b377-767b0ec76377",
+      "path": "effects/particles/builtin-particle-xr-trail.effect",
+      "name": "builtin-particle-xr-trail.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "d1346436-ac96-4271-b863-1f4fdead95b0",
+      "path": "effects/particles/builtin-particle.effect",
+      "name": "builtin-particle.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "45e7c0c8-2699-4912-b45f-d42bb8384189",
+      "path": "effects/pipeline/cluster-build.effect",
+      "name": "cluster-build.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "84ac6f69-3086-455a-86a4-561da8ee710b",
+      "path": "effects/pipeline/cluster-culling.effect",
+      "name": "cluster-culling.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "5c601d96-e4c7-4698-991b-7ee674b11079",
+      "path": "effects/pipeline/copy-pass.effect",
+      "name": "copy-pass.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "5d45aa00-e064-4938-b314-4265f0c2258c",
+      "path": "effects/pipeline/deferred-lighting.effect",
+      "name": "deferred-lighting.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "8f6ac413-2f1e-4b88-b26f-54556b5dd510",
+      "path": "effects/pipeline/float-output-process.effect",
+      "name": "float-output-process.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "9361fd90-ba52-4f84-aa93-6e878fd576ca",
+      "path": "effects/pipeline/planar-shadow.effect",
+      "name": "planar-shadow.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "ec8106fe-05bf-4e94-943c-e0d3b7bb5e45",
+      "path": "effects/pipeline/post-process.effect",
+      "name": "post-process.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "15049ccd-4dd7-451e-a8ae-af66735c929e",
+      "path": "effects/pipeline/post-process/blit-screen.effect",
+      "name": "blit-screen.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "10f0d9bc-5c9e-4216-9a94-f3a2ff53bb5f",
+      "path": "effects/pipeline/post-process/bloom-kawase-dual.effect",
+      "name": "bloom-kawase-dual.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "7ca08c6b-221a-43d5-8ad6-a6dd2ee7852b",
+      "path": "effects/pipeline/post-process/bloom-mipmap-blur.effect",
+      "name": "bloom-mipmap-blur.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "28d6d6b8-3f66-4a73-9795-17a0852ba2d4",
+      "path": "effects/pipeline/post-process/bloom.effect",
+      "name": "bloom.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "19347765-9ff3-473d-ad16-612beadc84a1",
+      "path": "effects/pipeline/post-process/chunks/depth.chunk",
+      "name": "depth.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "ca48a673-e711-4da7-bcf8-42b9134860ea",
+      "path": "effects/pipeline/post-process/chunks/fsr.chunk",
+      "name": "fsr.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "3e2d4ff7-c690-442a-9404-4e0499c1cfa8",
+      "path": "effects/pipeline/post-process/chunks/hbao.chunk",
+      "name": "hbao.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "5b91050f-0d35-4321-90a0-de67ce3e2f2e",
+      "path": "effects/pipeline/post-process/chunks/vs.chunk",
+      "name": "vs.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "6ab34294-1b34-4fd0-8148-1e5c6aad0156",
+      "path": "effects/pipeline/post-process/chunks/vs1.chunk",
+      "name": "vs1.chunk",
+      "importer": "effect-header"
+    },
+    {
+      "uuid": "cafd95c9-c558-46f9-9812-1224b65c09ee",
+      "path": "effects/pipeline/post-process/color-grading.effect",
+      "name": "color-grading.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "9d1cff46-e352-4b6d-b4ba-c3a0010c0c5d",
+      "path": "effects/pipeline/post-process/color-grading1.effect",
+      "name": "color-grading1.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "bf0a6d94-58f0-4ad2-bdf2-c4a31c7dd856",
+      "path": "effects/pipeline/post-process/dof.effect",
+      "name": "dof.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "d0efaeb0-746c-4032-9cf5-772a9681f89b",
+      "path": "effects/pipeline/post-process/dof1.effect",
+      "name": "dof1.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "4361db28-3f24-44cc-8e51-32ee5fd651ac",
+      "path": "effects/pipeline/post-process/fsr.effect",
+      "name": "fsr.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "32990113-cbb8-4435-8d07-5ccdbf0c0a43",
+      "path": "effects/pipeline/post-process/fsr1.effect",
+      "name": "fsr1.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "2df0a40b-26c2-47ce-be0d-4d3cd4164737",
+      "path": "effects/pipeline/post-process/fxaa-hq.effect",
+      "name": "fxaa-hq.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "58c5b54c-b5df-41fd-9824-fae746c5af2a",
+      "path": "effects/pipeline/post-process/fxaa-hq1.effect",
+      "name": "fxaa-hq1.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "dace6a58-1705-48c7-a275-70afc9534e88",
+      "path": "effects/pipeline/post-process/hbao.effect",
+      "name": "hbao.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "521c5f6e-1a26-42e2-8108-4400c912d9bf",
+      "path": "effects/pipeline/post-process/post-final.effect",
+      "name": "post-final.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "4c3ce6de-e6d1-47f7-aa36-36b9b58f72d3",
+      "path": "effects/pipeline/post-process/taa.effect",
+      "name": "taa.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "6a2d0734-bd9e-4ddf-946e-caa52498cb75",
+      "path": "effects/pipeline/post-process/tone-mapping.effect",
+      "name": "tone-mapping.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "511d2633-09a7-4bdd-ac42-f778032124b3",
+      "path": "effects/pipeline/skybox.effect",
+      "name": "skybox.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "6624c63c-0e3d-4d5f-bd15-a7805b71c521",
+      "path": "effects/pipeline/smaa.effect",
+      "name": "smaa.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "39f74202-ead5-4a45-b966-273d526adbf1",
+      "path": "effects/pipeline/ssss-blur.effect",
+      "name": "ssss-blur.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "31b152ff-f689-4082-a292-3eb5a0b33014",
+      "path": "effects/pipeline/tonemap.effect",
+      "name": "tonemap.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "f1556893-88b6-4c65-8c16-a5256ef3ad25",
+      "path": "effects/util/batched-unlit.effect",
+      "name": "batched-unlit.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "2ec11458-f855-4978-b14d-f3ed5cf697fa",
+      "path": "effects/util/dcc/imported-metallic-roughness.effect",
+      "name": "imported-metallic-roughness.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "f648964e-8d32-41fc-9ac9-7a1e714dd17b",
+      "path": "effects/util/dcc/imported-specular-glossiness.effect",
+      "name": "imported-specular-glossiness.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "fbc18e4a-ab74-48df-9106-38e7bd10ff25",
+      "path": "effects/util/dcc/vat/houdini-fluid-v3-liquid.effect",
+      "name": "houdini-fluid-v3-liquid.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "08c6d756-c02f-48a2-9e8a-55ec59a8f83d",
+      "path": "effects/util/dcc/vat/houdini-rigidbody-v2.effect",
+      "name": "houdini-rigidbody-v2.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "c3e70c74-2523-40e6-a4e5-4abfa1849608",
+      "path": "effects/util/dcc/vat/houdini-softbody-v3.effect",
+      "name": "houdini-softbody-v3.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "6ce2c98a-5c87-4066-90aa-7be93bcbb738",
+      "path": "effects/util/dcc/vat/zeno-fluid-liquid.effect",
+      "name": "zeno-fluid-liquid.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "871c3b6c-7379-419d-bda3-794b239ab90d",
+      "path": "effects/util/profiler.effect",
+      "name": "profiler.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "27cc5a0b-ec0b-4a67-98cf-b42d4fa971de",
+      "path": "effects/util/sequence-anim.effect",
+      "name": "sequence-anim.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "970b0598-bcb0-4714-91fb-2e81440dccd8",
+      "path": "effects/util/splash-screen.effect",
+      "name": "splash-screen.effect",
+      "importer": "effect"
+    },
+    {
+      "uuid": "bd373594-df84-486d-a34a-19d09ddaa973",
+      "path": "gizmo/camera.png",
+      "name": "camera.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "9cb543ba-d152-4809-8a44-8e7bd5712123",
+      "path": "gizmo/directional-light.png",
+      "name": "directional-light.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "9e0cc8d3-a76b-4bee-b53e-f3abab91c4b8",
+      "path": "gizmo/light-probe.png",
+      "name": "light-probe.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "55052bc6-9909-43c1-b2fc-8818060fb069",
+      "path": "gizmo/particle-system.png",
+      "name": "particle-system.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "dee6f7cc-ba21-4091-948f-4f508495f260",
+      "path": "gizmo/reflection-probe.png",
+      "name": "reflection-probe.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "6d3bfb1f-604a-4fb3-9fd8-789862cc55e7",
+      "path": "gizmo/scene-gizmo.mtl",
+      "name": "scene-gizmo.mtl",
+      "importer": "material"
+    },
+    {
+      "uuid": "c78f78a5-3553-4d1f-ad3b-177fe55af68b",
+      "path": "gizmo/sphere-light.png",
+      "name": "sphere-light.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "191b676f-175b-41fa-8283-ac539875bfd8",
+      "path": "gizmo/spot-light.png",
+      "name": "spot-light.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "b9f47df4-b2f0-4270-bd8a-07bb344a8253",
+      "path": "gizmo/webview.png",
+      "name": "webview.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        }
+      ]
+    },
+    {
+      "uuid": "ac74fa2b-1f5b-4ff5-a3f0-f127f4483e91",
+      "path": "gizmo/x.png",
+      "name": "x.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "7b5313d0-f1aa-4b1b-a3c8-59d523c35301",
+      "path": "gizmo/y.png",
+      "name": "y.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "389d5fee-e29c-4221-b397-a4934a0a5694",
+      "path": "gizmo/z.png",
+      "name": "z.png",
+      "importer": "image",
+      "subAssets": [
+        {
+          "id": "6c48a",
+          "name": "texture",
+          "importer": "texture"
+        },
+        {
+          "id": "f9941",
+          "name": "spriteFrame",
+          "importer": "sprite-frame"
+        }
+      ]
+    },
+    {
+      "uuid": "ba21476f-2866-4f81-9c4d-6e359316e448",
+      "path": "physics/default-physics-material.pmtl",
+      "name": "default-physics-material.pmtl",
+      "importer": "physics-material"
+    },
+    {
+      "uuid": "1263d74c-8167-4928-91a6-4e2672411f47",
+      "path": "primitives.fbx",
+      "name": "primitives.fbx",
+      "importer": "fbx",
+      "subAssets": [
+        {
+          "id": "17020",
+          "name": "sphere.mesh",
+          "importer": "gltf-mesh"
+        },
+        {
+          "id": "801ec",
+          "name": "capsule.mesh",
+          "importer": "gltf-mesh"
+        },
+        {
+          "id": "2e76e",
+          "name": "plane.mesh",
+          "importer": "gltf-mesh"
+        },
+        {
+          "id": "38fd2",
+          "name": "cone.mesh",
+          "importer": "gltf-mesh"
+        },
+        {
+          "id": "40ece",
+          "name": "torus.mesh",
+          "importer": "gltf-mesh"
+        },
+        {
+          "id": "fc873",
+          "name": "quad.mesh",
+          "importer": "gltf-mesh"
+        },
+        {
+          "id": "8abdc",
+          "name": "cylinder.mesh",
+          "importer": "gltf-mesh"
+        },
+        {
+          "id": "a804a",
+          "name": "box.mesh",
+          "importer": "gltf-mesh"
+        },
+        {
+          "id": "8d883",
+          "name": "lambert1.material",
+          "importer": "gltf-material"
+        },
+        {
+          "id": "aae0f",
+          "name": "primitives.prefab",
+          "importer": "gltf-scene"
+        }
+      ]
+    },
+    {
+      "uuid": "7f4ddeab-efa9-4b76-bf6a-029520f68461",
+      "path": "tools/debug-view-runtime-control.prefab",
+      "name": "debug-view-runtime-control.prefab",
+      "importer": "prefab"
+    },
+    {
+      "uuid": "b2bd1fa7-8d7c-49c5-a158-df29a6d3a594",
+      "path": "tools/debug-view-runtime-control.ts",
+      "name": "debug-view-runtime-control.ts",
+      "importer": "typescript"
+    },
+    {
+      "uuid": "e6914174-8ecd-4c99-8e9b-9773a9d368df",
+      "path": "tools/parsed-effect-info.json",
+      "name": "parsed-effect-info.json",
+      "importer": "json"
+    }
+  ]
+}

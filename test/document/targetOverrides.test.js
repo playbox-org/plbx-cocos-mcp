@@ -12,6 +12,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { SceneDocument, isRef } from '../../src/document/SceneDocument.js';
 import { applyOperations, OperationError } from '../../src/document/operations.js';
+import { findDanglingOverrides } from '../../src/document/targetOverrides.js';
 import { Validator } from '../../src/document/Validator.js';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
 
@@ -570,5 +571,146 @@ describe('registry bootstrap', () => {
             doc.objects.filter(o => o.__type__ === 'cc.TargetOverrideInfo'));
         assert.strictEqual(after, before);
         assertValid(doc);
+    });
+});
+
+describe('prune_dangling_overrides', () => {
+    /**
+     * Corrupt a document the way editor reworks do (observed in the real
+     * game scene): a TargetOverrideInfo with source: null whose target is a
+     * bare leftover node, parked on an instance stub's own PrefabInfo.
+     */
+    function corrupt(doc, stubRef) {
+        const stubIdx = doc.resolveNode(stubRef);
+        const info = doc.getObject(doc.getObject(stubIdx)._prefab.__id__);
+        const orphanIdx = doc.addObject({ __type__: 'cc.Node', __editorExtras__: {} });
+        const tiIdx = doc.addObject({ __type__: 'cc.TargetInfo', localID: ['deadbeafdeadbeafdead'] });
+        const ovIdx = doc.addObject({
+            __type__: 'cc.TargetOverrideInfo',
+            source: null,
+            sourceInfo: null,
+            propertyPath: ['animation'],
+            target: { __id__: orphanIdx },
+            targetInfo: { __id__: tiIdx }
+        });
+        info.targetOverrides = [{ __id__: ovIdx }];
+        return { orphanIdx, ovIdx };
+    }
+
+    test('detects the corruption; prune + renumber leave a valid document', () => {
+        const ctx = makeCtx();
+        const doc = sceneWithDeskAndHolder(ctx);
+        corrupt(doc, 'Desk');
+
+        const { errors, warnings } = new Validator(doc).validate();
+        // The dead override itself is only a warning (engine ignores it); the
+        // orphan target node it left behind is the genuine blocking error.
+        assert.ok(warnings.some(w => /engine ignores this override.*source is null/.test(w)), warnings.join('\n'));
+        assert.ok(errors.some(e => /has no _id/.test(e)), errors.join('\n'));
+
+        const dangling = findDanglingOverrides(doc);
+        assert.strictEqual(dangling.length, 1);
+        assert.strictEqual(dangling[0].propertyPath, 'animation');
+        assert.ok(dangling[0].reasons.some(r => /source is null/.test(r)));
+        assert.ok(dangling[0].reasons.some(r => /target node is detached/.test(r)));
+
+        const results = applyOperations(doc, [{ op: 'prune_dangling_overrides' }], ctx);
+        assert.match(results[0].summary, /removed 1 dangling target-override record/);
+        doc.renumber();
+        assertValid(doc);
+
+        // The orphan node and its TargetInfo were garbage-collected
+        assert.ok(!doc.objects.some(o =>
+            o.__type__ === 'cc.TargetInfo' && o.localID?.[0] === 'deadbeafdeadbeafdead'));
+        // The stub PrefabInfo is back to the editor's no-overrides form
+        const info = doc.getObject(doc.getObject(doc.resolveNode('Desk'))._prefab.__id__);
+        assert.strictEqual(info.targetOverrides, null);
+        assertFixedPoint(doc);
+    });
+
+    test('live overrides survive pruning', () => {
+        const ctx = makeCtx();
+        const doc = sceneWithDeskAndHolder(ctx);
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'Holder', component: 'PlayerController',
+            property: 'tableView',
+            value: { $component: { node: 'Desk', target: 'Table', type: 'cc.MeshRenderer' } }
+        }], ctx);
+        corrupt(doc, 'Desk');
+
+        applyOperations(doc, [{ op: 'prune_dangling_overrides' }], ctx);
+        doc.renumber();
+        assertValid(doc);
+
+        const { compIdx } = scriptComponent(doc, 'Holder');
+        assert.strictEqual(overridesOf(doc, compIdx).length, 1,
+            'the live tableView override must survive');
+    });
+
+    test('live override sourced from a mounted-child node is not pruned (#2)', () => {
+        const ctx = makeCtx();
+        const doc = sceneWithDeskAndHolder(ctx);
+        const stubIdx = doc.resolveNode('Desk');
+        const instance = doc.instanceOf(stubIdx);
+        const rootFileId = doc.getObject(doc.getObject(stubIdx)._prefab.__id__).fileId;
+
+        // Mounted-child node: serialized with _parent: null, so nodePath() is
+        // null even though the engine resolves it at load.
+        const childIdx = doc.addObject({
+            __type__: 'cc.Node', _name: 'MountedChild', _parent: null,
+            _children: [], _components: [], _prefab: null
+        });
+        const compIdx = doc.addObject({
+            __type__: 'cc.MeshRenderer', node: { __id__: childIdx }, __prefab: null
+        });
+        doc.getObject(childIdx)._components.push({ __id__: compIdx });
+
+        // A well-formed, LIVE B1 override sourced from that mounted-child comp.
+        const ovIdx = doc.addObject({
+            __type__: 'cc.TargetOverrideInfo',
+            source: { __id__: compIdx },
+            sourceInfo: null,
+            propertyPath: ['someRef'],
+            target: { __id__: stubIdx },
+            targetInfo: {
+                __id__: doc.addObject({ __type__: 'cc.TargetInfo', localID: ['innerFileId00000000'] })
+            }
+        });
+        const registry = doc.getObject(doc.root.node._prefab.__id__);
+        (registry.targetOverrides ??= []).push({ __id__: ovIdx });
+
+        // Sanity: without a MountedChildrenInfo, the _parent:null source reads
+        // as detached and IS flagged — proving the check still fires.
+        assert.ok(findDanglingOverrides(doc).some(d => d.idx === ovIdx),
+            'sanity: an unregistered _parent:null source is flagged');
+
+        // Register the node as a mounted child of the instance.
+        const mciIdx = doc.addObject({
+            __type__: 'cc.MountedChildrenInfo',
+            targetInfo: {
+                __id__: doc.addObject({ __type__: 'cc.TargetInfo', localID: [rootFileId] })
+            },
+            nodes: [{ __id__: childIdx }]
+        });
+        (instance.mountedChildren ??= []).push({ __id__: mciIdx });
+
+        assert.ok(!findDanglingOverrides(doc).some(d => d.idx === ovIdx),
+            'a live override sourced from a mounted-child node must survive pruning');
+    });
+
+    test('idempotent: clean document is a no-op', () => {
+        const ctx = makeCtx();
+        const doc = sceneWithDeskAndHolder(ctx);
+        const results = applyOperations(doc, [{ op: 'prune_dangling_overrides' }], ctx);
+        assert.match(results[0].summary, /no dangling target-override records found/);
+        assertValid(doc);
+    });
+
+    test('golden corpus is never flagged (editor forms like target: null stay)', () => {
+        for (const file of ['Main.scene_V2.scene', 'TableCash.prefab', 'ZombieBuyer.prefab',
+            'Gold.prefab', 'HUD.prefab']) {
+            const doc = SceneDocument.load(GOLDEN(file));
+            assert.deepStrictEqual(findDanglingOverrides(doc), [], file);
+        }
     });
 });

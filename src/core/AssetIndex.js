@@ -10,7 +10,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { splitSubAssetRef, isFullUuid, isCompressedUuid, decompressUuid } from '../utils/uuid.js';
+import { splitSubAssetRef, isFullUuid, isCompressedUuid, decompressUuid, compressUuid } from '../utils/uuid.js';
+import { builtinLabel } from './builtins.js';
 
 /** Friendly type aliases → meta importer names (keys normalized: lowercase, no -/_) */
 const TYPE_ALIASES = {
@@ -41,6 +42,8 @@ export class AssetIndex {
     #entries = [];
     #byUuid = new Map();
     #byPath = new Map();
+    #scriptClassNames = null;
+    #scriptUuidByName = null;
 
     /**
      * @param {string} projectRoot - Path to Cocos project root
@@ -172,13 +175,15 @@ export class AssetIndex {
      * Short human label for a reference: "Mat.mtl" for top-level assets,
      * "Model.fbx@subId" for sub-assets — with " (embedded)" appended for
      * materials baked into a model file (they usually should be replaced by a
-     * project material). Null when the reference is not in the project.
+     * project material). Engine built-ins (db://internal) label as
+     * "builtin:<name>"; null when the reference is neither in the project
+     * nor a known builtin.
      * @param {string} ref
      * @returns {string|null}
      */
     label(ref) {
         const resolved = this.resolve(ref);
-        if (!resolved) return null;
+        if (!resolved) return builtinLabel(ref);
         const { entry, subAsset } = resolved;
         if (!subAsset) return entry.name;
         const embedded = subAsset.importer === 'gltf-material' ? ' (embedded)' : '';
@@ -248,6 +253,45 @@ export class AssetIndex {
         }
 
         return result;
+    }
+
+    /**
+     * compressed script UUID → class name (the meta name with its .ts/.js
+     * extension stripped) — the form scripts appear as in component __type__.
+     * The extension-stripping regex is the load-bearing shared detail; keeping
+     * it here means every caller labels script components identically. Memoized.
+     */
+    scriptClassNames() {
+        if (!this.#scriptClassNames) {
+            this.#scriptClassNames = new Map(
+                this.list({ type: 'script' }).map(e =>
+                    [compressUuid(e.uuid), e.name.replace(/\.[jt]s$/, '')])
+            );
+        }
+        return this.#scriptClassNames;
+    }
+
+    /**
+     * Reverse of scriptClassNames: class name → full script UUID, for
+     * resolving a script-name component reference to its uuid. Two maps
+     * preserve the exact-case-first, case-insensitive-fallback precedence of
+     * the old linear scan; first entry in list order wins each key. Memoized,
+     * so an apply_edits batch with many script-addressed ops scans once.
+     * @returns {{exact: Map<string,string>, lower: Map<string,string>}}
+     */
+    scriptUuidByName() {
+        if (!this.#scriptUuidByName) {
+            const exact = new Map();
+            const lower = new Map();
+            for (const e of this.list({ type: 'script' })) {
+                const cls = e.name.replace(/\.[jt]s$/, '');
+                if (!exact.has(cls)) exact.set(cls, e.uuid);
+                const lc = cls.toLowerCase();
+                if (!lower.has(lc)) lower.set(lc, e.uuid);
+            }
+            this.#scriptUuidByName = { exact, lower };
+        }
+        return this.#scriptUuidByName;
     }
 }
 

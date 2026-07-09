@@ -42,7 +42,7 @@
     ● Environment
       ● Ground
         ● Grass
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:plane.mesh _shadowCastingMode=0}
           ◆ BoxCollider {_isTrigger=false _id=e4sPS6mE9Kvp1jKQSsvH9f _center=[0,-5,0] _size=[12,10,12]}
         ● SM_Floor
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
@@ -201,7 +201,7 @@
             ● SM_Lantern-001
               ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
           ● Border
-            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:box.mesh _shadowCastingMode=0}
         ● WallDoorway-001
           ◆ BoxCollider {_isTrigger=false _id=c6mgM6lZ1IN6emt9hmHz4N _center=[0,4,-1] _size=[25,8,2]}
           ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
@@ -218,7 +218,7 @@
           ● Fence-010 [P→7c72ba33…]
           ● Fence-011 [P→7c72ba33…]
           ● Border
-            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+            ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:box.mesh _shadowCastingMode=0}
       ● Crusher-001
         ● SM_Platforma
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
@@ -226,78 +226,78 @@
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
       ● FakeShadows
         ● Shadow
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-001
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-002
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-003
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-004
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-005
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-006
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-007
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-008
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-009
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-010
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-011
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-012
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-013
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-014
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-015
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-016
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-017
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-018
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-019
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-020
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-021
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-022
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-023
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-024
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-025
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-026
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-027
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
         ● Shadow-028
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:quad.mesh _shadowCastingMode=0}
       ● Woods
         ● Shadow
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:plane.mesh _shadowCastingMode=0}
         ● SM_Wood_01
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
         ● SM_Wood_02
@@ -360,7 +360,7 @@
         ● Window-001
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
         ● Plane
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:plane.mesh _shadowCastingMode=0}
       ● lightning [P→f874611c…]
     ● SellingStationRed @(-5,0,11.8)
       ◆ Script:8d141ySj {crystalIcon=<asset> crystalStack=→CrystallStack#1821 carActiveAnchor=→ActiveWaypoint#1833 carPool=→Cars#1849}
@@ -440,7 +440,7 @@
         ● SM_Perehodnik
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
         ● SM_Perehodnik-001
-          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+          ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:box.mesh _shadowCastingMode=1}
         [+2 hidden nodes, depth 1]
     ● Button @(8.5,0,-4)
       ◆ Script:f1f387/0 {buttonNode=→SM_Button#2045 jumpTarget=→Foot#2046 trigger=→Button#2054 startHidden=true}
@@ -458,11 +458,11 @@
       ● SM_Bort-001
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
       ● Cylinder
-        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:cylinder.mesh _shadowCastingMode=1}
         ◆ BoxCollider {_isTrigger=false _id=54AvU00X9ECqgNjWc50XO+ _center=[0.8,0,-11.5] _size=[3.4,2.4,24.1]}
         ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
       ● Cylinder-001
-        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
+        ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:cylinder.mesh _shadowCastingMode=1}
         ◆ BoxCollider {_isTrigger=false _id=c4CrJcxs9Da6fkoY10Ulme _center=[0.8,0,-11.5] _size=[3.4,2.4,24.1]}
         ◆ RigidBody {_group=1 _type=2 _mass=1 _allowSleep=true}
       ● Path1
@@ -559,7 +559,7 @@
       ● StoreButton
         ◆ UITransform {_id=d0ViStspdJbIFNnAYm4gU8 _contentSize=[509,168] _anchorPoint=[0.5,0.5]}
         ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=1}
-        ◆ Button {_interactable=true _transition=0 _normalSprite=<asset> _hoverSprite=<asset>}
+        ◆ Button {_interactable=true _transition=0 _normalSprite=<asset> _hoverSprite=builtin:spriteFrame}
         ◆ Widget {_alignFlags=9 _left=73 _right=0 _top=305}
         ◆ Script:5f9405q2 {button=→StoreButton#1895 pulseScale=1.1 pulseDuration=0.6 _id=36lRjUdmRGRqxxYwL/Y5eP}
       ● GoldCounter
@@ -591,7 +591,7 @@
       ● Curtain
         ◆ UITransform {_id=97hJJ/bkdCm79IkJb7WTNf _contentSize=[1080,2368] _anchorPoint=[0.5,0.5]}
         ◆ Widget {_alignFlags=45 _left=0 _right=0 _top=0}
-        ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=0}
+        ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=builtin:spriteFrame _type=0}
       ● AnimatedContainer
         ◆ UITransform {_id=64PlzbNtlI7LcYhR3vdT2a _contentSize=[1,1] _anchorPoint=[0.5,0.5]}
         ● Logo
@@ -600,7 +600,7 @@
         ● StoreButton
           ◆ UITransform {_id=6daatnKlNGQYW1QN0S8djK _contentSize=[509,168] _anchorPoint=[0.5,0.5]}
           ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=1}
-          ◆ Button {_interactable=true _transition=0 _normalSprite=<asset> _hoverSprite=<asset>}
+          ◆ Button {_interactable=true _transition=0 _normalSprite=<asset> _hoverSprite=builtin:spriteFrame}
   ● Dummies
     ● BigCrystal
       ● Cristal_Anim [P→3405a2a2…]

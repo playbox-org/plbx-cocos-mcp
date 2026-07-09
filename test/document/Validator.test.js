@@ -78,6 +78,24 @@ describe('Validator catches corruption', () => {
         assert.ok(warnings.some(w => /wrapper rule/.test(w)));
     });
 
+    // A1 — the wrapper rule must cover every world-space renderer, not just
+    // cc.Sprite/cc.MeshRenderer (SpriteRenderer/Billboard/ParticleSystem added).
+    for (const type of ['cc.SpriteRenderer', 'cc.Billboard', 'cc.ParticleSystem']) {
+        test(`wrapper rule warning for ${type} on prefab root`, () => {
+            const doc = load('TableCash.prefab');
+            const tableIdx = doc.resolveNode('Table');
+            const compIdx = doc.componentIndices(tableIdx)[0];
+            doc.getObject(tableIdx)._components = [];
+            doc.root.node._components.push({ __id__: compIdx });
+            const comp = doc.getObject(compIdx);
+            comp.node = { __id__: doc.root.idx };
+            comp.__type__ = type;
+            const { warnings } = new Validator(doc).validate();
+            assert.ok(warnings.some(w => /wrapper rule/.test(w)),
+                `${type} on a prefab root must trip the wrapper rule`);
+        });
+    }
+
     test('unreachable objects produce a warning', () => {
         const doc = load('TableCash.prefab');
         doc.addObject({ __type__: 'cc.ModelBakeSettings', texture: null });
@@ -93,18 +111,23 @@ describe('Validator targetOverride checks', () => {
     const firstOverride = (doc) =>
         doc.objects.find(o => o.__type__ === 'cc.TargetOverrideInfo');
 
-    test('empty/non-string propertyPath is an error', () => {
+    // Structurally-dead records (broken propertyPath/targetInfo/source/target)
+    // are ones the engine skips on load, so they are warnings, not blocking
+    // errors — the editor even regenerates some of them on save.
+    test('empty/non-string propertyPath is a non-blocking warning', () => {
         const doc = load('Main.scene_V2.scene');
         firstOverride(doc).propertyPath = [];
-        const { errors } = new Validator(doc).validate();
-        assert.ok(errors.some(e => /propertyPath must be a non-empty array of strings/.test(e)));
+        const { errors, warnings } = new Validator(doc).validate();
+        assert.deepStrictEqual(errors, []);
+        assert.ok(warnings.some(w => /engine ignores this override.*propertyPath is empty or invalid/.test(w)));
     });
 
-    test('bad targetInfo is an error', () => {
+    test('bad targetInfo is a non-blocking warning', () => {
         const doc = load('Main.scene_V2.scene');
         firstOverride(doc).targetInfo = null;
-        const { errors } = new Validator(doc).validate();
-        assert.ok(errors.some(e => /targetInfo must reference a cc\.TargetInfo/.test(e)));
+        const { errors, warnings } = new Validator(doc).validate();
+        assert.deepStrictEqual(errors, []);
+        assert.ok(warnings.some(w => /engine ignores this override.*targetInfo is missing or invalid/.test(w)));
     });
 
     test('sourceInfo null with a node source is an error', () => {
@@ -116,12 +139,13 @@ describe('Validator targetOverride checks', () => {
         assert.ok(errors.some(e => /source .* is not a component/.test(e)));
     });
 
-    test('target referencing a non-node is an error', () => {
+    test('target referencing a non-node is a non-blocking warning', () => {
         const doc = load('Main.scene_V2.scene');
         const override = firstOverride(doc);
         override.target = { __id__: 0 }; // the cc.SceneAsset head
-        const { errors } = new Validator(doc).validate();
-        assert.ok(errors.some(e => /target must be null or reference a node/.test(e)));
+        const { errors, warnings } = new Validator(doc).validate();
+        assert.deepStrictEqual(errors, []);
+        assert.ok(warnings.some(w => /engine ignores this override.*target is not a node/.test(w)));
     });
 
     test('shadowed non-null serialized value is a warning', () => {

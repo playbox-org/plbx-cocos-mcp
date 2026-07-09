@@ -27,11 +27,11 @@ import { SceneDocument, isRef } from './SceneDocument.js';
 import {
     OperationError, requireString, resolveEditableNode, mergeTyped, parsePropertyPath,
     findComponent, normalizeNodeProperty, describeComponentType, REQUIRED_COMPANIONS,
-    childInsertIndex
+    childInsertIndex, componentTypeMatcher
 } from './operations.js';
 import {
     transformValueTracked, upsertTargetOverride, dropTargetOverrides,
-    dropTargetOverridesInto, listTargetOverrides
+    dropTargetOverridesInto, listTargetOverrides, fileIdTargets
 } from './targetOverrides.js';
 import { generateFileId } from '../utils/fileId.js';
 import { eulerToQuat } from '../utils/math3d.js';
@@ -719,6 +719,180 @@ export function removedComponentEntries(doc, instance) {
         .filter(isRef)
         .map(r => ({ ref: r, obj: doc.getObject(r.__id__) }))
         .filter(e => e.obj?.__type__ === 'cc.TargetInfo' && Array.isArray(e.obj.localID));
+}
+
+// ------------------------------------------------ mounted components/children
+
+/**
+ * Well-formed mountedComponents entries of an instance. Mounted components
+ * are regular serialized components in THIS file (golden shape: `node` →
+ * stub, `__prefab: null`, `__editorExtras__.mountedRoot` → stub), attached
+ * on top of the instance; targetInfo.localID addresses the mount node in
+ * the SOURCE prefab.
+ * @returns {Array<{ref, obj, localID: string[]|null, componentIndices: number[]}>}
+ */
+export function mountedComponentEntries(doc, instance) {
+    return (instance.mountedComponents ?? [])
+        .filter(isRef)
+        .map(r => ({ ref: r, obj: doc.getObject(r.__id__) }))
+        .filter(e => e.obj?.__type__ === 'cc.MountedComponentsInfo')
+        .map(e => ({
+            ...e,
+            localID: targetInfoLocalID(doc, e.obj.targetInfo),
+            componentIndices: (e.obj.components ?? []).filter(isRef).map(r => r.__id__)
+        }));
+}
+
+/**
+ * Well-formed mountedChildren entries of an instance. Mounted nodes are
+ * regular cc.Node objects in THIS file with `_parent: null`.
+ * @returns {Array<{ref, obj, localID: string[]|null, nodeIndices: number[]}>}
+ */
+export function mountedChildrenEntries(doc, instance) {
+    return (instance.mountedChildren ?? [])
+        .filter(isRef)
+        .map(r => ({ ref: r, obj: doc.getObject(r.__id__) }))
+        .filter(e => e.obj?.__type__ === 'cc.MountedChildrenInfo')
+        .map(e => ({
+            ...e,
+            localID: targetInfoLocalID(doc, e.obj.targetInfo),
+            nodeIndices: (e.obj.nodes ?? []).filter(isRef).map(r => r.__id__)
+        }));
+}
+
+function targetInfoLocalID(doc, ref) {
+    const info = isRef(ref) ? doc.getObject(ref.__id__) : null;
+    return info?.__type__ === 'cc.TargetInfo' && Array.isArray(info.localID)
+        ? info.localID
+        : null;
+}
+
+/**
+ * Mounted components of a stub, flattened with their mount paths (resolved
+ * through the source prefab's fileIds; null when the source is unreadable).
+ * @returns {Array<{compIdx: number, comp: object, entry: object,
+ *   mountTarget: string|null}>}
+ */
+export function listMountedComponents(doc, stubIdx, ctx) {
+    const instance = doc.instanceOf(stubIdx);
+    if (!instance) return [];
+
+    let targets = null;
+    try {
+        const info = doc.getObject(doc.getObject(stubIdx)._prefab.__id__);
+        const src = loadSourcePrefabByUuid(ctx, info.asset.__uuid__);
+        // Memoize on the cached prefab entry: a batch of N ops on the same stub
+        // must not rebuild the (O(M×depth)) fileId map N times.
+        targets = src.fileIdTargets ??= fileIdTargets(src.doc);
+    } catch {
+        // Unresolvable source prefab — mount paths stay null, matching by
+        // type still works (the components live in THIS file)
+    }
+
+    const out = [];
+    for (const e of mountedComponentEntries(doc, instance)) {
+        const mountTarget = e.localID?.length === 1
+            ? (targets?.get(e.localID[0])?.target ?? null)
+            : null;
+        for (const compIdx of e.componentIndices) {
+            out.push({ compIdx, comp: doc.getObject(compIdx), entry: e, mountTarget });
+        }
+    }
+    return out;
+}
+
+/**
+ * Find a mounted component on a stub by type/script name; optional
+ * `op.target` (mount path, "/" = instance root) and `op.componentIndex`
+ * disambiguate. With `optional: true` only "no component field" and "no type
+ * match" return null (callers fall back to source-prefab semantics) — a
+ * found-but-AMBIGUOUS match or an out-of-range componentIndex still throws,
+ * so an ambiguous stub removal surfaces the disambiguation error instead of
+ * silently misrouting to source-prefab removal.
+ */
+export function findMountedComponent(doc, stubIdx, op, ctx, { optional = false } = {}) {
+    const all = listMountedComponents(doc, stubIdx, ctx);
+    const describeAll = () => all.map(m =>
+        `${describeComponentType(m.comp?.__type__ ?? '?', ctx)}` +
+        `${m.mountTarget ? ` (mounted at "${m.mountTarget}")` : ''}`).join(', ');
+
+    // Source prefab unreadable → every mountTarget is null; target-based
+    // disambiguation is impossible, so it must not silently drop candidates.
+    const unresolvedTargets = all.length > 0 && all.every(m => m.mountTarget === null);
+
+    if (op.component === undefined) {
+        if (optional) return null;
+        throw new OperationError(
+            `"component" (type/script name) is required on a prefab instance ` +
+            `(componentIndex alone is not enough — a mounted component has no global ` +
+            `positional index) — mounted components here: ${describeAll() || 'none'}`
+        );
+    }
+    const matcher = componentTypeMatcher(op.component, ctx);
+    let matches = all.filter(m => matcher(m.comp?.__type__));
+    if (op.target !== undefined && matches.length > 0) {
+        const wanted = op.target === '' ? '/' : op.target;
+        // Keep null (unresolved) mount paths ONLY when the whole source is
+        // unreadable (every candidate is null) — target disambiguation is
+        // then impossible and we must not silently drop candidates. When the
+        // source IS readable, a lone null is a sibling whose mount node was
+        // deleted from the source prefab: it can't be `wanted`, so drop it.
+        matches = matches.filter(m =>
+            m.mountTarget === wanted || (unresolvedTargets && m.mountTarget === null));
+    }
+
+    if (matches.length === 0) {
+        if (optional) return null;
+        throw new OperationError(
+            `"${doc.nodePath(stubIdx)}" is a prefab instance (collapsed stub) with no mounted ` +
+            `"${op.component}" component${op.target !== undefined ? ` at target "${op.target}"` : ''}. ` +
+            `Mounted components: ${describeAll() || 'none'}. For properties of SOURCE prefab ` +
+            `components use set_instance_property {node, target?, component, property, value} — ` +
+            `or edit the source .prefab asset.`
+        );
+    }
+    if (matches.length > 1 && op.componentIndex === undefined) {
+        // Ambiguous even under `optional`: surface the disambiguation error
+        // rather than let remove_component misroute to source-prefab removal.
+        const list = matches.map(m => m.mountTarget ? `"${m.mountTarget}"` : 'unresolved target').join(', ');
+        throw new OperationError(
+            `${matches.length} "${op.component}" components are mounted on this instance ` +
+            `(at ${list}) — disambiguate with ${unresolvedTargets ? '' : 'target: "<mount path>" or '}` +
+            `componentIndex` +
+            `${unresolvedTargets ? ' (source prefab unreadable — mount paths unresolved)' : ''}`
+        );
+    }
+    if (op.componentIndex !== undefined &&
+        (op.componentIndex < 0 || op.componentIndex >= matches.length)) {
+        // Out-of-range even under `optional`: a bad index is a caller error to
+        // report, not a signal to fall back to source-prefab removal.
+        throw new OperationError(
+            `componentIndex ${op.componentIndex} out of range — ${matches.length} matching ` +
+            `mounted "${op.component}" component(s)`
+        );
+    }
+    return matches[op.componentIndex ?? 0];
+}
+
+/**
+ * A stub's single-hop transform/property override for `prop`, keyed by the
+ * stub root's fileId (so an override on an INNER node is not mistaken for the
+ * stub's own). undefined when there is no such override. Shared by Bounds and
+ * ComputeRotation so their instance-override resolution can never diverge.
+ */
+export function instanceOverrideValue(doc, instance, rootFileId, prop) {
+    if (!instance || rootFileId === undefined) return undefined;
+    for (const ref of instance.propertyOverrides ?? []) {
+        if (!isRef(ref)) continue;
+        const o = doc.getObject(ref.__id__);
+        if (o?.__type__ !== 'CCPropertyOverrideInfo' || !Array.isArray(o.propertyPath)) continue;
+        const target = isRef(o.targetInfo) ? doc.getObject(o.targetInfo.__id__) : null;
+        if (target?.localID?.length === 1 && target.localID[0] === rootFileId &&
+            o.propertyPath.length === 1 && o.propertyPath[0] === prop) {
+            return o.value;
+        }
+    }
+    return undefined;
 }
 
 // ---------------------------------------------------------- override store

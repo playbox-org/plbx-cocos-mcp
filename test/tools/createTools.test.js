@@ -12,7 +12,7 @@ const EXPECTED_NAMES = [
     'find_scene_nodes', 'inspect_node',
     'get_project_info', 'get_asset_info', 'list_assets',
     'apply_edits', 'validate_document', 'build_prefab', 'build_animgraph',
-    'get_node_bounds', 'compute_fit_scale', 'lint_assets'
+    'get_node_bounds', 'compute_fit_scale', 'compute_rotation', 'find_asset_references', 'lint_assets'
 ];
 
 describe('createTools registry', () => {

@@ -301,7 +301,7 @@
                         "_lineHeight": 40,
                         "_overflow": 0,
                         "_enableWrapText": true,
-                        "_font": "<asset>",
+                        "_font": "builtin:OpenSans-Bold.ttf",
                         "_isSystemFontUsed": false,
                         "_spacingX": 0,
                         "_isItalic": false,

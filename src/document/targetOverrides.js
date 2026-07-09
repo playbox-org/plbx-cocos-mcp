@@ -31,7 +31,8 @@
 import { isRef } from './SceneDocument.js';
 import { OperationError, findComponent, resolveAssetValue } from './operations.js';
 import {
-    loadSourcePrefabByUuid, registryInfo, nodeFileId, componentFileId
+    loadSourcePrefabByUuid, registryInfo, nodeFileId, componentFileId,
+    findMountedComponent
 } from './instances.js';
 
 // -------------------------------------------------------------- resolution
@@ -118,6 +119,10 @@ export function detectNodeInstanceRef(doc, ref, ctx) {
  * {"$component": spec} whose node is (or continues into) a stub →
  * {stubIdx, localID}, else null. spec.target optionally addresses the node
  * inside the source prefab (default: its root), like set_instance_property.
+ * A component MOUNTED on the stub is a plain object of this file — it wins
+ * over source-prefab lookup and returns {direct: compIdx} for a regular
+ * {__id__} reference (the golden scene references mounted components that
+ * way).
  */
 export function detectComponentInstanceRef(doc, spec, ctx) {
     let hit = null;
@@ -129,6 +134,12 @@ export function detectComponentInstanceRef(doc, spec, ctx) {
     }
     if (exactIdx !== null) {
         if (!doc.isInstanceStub(exactIdx)) return null;
+        if (spec.target === undefined) {
+            const mounted = findMountedComponent(doc, exactIdx,
+                { component: spec.type, componentIndex: spec.componentIndex }, ctx,
+                { optional: true });
+            if (mounted) return { direct: mounted.compIdx };
+        }
         hit = openStub(doc, exactIdx, spec.target ?? '/', ctx);
     } else if (spec.target !== undefined) {
         throw new OperationError(
@@ -171,8 +182,9 @@ export function transformValueTracked(doc, value, ctx, refs, path = []) {
     if ('$component' in value) {
         const spec = value.$component;
         const hit = detectComponentInstanceRef(doc, spec, ctx);
+        if (hit?.direct !== undefined) return { __id__: hit.direct };
         if (hit) {
-            refs.push({ path, ...hit });
+            refs.push({ path, stubIdx: hit.stubIdx, localID: hit.localID });
             return null;
         }
         const nodeIdx = doc.resolveNode(spec.node);
@@ -294,6 +306,131 @@ export function dropTargetOverridesInto(doc, stubIdx, localID) {
         return !(info?.__type__ === 'cc.TargetInfo' && samePath(info.localID, localID));
     });
     return before - registry.targetOverrides.length;
+}
+
+// ------------------------------------------------------------ dangling prune
+
+/**
+ * Structurally dead TargetOverrideInfo records: broken forms the engine
+ * skips on load (applyTargetOverrides bails on an unresolvable endpoint)
+ * but that block apply_edits because they fail validation. Editor-authored
+ * benign forms are NOT flagged — target: null occurs in the golden corpus
+ * and stays. Scans every PrefabInfo.targetOverrides array (the editor
+ * leaves stale records on instance-stub PrefabInfos too, not just the
+ * document root registry).
+ *
+ * @returns {Array<{ownerIdx: number, idx: number, obj: object,
+ *   propertyPath: string, reasons: string[]}>}
+ */
+export function findDanglingOverrides(doc) {
+    const dead = [];
+    const mountedNodes = mountedChildNodeIdxs(doc);
+    doc.objects.forEach((owner, ownerIdx) => {
+        if (owner.__type__ !== 'cc.PrefabInfo' || !Array.isArray(owner.targetOverrides)) return;
+        for (const ref of owner.targetOverrides) {
+            if (!isRef(ref)) continue;
+            const obj = doc.getObject(ref.__id__);
+            if (obj?.__type__ !== 'cc.TargetOverrideInfo') continue;
+            const reasons = overrideDeadReasons(doc, obj, mountedNodes);
+            if (reasons.length > 0) {
+                dead.push({
+                    ownerIdx,
+                    idx: ref.__id__,
+                    obj,
+                    propertyPath: Array.isArray(obj.propertyPath)
+                        ? obj.propertyPath.join('.') : String(obj.propertyPath),
+                    reasons
+                });
+            }
+        }
+    });
+    return dead;
+}
+
+/**
+ * Node indices that are mounted children of an instance (roots + their whole
+ * subtrees). These are serialized with `_parent: null`, so `nodePath()`
+ * returns null for them even though the engine resolves them at load — they
+ * must NOT be treated as "detached" by the dangling-override check.
+ */
+export function mountedChildNodeIdxs(doc) {
+    const set = new Set();
+    const addSubtree = (idx) => {
+        if (set.has(idx)) return;
+        set.add(idx);
+        for (const child of doc.childIndices(idx)) addSubtree(child);
+    };
+    doc.objects.forEach((obj) => {
+        if (obj?.__type__ !== 'cc.MountedChildrenInfo' || !Array.isArray(obj.nodes)) return;
+        for (const r of obj.nodes) if (isRef(r)) addSubtree(r.__id__);
+    });
+    return set;
+}
+
+/** A node still resolvable at load: attached to the scene, or a mounted child */
+function nodeAttached(doc, nodeIdx, mountedNodes) {
+    return doc.nodePath(nodeIdx) !== null || mountedNodes.has(nodeIdx);
+}
+
+/** Why the engine would skip this record on load ([] = record is live) */
+export function overrideDeadReasons(doc, obj, mountedNodes = new Set()) {
+    const reasons = [];
+
+    if (!isRef(obj.source)) {
+        reasons.push('source is null — the referencing component no longer exists');
+    } else {
+        const src = doc.getObject(obj.source.__id__);
+        const ownerNodeIdx = doc.isNode(src) ? obj.source.__id__
+            : isRef(src?.node) ? src.node.__id__ : null;
+        if (ownerNodeIdx === null || !nodeAttached(doc, ownerNodeIdx, mountedNodes)) {
+            reasons.push('source is detached from the node hierarchy');
+        }
+    }
+
+    if (!Array.isArray(obj.propertyPath) || obj.propertyPath.length === 0 ||
+        obj.propertyPath.some(s => typeof s !== 'string')) {
+        reasons.push('propertyPath is empty or invalid');
+    }
+
+    const info = isRef(obj.targetInfo) ? doc.getObject(obj.targetInfo.__id__) : null;
+    if (info?.__type__ !== 'cc.TargetInfo' ||
+        !Array.isArray(info.localID) || info.localID.length === 0 ||
+        info.localID.some(s => typeof s !== 'string')) {
+        reasons.push('targetInfo is missing or invalid');
+    }
+
+    // target: null is a legal editor form (kept); a reference must land on
+    // a node that is still attached to the hierarchy.
+    if (obj.target !== null && obj.target !== undefined) {
+        if (!isRef(obj.target)) {
+            reasons.push('target is not a reference');
+        } else if (!doc.isNode(doc.getObject(obj.target.__id__))) {
+            reasons.push('target is not a node');
+        } else if (!nodeAttached(doc, obj.target.__id__, mountedNodes)) {
+            reasons.push('target node is detached from the node hierarchy');
+        }
+    }
+    return reasons;
+}
+
+/**
+ * Remove every dangling record found by findDanglingOverrides from its
+ * owning PrefabInfo. An emptied targetOverrides array becomes null (the
+ * editor's no-overrides form). Orphaned TargetInfo objects and detached
+ * target nodes become unreachable and are dropped by renumber().
+ *
+ * @returns {Array<{propertyPath: string, reasons: string[]}>} removed records
+ */
+export function pruneDanglingOverrides(doc) {
+    const dead = findDanglingOverrides(doc);
+    const deadIds = new Set(dead.map(d => d.idx));
+    for (const ownerIdx of new Set(dead.map(d => d.ownerIdx))) {
+        const owner = doc.getObject(ownerIdx);
+        owner.targetOverrides = owner.targetOverrides.filter(
+            r => !(isRef(r) && deadIds.has(r.__id__)));
+        if (owner.targetOverrides.length === 0) owner.targetOverrides = null;
+    }
+    return dead.map(({ propertyPath, reasons }) => ({ propertyPath, reasons }));
 }
 
 // ------------------------------------------------------------ read helpers

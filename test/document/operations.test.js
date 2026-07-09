@@ -15,6 +15,7 @@ import { applyOperations, OperationError } from '../../src/document/operations.j
 import { Validator } from '../../src/document/Validator.js';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
 import { compressUuid } from '../../src/utils/uuid.js';
+import { templateTypes } from '../../src/document/ComponentTemplates.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GOLDEN = (f) => path.join(__dirname, '..', 'fixtures', 'golden', f);
@@ -289,6 +290,58 @@ describe('add_component', () => {
         assertValid(doc);
     });
 
+    test('adding a UI component auto-adds cc.UITransform first (editor behavior)', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Icon', layer: 'ui_2d' },
+            { op: 'add_component', node: 'Icon', type: 'cc.Sprite' }
+        ]);
+        const types = doc.componentIndices(doc.resolveNode('Icon'))
+            .map(i => doc.getObject(i).__type__);
+        // UITransform companion inserted BEFORE the Sprite
+        assert.deepStrictEqual(types, ['cc.UITransform', 'cc.Sprite']);
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('companion auto-add is idempotent — never a second cc.UITransform', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Icon', layer: 'ui_2d' },
+            { op: 'add_component', node: 'Icon', type: 'cc.UITransform' },
+            { op: 'add_component', node: 'Icon', type: 'cc.Label' },
+            { op: 'add_component', node: 'Icon', type: 'cc.Sprite' }
+        ]);
+        const types = doc.componentIndices(doc.resolveNode('Icon'))
+            .map(i => doc.getObject(i).__type__);
+        assert.strictEqual(types.filter(t => t === 'cc.UITransform').length, 1);
+        assert.deepStrictEqual(types, ['cc.UITransform', 'cc.Label', 'cc.Sprite']);
+    });
+
+    test('transitive companions — cc.SafeArea pulls in cc.Widget → cc.UITransform', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Safe', layer: 'ui_2d' },
+            { op: 'add_component', node: 'Safe', type: 'cc.SafeArea' }
+        ]);
+        const types = doc.componentIndices(doc.resolveNode('Safe'))
+            .map(i => doc.getObject(i).__type__);
+        assert.deepStrictEqual(types, ['cc.UITransform', 'cc.Widget', 'cc.SafeArea']);
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('non-UI component gets no companions', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Box' },
+            { op: 'add_component', node: 'Box', type: 'cc.BoxCollider' }
+        ]);
+        const types = doc.componentIndices(doc.resolveNode('Box'))
+            .map(i => doc.getObject(i).__type__);
+        assert.deepStrictEqual(types, ['cc.BoxCollider']);
+    });
+
     test('MeshRenderer wires bakeSettings extras', () => {
         const doc = loadPrefab();
         applyOperations(doc, [
@@ -390,7 +443,7 @@ describe('add_component', () => {
     test('unknown cc.* type lists available templates', () => {
         const doc = loadPrefab();
         assert.throws(() =>
-            applyOperations(doc, [{ op: 'add_component', node: 'Table', type: 'cc.ParticleSystem' }]),
+            applyOperations(doc, [{ op: 'add_component', node: 'Table', type: 'cc.TiledMap' }]),
             /Available cc\.\* templates/);
     });
 });
@@ -429,10 +482,29 @@ describe('set_component_property / set_asset_ref', () => {
                 property: 'spriteFrame', asset: 'assets/Sprites/panel.png@f9941'
             }
         ], { assetIndex });
-        const sprite = doc.getObject(doc.componentIndices(doc.resolveNode('Icon'))[0]);
+        const sprite = doc.componentIndices(doc.resolveNode('Icon'))
+            .map(i => doc.getObject(i))
+            .find(c => c.__type__ === 'cc.Sprite');
         assert.deepStrictEqual(sprite._spriteFrame, {
             __uuid__: '11112222-3333-4444-8555-666677778888@f9941',
             __expectedType__: 'cc.SpriteFrame'
+        });
+    });
+
+    test('set_asset_ref resolves an engine builtin (default material) by UUID', () => {
+        // Builtins are not in the project AssetIndex; resolveAssetValue falls
+        // back to the builtin table, matching the read path.
+        const doc = loadPrefab();
+        applyOperations(doc, [{
+            op: 'set_asset_ref', node: 'Table', component: 'MeshRenderer',
+            property: 'materials.0', asset: '8f8bba83-df9c-4afe-8450-e12d0dbe71b7'
+        }], { assetIndex });
+        const mr = doc.componentIndices(doc.resolveNode('Table'))
+            .map(i => doc.getObject(i))
+            .find(c => c.__type__ === 'cc.MeshRenderer');
+        assert.deepStrictEqual(mr._materials[0], {
+            __uuid__: '8f8bba83-df9c-4afe-8450-e12d0dbe71b7',
+            __expectedType__: 'cc.Material'
         });
     });
 
@@ -625,6 +697,375 @@ describe('cc.animation.AnimationController', () => {
         const reloaded = new SceneDocument(JSON.parse(first));
         reloaded.renumber();
         assert.strictEqual(reloaded.serialize(), first);
+    });
+});
+
+describe('cc.Line', () => {
+    /** Prefab with a Line on a fresh child node; returns the component */
+    function prefabWithLine(props) {
+        const doc = loadPrefab();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'RopeVisual' },
+            { op: 'add_component', node: 'RopeVisual', type: 'Line', ...(props ? { properties: props } : {}) }
+        ]);
+        const compIdx = doc.componentIndices(doc.resolveNode('RopeVisual'))[0];
+        return { doc, compIdx, comp: doc.getObject(compIdx) };
+    }
+
+    test('template wires standalone CurveRange/GradientRange (editor shape from Rope.prefab)', () => {
+        const { doc, comp } = prefabWithLine();
+        assert.strictEqual(comp.__type__, 'cc.Line');
+        assert.deepStrictEqual(doc.getObject(comp._width.__id__),
+            { __type__: 'cc.CurveRange', mode: 0, constant: 1, multiplier: 1 });
+        const gradient = doc.getObject(comp._color.__id__);
+        assert.deepStrictEqual(Object.keys(gradient), ['__type__', '_mode', 'color']);
+        assert.deepStrictEqual(gradient.color, { __type__: 'cc.Color', r: 255, g: 255, b: 255, a: 255 });
+        assert.deepStrictEqual(comp._materials, []);
+        assert.strictEqual(comp._worldSpace, false);
+        assert.deepStrictEqual(comp._positions, []);
+        assert.strictEqual(doc.getObject(comp.__prefab.__id__).__type__, 'cc.CompPrefabInfo');
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('canonical layout: CompPrefabInfo → CurveRange → GradientRange follow the component', () => {
+        const { doc } = prefabWithLine();
+        doc.renumber();
+        const lineIdx = doc.objects.findIndex(o => o.__type__ === 'cc.Line');
+        assert.strictEqual(doc.objects[lineIdx + 1].__type__, 'cc.CompPrefabInfo');
+        assert.strictEqual(doc.objects[lineIdx + 2].__type__, 'cc.CurveRange');
+        assert.strictEqual(doc.objects[lineIdx + 3].__type__, 'cc.GradientRange');
+        // fixed point: renumber must already be an identity
+        const first = doc.serialize();
+        const reloaded = new SceneDocument(JSON.parse(first));
+        reloaded.renumber();
+        assert.strictEqual(reloaded.serialize(), first);
+    });
+
+    test('"width.constant" writes into the referenced CurveRange, keeping the reference', () => {
+        const { doc, comp } = prefabWithLine();
+        const widthIdx = comp._width.__id__;
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'RopeVisual', component: 'cc.Line',
+            property: 'width.constant', value: 0.08
+        }]);
+        assert.deepStrictEqual(comp._width, { __id__: widthIdx }, 'reference must stay intact');
+        assert.strictEqual(doc.getObject(widthIdx).constant, 0.08);
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('object value for "width" merges through the reference', () => {
+        const { doc, comp } = prefabWithLine({ width: { constant: 0.05 } });
+        const width = doc.getObject(comp._width.__id__);
+        assert.strictEqual(width.constant, 0.05);
+        assert.strictEqual(width.mode, 0, 'unset CurveRange fields survive the merge');
+        assert.strictEqual(width.multiplier, 1);
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('primitive write to a standalone value object is rejected with a hint', () => {
+        const { doc } = prefabWithLine();
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: 'RopeVisual', component: 'cc.Line',
+            property: 'width', value: 0.08
+        }]), /standalone cc\.CurveRange.*width\.constant/s);
+    });
+
+    test('color.color merges Color channels through the reference', () => {
+        const { doc, comp } = prefabWithLine();
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'RopeVisual', component: 'Line',
+            property: 'color.color', value: { r: 87, g: 45, b: 0 }
+        }]);
+        const gradient = doc.getObject(comp._color.__id__);
+        assert.deepStrictEqual(gradient.color, { __type__: 'cc.Color', r: 87, g: 45, b: 0, a: 255 });
+        doc.renumber();
+        assertValid(doc);
+    });
+});
+
+describe('property paths through references (code-review fixes)', () => {
+    /** Prefab with a fresh child carrying `type` */
+    function prefabWith(type, name = 'Fx') {
+        const doc = loadPrefab();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name },
+            { op: 'add_component', node: name, type }
+        ]);
+        return doc;
+    }
+
+    // C1 — a mid-path node/component ref must never be followed into
+    test('C1: writing THROUGH a component\'s node ref is rejected (no host mutation)', () => {
+        const doc = prefabWith('cc.Line', 'RopeVisual');
+        const nodeIdx = doc.resolveNode('RopeVisual');
+        const before = doc.getObject(nodeIdx)._active;
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: 'RopeVisual', component: 'cc.Line',
+            property: 'node.active', value: false
+        }]), /is a node, not an editable sub-object/);
+        assert.strictEqual(doc.getObject(nodeIdx)._active, before,
+            'the host node must not have been deactivated');
+    });
+
+    test('C1: writing THROUGH node.layer does not bypass layer validation', () => {
+        const doc = prefabWith('cc.Line', 'RopeVisual');
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: 'RopeVisual', component: 'cc.Line',
+            property: 'node.layer', value: 'UI'
+        }]), /is a node, not an editable sub-object/);
+    });
+
+    // C2 — object-merge through a ref is deep, not shallow
+    test('C2: partial nested vector keeps __type__ and untouched components', () => {
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        const shape = doc.getObject(ps._shapeModule.__id__);
+        assert.strictEqual(shape.boxThickness.__type__, 'cc.Vec3');
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule', value: { boxThickness: { x: 2 } }
+        }]);
+        assert.deepStrictEqual(doc.getObject(ps._shapeModule.__id__).boxThickness,
+            { __type__: 'cc.Vec3', x: 2, y: 0, z: 0 },
+            'deep merge keeps __type__/y/z instead of flattening to {x:2}');
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('C2: overwriting a ref-valued sub-field with a scalar is rejected', () => {
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        const shape = doc.getObject(ps._shapeModule.__id__);
+        assert.ok('__id__' in shape.arcSpeed, 'arcSpeed starts as a CurveRange reference');
+        const arcSpeedIdx = shape.arcSpeed.__id__;
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule', value: { arcSpeed: 3 }
+        }]), /references a standalone object/);
+        assert.deepStrictEqual(doc.getObject(ps._shapeModule.__id__).arcSpeed,
+            { __id__: arcSpeedIdx }, 'the reference must survive the rejected write');
+    });
+
+    test('C2: overwriting a ref-valued sub-field with a plain object is rejected (no orphan)', () => {
+        // Regression: mergeTyped has no `doc`, so it cannot follow the nested
+        // {__id__}→CurveRange ref. A plain-object value used to silently REPLACE
+        // the ref with a non-ref object, orphaning the CurveRange and saving a
+        // structurally invalid field with no error. The guard now rejects it.
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        const shape = doc.getObject(ps._shapeModule.__id__);
+        const arcSpeedIdx = shape.arcSpeed.__id__;
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule', value: { arcSpeed: { constant: 5 } }
+        }]), /references a standalone object/);
+        assert.deepStrictEqual(doc.getObject(ps._shapeModule.__id__).arcSpeed,
+            { __id__: arcSpeedIdx }, 'the reference must survive the rejected write');
+    });
+
+    test('C2: the nested CurveRange IS editable via a dotted path', () => {
+        // The rejection above points at the dotted-path form — verify it works.
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        const arcSpeedIdx = doc.getObject(ps._shapeModule.__id__).arcSpeed.__id__;
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule.arcSpeed.constant', value: 5
+        }]);
+        assert.strictEqual(doc.getObject(arcSpeedIdx).constant, 5);
+        assert.deepStrictEqual(doc.getObject(ps._shapeModule.__id__).arcSpeed,
+            { __id__: arcSpeedIdx }, 'the reference is preserved, edited in place');
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    // C3 — a serialized field with no getter twin (_enable) is reachable
+    test('C3: short field name (enable) normalizes to its _enable twin', () => {
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule', value: { enable: true }
+        }]);
+        assert.strictEqual(doc.getObject(ps._shapeModule.__id__)._enable, true);
+        assert.ok(!('enable' in doc.getObject(ps._shapeModule.__id__)),
+            'no stray non-underscore key is created');
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('C3: paired getter/setter twin still mirrors through the merge', () => {
+        const doc = prefabWith('cc.ParticleSystem');
+        const ps = doc.getObject(doc.componentIndices(doc.resolveNode('Fx'))[0]);
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'Fx', component: 'cc.ParticleSystem',
+            property: 'shapeModule', value: { shapeType: 1 }
+        }]);
+        const shape = doc.getObject(ps._shapeModule.__id__);
+        assert.strictEqual(shape.shapeType, 1);
+        assert.strictEqual(shape._shapeType, 1, 'the _shapeType twin mirrors the write');
+    });
+});
+
+describe('every component template', () => {
+    // Companions the editor would have added before the type is allowed
+    const PRE = (type) => {
+        if (type === 'cc.UITransform') return [];
+        const pre = ['cc.UITransform'];
+        if (type === 'cc.SafeArea') pre.push('cc.Widget');
+        if (type === 'cc.LabelOutline') pre.push('cc.Label');
+        return pre;
+    };
+    const opsForAllTemplates = () => templateTypes().flatMap((type, i) => {
+        const name = `Holder${i}`;
+        return [
+            { op: 'add_node', parent: '/', name },
+            ...PRE(type).map(t => ({ op: 'add_component', node: name, type: t })),
+            { op: 'add_component', node: name, type }
+        ];
+    });
+
+    test('adds cleanly to a prefab, validates, keeps the canonical fixed point', () => {
+        const doc = loadPrefab();
+        applyOperations(doc, opsForAllTemplates());
+        doc.renumber();
+        assertValid(doc);
+        const first = doc.serialize();
+        const reloaded = new SceneDocument(JSON.parse(first));
+        reloaded.renumber();
+        assert.strictEqual(reloaded.serialize(), first);
+        // every component got a CompPrefabInfo and an empty _id
+        for (const obj of doc.objects) {
+            if (obj.__type__ && templateTypes().includes(obj.__type__)) {
+                assert.strictEqual(obj._id, '', obj.__type__);
+                assert.ok(obj.__prefab?.__id__ !== undefined, `${obj.__type__} missing __prefab`);
+            }
+        }
+    });
+
+    test('adds cleanly to a scene, validates, keeps the canonical fixed point', () => {
+        const doc = loadScene();
+        applyOperations(doc, opsForAllTemplates());
+        doc.renumber();
+        assertValid(doc);
+        const first = doc.serialize();
+        const reloaded = new SceneDocument(JSON.parse(first));
+        reloaded.renumber();
+        assert.strictEqual(reloaded.serialize(), first);
+        for (const obj of doc.objects) {
+            if (obj.__type__ && templateTypes().includes(obj.__type__)) {
+                assert.match(obj._id, /^[A-Za-z0-9+/]{22,23}$/, obj.__type__);
+                assert.strictEqual(obj.__prefab, null, obj.__type__);
+            }
+        }
+    });
+
+    test('no template leaves an unwired __ref__ or __self_node__ placeholder', () => {
+        const doc = loadPrefab();
+        applyOperations(doc, opsForAllTemplates());
+        doc.renumber();
+        const flat = JSON.stringify(doc.objects);
+        assert.ok(!flat.includes('__ref__'), 'unwired __ref__ placeholder');
+        assert.ok(!flat.includes('__self_node__'), 'unwired __self_node__ placeholder');
+    });
+});
+
+describe('cc.ParticleSystem', () => {
+    const addPS = () => {
+        const doc = loadPrefab();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'FX' },
+            { op: 'add_component', node: 'FX', type: 'ParticleSystem' }
+        ]);
+        const compIdx = doc.componentIndices(doc.resolveNode('FX'))[0];
+        return { doc, compIdx, comp: doc.getObject(compIdx) };
+    };
+
+    test('template wires modules, aliased curves and the renderer (editor shape)', () => {
+        const { doc, compIdx, comp } = addPS();
+        // startSize aliases startSizeX; startRotation aliases startRotationZ
+        assert.strictEqual(comp.startSize.__id__, comp.startSizeX.__id__);
+        assert.strictEqual(comp.startRotation.__id__, comp.startRotationZ.__id__);
+        assert.strictEqual(doc.getObject(comp.startSizeX.__id__).constant, 1);
+        // renderer is a headless data object
+        const renderer = doc.getObject(comp.renderer.__id__);
+        assert.strictEqual(renderer.__type__, 'cc.ParticleSystemRenderer');
+        assert.strictEqual(renderer.node, undefined);
+        // trail module points back at the owning component
+        const trail = doc.getObject(comp._trailModule.__id__);
+        assert.strictEqual(trail._particleSystem.__id__, compIdx);
+        // module → own curve (nested extras→extras wiring)
+        const shape = doc.getObject(comp._shapeModule.__id__);
+        assert.strictEqual(doc.getObject(shape.arcSpeed.__id__).__type__, 'cc.CurveRange');
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('nested segments map the underscore prefix and reject typos', () => {
+        const { doc, comp } = addPS();
+        applyOperations(doc, [
+            { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem', property: 'shapeModule.enable', value: true }
+        ]);
+        const shape = doc.getObject(comp._shapeModule.__id__);
+        assert.strictEqual(shape._enable, true);
+        assert.ok(!('enable' in shape), 'no stray "enable" key created');
+        assert.throws(() =>
+            applyOperations(doc, [
+                { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem', property: 'shapeModule.radiuss', value: 1 }
+            ]), /has no property "radiuss".*Available/s);
+    });
+
+    test('writes through refs edit the shared curve and sync getter pairs', () => {
+        const { doc, comp } = addPS();
+        applyOperations(doc, [
+            { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem', property: 'startSizeX.constant', value: 3.5 },
+            { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem', property: '_shapeModule.shapeType', value: 1 },
+            { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem', property: 'enableCulling', value: true }
+        ]);
+        // shared object → the alias sees the same value
+        assert.strictEqual(doc.getObject(comp.startSize.__id__).constant, 3.5);
+        // getter/setter pair inside the module mirrored
+        const shape = doc.getObject(comp._shapeModule.__id__);
+        assert.strictEqual(shape.shapeType, 1);
+        assert.strictEqual(shape._shapeType, 1);
+        // deprecated alias pair on the component itself mirrored
+        assert.strictEqual(comp._dataCulling, true);
+        doc.renumber();
+        assertValid(doc);
+    });
+
+    test('whole-object merge through a ref syncs the module getter pair (#3)', () => {
+        const { doc, comp } = addPS();
+        // The whole-object merge form (not the dotted "shapeModule.shapeType"):
+        // both twins inside the standalone cc.ShapeModule must stay in sync.
+        applyOperations(doc, [
+            { op: 'set_component_property', node: 'FX', component: 'cc.ParticleSystem',
+              property: 'shapeModule', value: { shapeType: 0 } }
+        ]);
+        const shape = doc.getObject(comp._shapeModule.__id__);
+        assert.strictEqual(shape.shapeType, 0);
+        assert.strictEqual(shape._shapeType, 0, '_shapeType (the deserialized field) must mirror');
+        doc.renumber();
+        assertValid(doc);
+    });
+});
+
+describe('light components', () => {
+    test('illuminance twins stay in sync and StaticLightSettings is wired', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Sun' },
+            { op: 'add_component', node: 'Sun', type: 'DirectionalLight' },
+            { op: 'set_component_property', node: 'Sun', component: 'cc.DirectionalLight', property: '_illuminanceHDR', value: 90000 }
+        ]);
+        const comp = doc.getObject(doc.componentIndices(doc.resolveNode('Sun'))[0]);
+        assert.strictEqual(comp._illuminance, 90000);
+        assert.strictEqual(doc.getObject(comp._staticSettings.__id__).__type__, 'cc.StaticLightSettings');
+        doc.renumber();
+        assertValid(doc);
     });
 });
 

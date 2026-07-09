@@ -10,6 +10,7 @@ import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 import { AssetInspector } from '../core/AssetInspector.js';
+import { resolveBuiltin } from '../core/builtins.js';
 
 export class GetAssetInfo extends BaseTool {
     get name() {
@@ -50,6 +51,14 @@ export class GetAssetInfo extends BaseTool {
             const info = inspector.inspect(args.asset);
 
             if (!info) {
+                const builtin = resolveBuiltin(args.asset);
+                if (builtin) {
+                    if (args?.format === 'json') {
+                        return this.success(JSON.stringify(
+                            { builtin: true, engine: builtin.engine, ...builtin.entry }, null, 2));
+                    }
+                    return this.success(this.#formatBuiltin(builtin));
+                }
                 const notImported = this.#unimportedFile(args.asset, projectRoot);
                 if (notImported) {
                     return this.error(
@@ -60,7 +69,8 @@ export class GetAssetInfo extends BaseTool {
                 }
                 return this.error(
                     `Asset not found: ${args.asset}. ` +
-                    'Use list_assets to browse available assets.'
+                    'Use list_assets to browse available assets ' +
+                    '(not an engine built-in either — the reference may be broken).'
                 );
             }
 
@@ -89,6 +99,30 @@ export class GetAssetInfo extends BaseTool {
             }
         }
         return null;
+    }
+
+    /** Card for an engine built-in (db://internal) — not a project asset */
+    #formatBuiltin({ entry, subAsset, engine }) {
+        const lines = [
+            `# Engine built-in: db://internal/${entry.path}`,
+            '',
+            'This asset ships INSIDE Cocos Creator (the editor\'s internal db), not in the',
+            'project — referencing it is normal, there is nothing to fix.',
+            '',
+            `UUID: ${entry.uuid}`,
+            `Type: ${entry.importer}`,
+            `Engine: ${engine}`
+        ];
+        if (subAsset) {
+            lines.push('', `## Referenced sub-asset`,
+                `- ${subAsset.importer}: ${subAsset.name || subAsset.id} (${entry.uuid}@${subAsset.id})`);
+        } else if (entry.subAssets?.length) {
+            lines.push('', `## Sub-assets (${entry.subAssets.length})`);
+            for (const s of entry.subAssets) {
+                lines.push(`- ${s.importer}: ${s.name || s.id} (${entry.uuid}@${s.id})`);
+            }
+        }
+        return lines.join('\n');
     }
 
     #formatText(info) {

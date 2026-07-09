@@ -51,6 +51,17 @@ export class SceneDocument {
         return new SceneDocument(JSON.parse(content), filePath);
     }
 
+    /**
+     * Build from already-read file content — avoids a second disk read when the
+     * caller has pre-filtered on the raw text.
+     * @param {string} content - the file's UTF-8 text
+     * @param {string} filePath - source path (kept for save/label purposes)
+     * @returns {SceneDocument}
+     */
+    static fromContent(content, filePath = null) {
+        return new SceneDocument(JSON.parse(content), filePath);
+    }
+
     get objects() {
         return this.#objects;
     }

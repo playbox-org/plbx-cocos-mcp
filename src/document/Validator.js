@@ -12,8 +12,9 @@
  */
 
 import { isRef } from './SceneDocument.js';
+import { isBuiltin } from '../core/builtins.js';
 import { loadSourcePrefabByUuid } from './instances.js';
-import { fileIdTargets } from './targetOverrides.js';
+import { fileIdTargets, overrideDeadReasons, mountedChildNodeIdxs } from './targetOverrides.js';
 import { eulerToQuat, quatApproxEquals } from '../utils/math3d.js';
 import { VISUAL_ROOT_TYPES } from './componentTypes.js';
 
@@ -50,6 +51,7 @@ export class Validator {
             this.#checkIds(errors);
             this.#checkTargetOverrides(errors, warnings);
             this.#checkRemovedComponents(errors, warnings);
+            this.#checkMountedInfos(errors, warnings);
             this.#checkReachability(warnings);
             this.#checkRotations(warnings);
             this.#checkWrapperRule(warnings);
@@ -199,28 +201,36 @@ export class Validator {
             ? { assetIndex: this.#assetIndex, projectRoot: this.#projectRoot }
             : null;
         const targetMaps = new Map(); // asset uuid → fileIdTargets map | null
+        const mountedNodes = mountedChildNodeIdxs(doc);
 
         doc.objects.forEach((obj, idx) => {
             if (obj.__type__ !== 'cc.TargetOverrideInfo') return;
             const at = `TargetOverrideInfo #${idx}`;
 
-            if (!Array.isArray(obj.propertyPath) || obj.propertyPath.length === 0 ||
-                obj.propertyPath.some(s => typeof s !== 'string')) {
-                errors.push(`${at}: propertyPath must be a non-empty array of strings`);
+            // Records the engine skips on load (null/detached/invalid endpoints)
+            // cannot affect the runtime, so they are never a blocking error —
+            // and the editor itself regenerates some of them (e.g. a half-written
+            // source:null skeleton) on every save, so erroring on them would put
+            // MCP and the editor in a whack-a-mole loop. Report once as a warning
+            // and skip the structural checks below (they would only restate it).
+            const deadReasons = overrideDeadReasons(doc, obj, mountedNodes);
+            if (deadReasons.length > 0) {
+                warnings.push(
+                    `${at}: the engine ignores this override on load (${deadReasons.join('; ')}) ` +
+                    `— harmless but stale; clear it with prune_dangling_overrides`
+                );
+                return;
             }
 
-            const info = isRef(obj.targetInfo) ? doc.getObject(obj.targetInfo.__id__) : null;
-            if (info?.__type__ !== 'cc.TargetInfo' ||
-                !Array.isArray(info.localID) || info.localID.length === 0 ||
-                info.localID.some(s => typeof s !== 'string')) {
-                errors.push(`${at}: targetInfo must reference a cc.TargetInfo with a non-empty string localID`);
-            }
-
-            if (!isRef(obj.source)) {
-                errors.push(`${at}: source must reference an object in this file`);
-            } else if (obj.sourceInfo === null) {
-                const src = doc.getObject(obj.source.__id__);
-                if (!src || doc.isNode(src)) {
+            // From here the record is LIVE (overrideDeadReasons subsumes every
+            // structurally-broken form — null/invalid propertyPath, targetInfo,
+            // source and target — so `source` is a ref, its owner node is
+            // attached, propertyPath/targetInfo are well-formed, and `target` is
+            // null or an attached node). Only the sourceInfo↔source consistency
+            // the engine actually acts on can still be an error.
+            const info = doc.getObject(obj.targetInfo.__id__);
+            if (obj.sourceInfo === null) {
+                if (doc.isNode(doc.getObject(obj.source.__id__))) {
                     errors.push(`${at}: sourceInfo is null but source #${obj.source.__id__} is not a component`);
                 }
             } else {
@@ -243,13 +253,6 @@ export class Validator {
                             `in the source prefab of "${doc.nodePath(obj.source.__id__)}"`
                         );
                     }
-                }
-            }
-
-            if (obj.target !== null) {
-                if (!isRef(obj.target) || !doc.isNode(doc.getObject(obj.target.__id__))) {
-                    errors.push(`${at}: target must be null or reference a node`);
-                    return;
                 }
             }
 
@@ -357,6 +360,98 @@ export class Validator {
         });
     }
 
+    /**
+     * cc.PrefabInstance.mountedComponents/mountedChildren invariants
+     * (components/nodes added on top of a collapsed instance; golden shape:
+     * MountedComponentsInfo{targetInfo → cc.TargetInfo, components:
+     * [{__id__}]} / MountedChildrenInfo{…, nodes: [{__id__}]}). Broken
+     * structure is an error; with a project available, single-hop localIDs
+     * must resolve to a NODE of the source prefab (warnings).
+     */
+    #checkMountedInfos(errors, warnings) {
+        const doc = this.#doc;
+        const resolvable = this.#assetIndex && this.#projectRoot;
+        const targetMaps = new Map();
+
+        doc.objects.forEach((obj, idx) => {
+            if (obj.__type__ !== 'cc.PrefabInstance') return;
+            const stubIdx = this.#stubOfInstance(idx);
+
+            const checkTargetInfo = (at, holder) => {
+                const info = isRef(holder.targetInfo) ? doc.getObject(holder.targetInfo.__id__) : null;
+                if (info?.__type__ !== 'cc.TargetInfo' ||
+                    !Array.isArray(info.localID) || info.localID.length === 0 ||
+                    info.localID.some(s => typeof s !== 'string')) {
+                    errors.push(`${at}: targetInfo must reference a cc.TargetInfo with a non-empty string localID`);
+                    return null;
+                }
+                return info;
+            };
+            const checkResolution = (at, info) => {
+                if (!resolvable || stubIdx === null || !info || info.localID.length !== 1) return;
+                const targets = this.#sourcePrefabTargets(stubIdx, targetMaps);
+                const hit = targets?.get(info.localID[0]);
+                if (targets && !hit) {
+                    warnings.push(
+                        `${at}: localID "${info.localID[0]}" does not resolve in the source ` +
+                        `prefab of "${doc.nodePath(stubIdx)}" — the mount is lost on load`
+                    );
+                } else if (hit?.component) {
+                    warnings.push(
+                        `${at}: localID "${info.localID[0]}" resolves to a ${hit.component} ` +
+                        `component, not a node — cannot mount there`
+                    );
+                }
+            };
+            const checkList = (field, entryType, itemsKey, checkItem) => {
+                const list = obj[field];
+                if (list === null || list === undefined) return;
+                if (!Array.isArray(list)) {
+                    errors.push(`PrefabInstance #${idx}: ${field} must be an array or null`);
+                    return;
+                }
+                list.forEach((r, i) => {
+                    const at = `PrefabInstance #${idx}.${field}[${i}]`;
+                    const entry = isRef(r) ? doc.getObject(r.__id__) : null;
+                    if (entry?.__type__ !== entryType) {
+                        errors.push(`${at}: must reference a ${entryType}`);
+                        return;
+                    }
+                    const info = checkTargetInfo(at, entry);
+                    if (!Array.isArray(entry[itemsKey])) {
+                        errors.push(`${at}: ${itemsKey} must be an array`);
+                    } else {
+                        entry[itemsKey].forEach((item, j) => checkItem(`${at}.${itemsKey}[${j}]`, item));
+                    }
+                    checkResolution(at, info);
+                });
+            };
+
+            checkList('mountedComponents', 'cc.MountedComponentsInfo', 'components', (at, item) => {
+                const comp = isRef(item) ? doc.getObject(item.__id__) : null;
+                if (!comp || doc.isNode(comp) || !isRef(comp.node)) {
+                    errors.push(`${at}: must reference a component object`);
+                } else if (stubIdx !== null && comp.node.__id__ !== stubIdx) {
+                    warnings.push(
+                        `${at}: mounted component's .node points at ` +
+                        `#${comp.node.__id__}, not the instance stub #${stubIdx}`
+                    );
+                }
+            });
+            checkList('mountedChildren', 'cc.MountedChildrenInfo', 'nodes', (at, item) => {
+                const node = isRef(item) ? doc.getObject(item.__id__) : null;
+                if (!node || node.__type__ !== 'cc.Node') {
+                    errors.push(`${at}: must reference a cc.Node`);
+                } else if (node._parent !== null) {
+                    warnings.push(
+                        `${at}: mounted node "${node._name}" has a non-null _parent — ` +
+                        `the editor serializes mounted children detached`
+                    );
+                }
+            });
+        });
+    }
+
     /** The instance stub node owning a cc.PrefabInstance (PrefabInfo.root) */
     #stubOfInstance(instanceIdx) {
         const doc = this.#doc;
@@ -433,12 +528,16 @@ export class Validator {
         }
     }
 
+    /**
+     * Known engine built-ins (db://internal table) are silently fine —
+     * only genuinely unknown UUIDs are worth a warning.
+     */
     #checkAssetRefs(warnings) {
         const missing = new Map();
         const walk = (value) => {
             if (value === null || typeof value !== 'object') return;
             if (typeof value.__uuid__ === 'string') {
-                if (!this.#assetIndex.resolve(value.__uuid__)) {
+                if (!this.#assetIndex.resolve(value.__uuid__) && !isBuiltin(value.__uuid__)) {
                     missing.set(value.__uuid__, (missing.get(value.__uuid__) ?? 0) + 1);
                 }
                 return;
@@ -450,8 +549,10 @@ export class Validator {
         if (missing.size > 0) {
             const sample = [...missing.keys()].slice(0, 5).join(', ');
             warnings.push(
-                `${missing.size} referenced asset UUID(s) not found under assets/ ` +
-                `(may be engine built-ins): ${sample}${missing.size > 5 ? ', …' : ''}`
+                `${missing.size} referenced asset UUID(s) not found under assets/ and not in the ` +
+                `3.8 engine built-in table — likely broken references (or, more rarely, assets ` +
+                `from an editor plugin or a different engine version): ` +
+                `${sample}${missing.size > 5 ? ', …' : ''}`
             );
         }
     }

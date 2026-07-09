@@ -21,6 +21,7 @@ export class PropertyExtractor {
     #sceneParser;
     #detailed;
     #assetResolver;
+    #refResolver;
     #targetOverridesBySource; // lazy: component idx → [{key, targetId}]
     #skipKeys = new Set([
         '__type__', '__idx__', 'node', '_enabled', '_name',
@@ -31,6 +32,9 @@ export class PropertyExtractor {
         this.#sceneParser = sceneParser;
         this.#detailed = options.detailed || false;
         this.#assetResolver = options.assetResolver || null;
+        // Optional (id) => string label for {__id__} refs — lets callers
+        // render full node/component addresses instead of bare names
+        this.#refResolver = options.refResolver || null;
     }
 
     /**
@@ -107,6 +111,9 @@ export class PropertyExtractor {
     }
 
     #resolveRef(id) {
+        const custom = this.#refResolver?.(id);
+        if (custom) return `→${custom}`;
+
         const refObj = this.#sceneParser.getObject(id);
         if (!refObj) return null;
 

@@ -5,3 +5,14 @@ Path: "[WORLD]/Zones/ButtonPurchaseZone" — use as `node` in apply_edits / get_
 ● ButtonPurchaseZone [P→ab794f1c…]
 
 (instance internals unavailable: Source prefab asset ab794f1c-d08a-4e9c-97ba-f5b777f7e9ff not found in the project)
+
+## Mounted components (1)
+Added on top of this instance in THIS file (not part of the source prefab).
+Edit directly: set_component_property {node: "[WORLD]/Zones/ButtonPurchaseZone", component: "<Type>", …}
+and remove_component work on them like on plain nodes.
+- PlayerController (script) (mounted at localID=[7etDWrT4tGKJdwtr/ndrxO])
+    .pipeNodes = [→[WORLD]/Tubes/CrusherTubes]
+    .pipeControllers = [→[WORLD]/Tubes/CrusherTubes/FirstPipe ▸ 7dd6cAnmP5AnaFW1ijMEz+O, →[WORLD]/Tubes/CrusherTubes/SecondPipe ▸ 7dd6cAnmP5AnaFW1ijMEz+O]
+    .upgradeVfx = →[SERVICES]/UpgradeVfxController ▸ 8a2d1kTZKFIeIjXgeDLHBkz
+    .buttonNode = →[WORLD]/Button
+    ._id = 4b9KmjK99KKpEjCY7vGnJF

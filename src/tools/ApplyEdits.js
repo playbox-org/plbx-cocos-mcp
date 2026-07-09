@@ -16,7 +16,6 @@ import { applyOperations } from '../document/operations.js';
 import { Validator } from '../document/Validator.js';
 import { renderSubtree } from '../document/MiniTree.js';
 import { AssetIndex } from '../core/AssetIndex.js';
-import { compressUuid } from '../utils/uuid.js';
 
 const OPS_DOC = `Operations (applied in order, all-or-nothing):
 - set_node_property {node, property: name|active|layer|mobility|position|rotation|scale, value}
@@ -25,19 +24,21 @@ const OPS_DOC = `Operations (applied in order, all-or-nothing):
 - remove_node {node, force?} (force nulls external references into the subtree)
 - reparent {node, newParent, index?}
 - add_component {node, type, properties?} (type: cc.* template or custom script name)
-- remove_component {node, component?, componentIndex?, force?, target?} (force nulls external references to the component; cc.UITransform is protected while UI components need it. On a prefab-instance stub: target = node path inside the source prefab ("" = root), the removal is recorded in the instance's removedComponents — the source prefab is untouched; undo with restore_instance_component)
+- remove_component {node, component?, componentIndex?, force?, target?} (force nulls external references to the component; cc.UITransform is protected while UI components need it. On a prefab-instance stub, a component MOUNTED on the instance is removed physically — an emptied MountedComponentsInfo record goes with it; otherwise target = node path inside the source prefab ("" = root) and the removal is recorded in the instance's removedComponents — the source prefab is untouched; undo with restore_instance_component)
 - set_component_property {node, component?, componentIndex?, property, value}
   value forms: raw JSON | {x?,y?,..} merged into typed values | {"$node": "path"} | {"$asset": "path|uuid", "$type"?} | {"$component": {node, type, target?}}
-  References INTO collapsed prefab instances work: {"$node": "Stub/Inner/Node"} (path continues inside the stub) and {"$component": {node: "Stub", target: "Inner/Node", type: "T"}} serialize as null + a targetOverride record (the editor's own form); overwriting with a plain value removes the record
-- set_asset_ref {node, component?, componentIndex?, property, asset, expectedType?} (asset: project path, UUID or "uuid@subId"; null clears)
+  On a prefab-instance stub, component addresses the components MOUNTED on the instance (inspect_node lists them); properties of source-prefab components go through set_instance_property. One type mounted at several places — disambiguate with target: "<mount path>" or componentIndex
+  References INTO collapsed prefab instances work: {"$node": "Stub/Inner/Node"} (path continues inside the stub) and {"$component": {node: "Stub", target: "Inner/Node", type: "T"}} serialize as null + a targetOverride record (the editor's own form); overwriting with a plain value removes the record. {"$component": {node: "Stub", type: "T"}} without target prefers a component MOUNTED on the stub (plain {__id__} reference)
+- set_asset_ref {node, component?, componentIndex?, property, asset, expectedType?} (asset: project path, UUID or "uuid@subId"; null clears; on a stub it addresses mounted components like set_component_property)
 - instantiate_prefab {parent, prefab, name?, position?, rotation?, scale?, index?} (prefab: .prefab path/UUID, or a model file / "model.fbx@subId" for its gltf-scene prefab; creates a collapsed instance stub)
 - set_instance_property {node, target?, component?, componentIndex?, property, value}
   node = the instance stub in this file; target = node path INSIDE the source prefab ("" = its root; discover paths with inspect_node on the stub). Without component: name|active|layer|mobility|position|rotation|scale. With component: any field (value forms as in set_component_property) — e.g. replace an embedded model material: {node: "Zombie", target: "Mesh", component: "cc.SkinnedMeshRenderer", property: "materials[0]", value: {"$asset": "Materials/Zombie.mtl"}}. Stored as propertyOverrides; same target+property updates in place. Reference values work too: {"$node"}/{"$component"} to plain scene objects serialize into the override value; references into a collapsed instance (this one or another) become a targetOverride record with sourceInfo (the editor's own form)
 - remove_instance_override {node, target?, component?, componentIndex?, property} (reverts an override — property or reference — back to the source prefab value)
 - restore_instance_component {node, target?, component?, componentIndex?} (undoes remove_component on an instance: deletes the removedComponents entry)
+- prune_dangling_overrides {} (opt-in repair: removes broken cc.TargetOverrideInfo records — null/detached source or target — that the engine ignores on load; leftover detached nodes they referenced are garbage-collected on save. These records are NON-blocking (validate_document reports each as a warning and hints at this op; apply_edits does NOT require a prune), so run it only to tidy up. Idempotent.)
 
 Node addressing: "Canvas/Panel/BuyBtn" path from root, "/" = root, node _id, "Name[i]" or "[i]" disambiguate same-named/positional siblings.
-Prefab instances inside scenes are collapsed stubs: their internals are not in the file. Inspect them with inspect_node (shows internals + target paths), override properties with set_instance_property, remove/reparent the whole instance, or edit the source .prefab; anything else is rejected.`;
+Prefab instances inside scenes are collapsed stubs: their internals are not in the file. Inspect them with inspect_node (shows internals + target paths + mounted components), override properties with set_instance_property, edit/remove components MOUNTED on the instance with set_component_property/set_asset_ref/remove_component, remove/reparent the whole instance, or edit the source .prefab; anything else is rejected.`;
 
 export class ApplyEdits extends BaseTool {
     get name() {
@@ -92,7 +93,7 @@ export class ApplyEdits extends BaseTool {
         }
 
         const assetIndex = AssetIndex.shared(projectRoot);
-        const ctx = { assetIndex, projectRoot, scriptNameByCompressed: this.#scriptNames(assetIndex) };
+        const ctx = { assetIndex, projectRoot, scriptNameByCompressed: assetIndex.scriptClassNames() };
 
         let results;
         try {
@@ -118,15 +119,6 @@ export class ApplyEdits extends BaseTool {
         return this.success(this.#report({ args, doc, results, warnings, dropped, dryRun, ctx }));
     }
 
-    /** compressed script UUID → readable name, for subtree rendering */
-    #scriptNames(assetIndex) {
-        const map = new Map();
-        for (const entry of assetIndex.list({ type: 'script' })) {
-            map.set(compressUuid(entry.uuid), entry.name.replace(/\.[jt]s$/, ''));
-        }
-        return map;
-    }
-
     #report({ args, doc, results, warnings, dropped, dryRun, ctx }) {
         const lines = [];
         lines.push(dryRun
@@ -141,10 +133,15 @@ export class ApplyEdits extends BaseTool {
         const shown = new Set();
         const covered = (anchor) =>
             shown.has(anchor) ||
-            [...shown].some(s => s === '/' || anchor.startsWith(`${s}/`));
+            [...shown].some(s => anchor.startsWith(`${s}/`));
         const trees = [];
         for (const r of results) {
-            const anchor = r.target === '/' ? '/' : r.target;
+            // Whole-document ops (prune_dangling_overrides) have no meaningful
+            // subtree. Gate on the op name, not target === "/": ordinary
+            // root-targeted ops (add_component/set_node_property on the root)
+            // also resolve to "/" and DO want their subtree preview.
+            if (r.op === 'prune_dangling_overrides') continue;
+            const anchor = r.target;
             if (covered(anchor)) continue;
             shown.add(anchor);
             try {
