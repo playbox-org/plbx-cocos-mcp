@@ -512,4 +512,98 @@ describe('PropertyExtractor', () => {
             assert.deepStrictEqual(props.items, ['→?']);
         });
     });
+
+    describe('nested data CCClass structs', () => {
+        // Mirrors CardsBase.entries: CardEntry[] where each CardEntry is its own
+        // object in the flat array (referenced by {__id__}), with a nested
+        // CardConfig struct, an asset ref, an enum int and a Vec2[] — none of
+        // which resolve to a name.
+        function cardParser() {
+            const parser = new MockSceneParser();
+            parser.addObject(20, {
+                __idx__: 20,
+                __type__: 'CardEntry',
+                type: 1, // CardType enum
+                prefab: { __uuid__: 'aaaa', __expectedType__: 'cc.Prefab' },
+                config: { __id__: 21 },
+                offsets: [
+                    { __type__: 'cc.Vec2', x: -20, y: 0 },
+                    { __type__: 'cc.Vec2', x: 20, y: 0 }
+                ],
+                members: []
+            });
+            parser.addObject(21, {
+                __idx__: 21,
+                __type__: 'CardConfig',
+                icon: { __uuid__: 'bbbb' },
+                frame: { __uuid__: 'cccc' }
+            });
+            return parser;
+        }
+
+        it('expands an array of data structs in detailed mode', () => {
+            const parser = cardParser();
+            const extractor = new PropertyExtractor(parser, {
+                detailed: true,
+                assetResolver: (u) => ({ aaaa: 'Knight.prefab', bbbb: 'icon.png', cccc: 'frame.png' }[u])
+            });
+            const props = extractor.extract({ __type__: 'CardsBase', entries: [{ __id__: 20 }] });
+
+            assert.strictEqual(props.entries.length, 1);
+            const e = props.entries[0];
+            assert.strictEqual(e.__struct__, 'CardEntry');
+            assert.strictEqual(e.type, 1);
+            assert.strictEqual(e.prefab, 'Knight.prefab');
+            assert.deepStrictEqual(e.offsets, [[-20, 0], [20, 0]]);
+            // Nested struct expanded recursively with its own asset names
+            assert.strictEqual(e.config.__struct__, 'CardConfig');
+            assert.strictEqual(e.config.icon, 'icon.png');
+            assert.strictEqual(e.config.frame, 'frame.png');
+        });
+
+        it('expands a single data-struct ref in detailed mode', () => {
+            const parser = cardParser();
+            const extractor = new PropertyExtractor(parser, {
+                detailed: true,
+                assetResolver: (u) => ({ bbbb: 'icon.png', cccc: 'frame.png' }[u])
+            });
+            const props = extractor.extract({ __type__: 'Holder', config: { __id__: 21 } });
+            assert.strictEqual(props.config.__struct__, 'CardConfig');
+            assert.strictEqual(props.config.icon, 'icon.png');
+        });
+
+        it('does NOT expand structs in compact mode (stays [×N])', () => {
+            const parser = cardParser();
+            const extractor = new PropertyExtractor(parser); // detailed: false
+            const props = extractor.extract({ __type__: 'CardsBase', entries: [{ __id__: 20 }] });
+            assert.strictEqual(props.entries, '[×1]');
+        });
+
+        it('does not recurse into a component (has node back-ref)', () => {
+            const parser = new MockSceneParser();
+            parser.addObject(30, {
+                __idx__: 30,
+                __type__: 'MyScript',
+                node: { __id__: 31 }, // component marker
+                foo: 1
+            });
+            parser.addObject(31, { __idx__: 31, __type__: 'cc.Node', _name: 'Owner' });
+            const extractor = new PropertyExtractor(parser, { detailed: true });
+            const props = extractor.extract({ __type__: 'Holder', ref: { __id__: 30 } });
+            // Resolves to the owning node name, NOT an expanded struct
+            // (detailed mode appends the #id suffix)
+            assert.strictEqual(props.ref, '→Owner#30');
+        });
+
+        it('guards against cycles between data structs', () => {
+            const parser = new MockSceneParser();
+            parser.addObject(40, { __idx__: 40, __type__: 'A', next: { __id__: 41 } });
+            parser.addObject(41, { __idx__: 41, __type__: 'B', back: { __id__: 40 } });
+            const extractor = new PropertyExtractor(parser, { detailed: true });
+            const props = extractor.extract({ __type__: 'Holder', root: { __id__: 40 } });
+            assert.strictEqual(props.root.__struct__, 'A');
+            assert.strictEqual(props.root.next.__struct__, 'B');
+            assert.strictEqual(props.root.next.back, '<cycle A>');
+        });
+    });
 });

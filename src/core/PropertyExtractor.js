@@ -17,6 +17,18 @@ const VALUE_TYPE_FIELDS = {
     'cc.Rect': ['x', 'y', 'width', 'height']
 };
 
+// Internal serialization types that look like data structs (no `node` back-ref)
+// but must never be recursed into — they belong to the instance/prefab plumbing,
+// not to user @property data.
+const INTERNAL_STRUCT_TYPES = new Set([
+    'cc.PrefabInfo', 'cc.PrefabInstance', 'cc.CompPrefabInfo',
+    'cc.TargetInfo', 'cc.TargetOverrideInfo',
+    'CCPropertyOverrideInfo', 'cc.MountedComponentsInfo', 'cc.MountedChildrenInfo'
+]);
+
+// Guard against deep/cyclic data-struct graphs when expanding nested CCClasses.
+const MAX_STRUCT_DEPTH = 5;
+
 export class PropertyExtractor {
     #sceneParser;
     #detailed;
@@ -44,7 +56,8 @@ export class PropertyExtractor {
      */
     extract(component) {
         const props = {};
-        // Value-type structs (Vec3/Color/…) are appended AFTER scalar/ref
+        // Value-type structs (Vec3/Color/…) AND expanded nested data structs
+        // (CardEntry[], cc.StaticLightSettings, …) are appended AFTER scalar/ref
         // props so they never displace a previously-visible field under the
         // text formatter's prop cap — keeping text output additive for
         // main-branch clients (JSON is uncapped and shows everything).
@@ -56,7 +69,7 @@ export class PropertyExtractor {
             const extracted = this.#extractValue(value);
             if (extracted === undefined) continue;
 
-            if (this.#isValueType(value)) {
+            if (this.#isValueType(value) || this.#isComplex(extracted)) {
                 deferred.push([key, extracted]);
             } else {
                 props[key] = extracted;
@@ -187,13 +200,76 @@ export class PropertyExtractor {
         return null;
     }
 
+    /**
+     * True when an EXTRACTED value is "complex": an expanded data struct (object)
+     * or an array containing objects/arrays (array of structs, or value-type
+     * arrays like Vec2[]). Such values are deferred to the tail of the prop list
+     * so they never push a previously-visible scalar past the text prop cap.
+     * Arrays of ref-name strings (["→Foo",…]) are NOT complex — they stay inline
+     * exactly as before.
+     */
+    #isComplex(extracted) {
+        if (extracted === null || typeof extracted !== 'object') return false;
+        if (Array.isArray(extracted)) {
+            return extracted.some(v => v !== null && typeof v === 'object');
+        }
+        return true; // expanded struct object
+    }
+
     /** True for an embedded value-type struct (cc.Vec3, cc.Color, …) */
     #isValueType(value) {
         return typeof value === 'object' && value !== null &&
             VALUE_TYPE_FIELDS[value.__type__] !== undefined;
     }
 
-    #extractValue(value) {
+    /**
+     * True for a plain data CCClass object worth expanding: not a node/scene,
+     * not a value-type, not internal plumbing, and NOT a component (components
+     * carry a `node` back-ref). These are @property structs (CardEntry,
+     * CardConfig, cc.CurveRange, …) stored as their own objects in the flat
+     * array and referenced by {__id__}, with no _name to resolve.
+     */
+    #isDataStruct(obj) {
+        if (!obj || typeof obj !== 'object') return false;
+        const type = obj.__type__;
+        if (!type) return false;
+        if (type === 'cc.Node' || type === 'cc.Scene') return false;
+        if (VALUE_TYPE_FIELDS[type]) return false;
+        if (INTERNAL_STRUCT_TYPES.has(type)) return false;
+        if (obj.node?.__id__ !== undefined) return false; // it's a component
+        return true;
+    }
+
+    /**
+     * Recursively extract a nested data-CCClass object into a plain object,
+     * tagged with __struct__ so the reader knows the concrete class. Detailed
+     * mode only (callers gate on this.#detailed). Depth-capped and cycle-guarded.
+     */
+    #extractStruct(obj, depth, seen) {
+        if (depth >= MAX_STRUCT_DEPTH) return `<${obj.__type__}>`;
+        const idx = obj.__idx__;
+        const visited = seen ?? new Set();
+        if (idx !== undefined && visited.has(idx)) return `<cycle ${obj.__type__}>`;
+        const nextSeen = new Set(visited);
+        if (idx !== undefined) nextSeen.add(idx);
+
+        const out = { __struct__: obj.__type__ };
+        const deferred = [];
+        for (const [key, value] of Object.entries(obj)) {
+            if (this.#shouldSkip(key, value)) continue;
+            const extracted = this.#extractValue(value, depth + 1, nextSeen);
+            if (extracted === undefined) continue;
+            if (this.#isValueType(value)) {
+                deferred.push([key, extracted]);
+            } else {
+                out[key] = extracted;
+            }
+        }
+        for (const [key, extracted] of deferred) out[key] = extracted;
+        return out;
+    }
+
+    #extractValue(value, depth = 0, seen = null) {
         // Embedded value-type struct (cc.Vec3, cc.Size, cc.Color, …) →
         // compact rounded array in canonical field order
         if (this.#isValueType(value)) {
@@ -208,7 +284,22 @@ export class PropertyExtractor {
 
         // Node/component reference
         if (typeof value === 'object' && '__id__' in value) {
-            return this.#resolveRef(value.__id__) || undefined;
+            const named = this.#resolveRef(value.__id__);
+            if (named) return named;
+            // Unnamed ref: expand nested data CCClass structs (detailed only)
+            if (this.#detailed) {
+                const target = this.#sceneParser.getObject(value.__id__);
+                if (this.#isDataStruct(target)) {
+                    return this.#extractStruct(target, depth, seen);
+                }
+            }
+            return undefined;
+        }
+
+        // Array of embedded value-type structs (offsets: Vec2[], colors, …).
+        // Additive: previously dropped entirely. Kept in both modes (compact).
+        if (Array.isArray(value) && value.length > 0 && this.#isValueType(value.find(v => v != null))) {
+            return value.map(v => v == null ? null : this.#extractValue(v, depth + 1, seen));
         }
 
         // Array of references (may contain nulls anywhere, including the head)
@@ -218,7 +309,14 @@ export class PropertyExtractor {
                 if (this.#detailed) {
                     return value.map(ref => {
                         if (ref == null) return '→null';
-                        return this.#resolveRef(ref.__id__) || '→?';
+                        const named = this.#resolveRef(ref.__id__);
+                        if (named) return named;
+                        // Unnamed ref → nested data-struct expansion
+                        const target = this.#sceneParser.getObject(ref.__id__);
+                        if (this.#isDataStruct(target)) {
+                            return this.#extractStruct(target, depth, seen);
+                        }
+                        return '→?';
                     });
                 }
                 const nullCount = value.filter(r => r == null).length;
