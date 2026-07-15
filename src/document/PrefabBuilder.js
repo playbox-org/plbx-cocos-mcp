@@ -26,8 +26,8 @@
  * }                                 //   material?, components?, children?}
  */
 
-import { randomUUID } from 'crypto';
 import { SceneDocument } from './SceneDocument.js';
+import { prefabMeta } from './MetaGenerator.js';
 import { applyOperations, OperationError, LAYERS } from './operations.js';
 import { generateFileId } from '../utils/fileId.js';
 
@@ -261,15 +261,7 @@ export class PrefabBuilder {
      * The editor keeps our UUID, so the asset is referencable immediately.
      */
     static createMeta(rootName) {
-        return {
-            ver: '1.1.50',
-            importer: 'prefab',
-            imported: true,
-            uuid: randomUUID(),
-            files: ['.json'],
-            subMetas: {},
-            userData: { syncNodeName: rootName }
-        };
+        return prefabMeta(rootName);
     }
 }
 

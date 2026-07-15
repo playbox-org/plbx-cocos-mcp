@@ -13,6 +13,7 @@ import { BaseTool } from './BaseTool.js';
 import { AnimGraphBuilder, AnimGraphBuildError } from '../document/AnimGraphBuilder.js';
 import { parseAnimGraph, formatAnimGraphText } from '../document/AnimGraphReader.js';
 import { AssetIndex } from '../core/AssetIndex.js';
+import { serializeMeta, ensureParentDirMetas } from '../document/MetaGenerator.js';
 
 export class BuildAnimGraph extends BaseTool {
     get name() {
@@ -96,8 +97,10 @@ export class BuildAnimGraph extends BaseTool {
         fs.mkdirSync(path.dirname(outputPath), { recursive: true });
         doc.save(outputPath);
         if (newMeta) {
-            fs.writeFileSync(metaPath, JSON.stringify(newMeta, null, 2), 'utf-8');
+            fs.writeFileSync(metaPath, serializeMeta(newMeta), 'utf-8');
         }
+        // Folders created by mkdirSync need their own metas too
+        ensureParentDirMetas(outputPath, path.resolve(projectRoot, 'assets'));
         AssetIndex.invalidate(projectRoot);
 
         const model = parseAnimGraph(doc.objects, assetIndex);

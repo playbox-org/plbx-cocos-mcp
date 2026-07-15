@@ -21,12 +21,14 @@ import { ComputeFitScale } from './ComputeFitScale.js';
 import { ComputeRotation } from './ComputeRotation.js';
 import { FindAssetReferences } from './FindAssetReferences.js';
 import { LintAssets } from './LintAssets.js';
+import { CreateAssetMeta } from './CreateAssetMeta.js';
 
 export {
     BaseTool, QuerySceneGraph, ListSceneScripts, FindSceneNodes, QueryPrefabGraph,
     QueryAnimGraph, InspectNode, GetProjectInfo, GetAssetInfo, ListAssets,
     ApplyEdits, ValidateDocument, BuildPrefab, BuildAnimGraph,
-    GetNodeBounds, ComputeFitScale, ComputeRotation, FindAssetReferences, LintAssets
+    GetNodeBounds, ComputeFitScale, ComputeRotation, FindAssetReferences, LintAssets,
+    CreateAssetMeta
 };
 
 /**
@@ -52,6 +54,7 @@ export function createTools() {
         new ComputeFitScale(),
         new ComputeRotation(),
         new FindAssetReferences(),
-        new LintAssets()
+        new LintAssets(),
+        new CreateAssetMeta()
     ];
 }

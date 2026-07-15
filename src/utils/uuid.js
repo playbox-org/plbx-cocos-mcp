@@ -11,11 +11,34 @@
  * "@6c48a" = texture2D).
  */
 
+import { createHash } from 'crypto';
+
 const BASE64_KEYS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const BASE64_VALUES = new Map([...BASE64_KEYS].map((c, i) => [c, i]));
 
 const FULL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const COMPRESSED_RE = /^[0-9a-f]{5}[0-9a-zA-Z+/]{18}$/;
+
+const NAME_TO_ID_EXTEND = [
+    1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13, 14,
+    15, 17, 18, 19, 20, 21, 22, 23, 24, 26, 27, 28, 29, 30
+];
+
+/**
+ * Sub-asset id from its name — port of Cocos `nameToId`
+ * (npm @cocos/asset-db, libs/utils.js): 5 chars sampled from the md5-hex of
+ * the name at positions 0, 6, 16, 25, 31, plus `extend` more on collision.
+ * "texture" → "6c48a", "spriteFrame" → "f9941" (verified on real metas).
+ * @param {string} name - Sub-asset name (the subMeta's `name` field)
+ * @param {number} [extend] - Extra chars appended on id collision
+ * @returns {string}
+ */
+export function nameToId(name, extend = 0) {
+    const h = createHash('md5').update(name).digest('hex');
+    let id = h[0] + h[6] + h[16] + h[25] + h[31];
+    for (let i = 0; i < extend; i++) id += h[NAME_TO_ID_EXTEND[i]];
+    return id;
+}
 
 /**
  * Split "<uuid>@<subId>" into { uuid, subId }. subId is null when absent.

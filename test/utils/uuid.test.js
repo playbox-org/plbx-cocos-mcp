@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import {
-    compressUuid, decompressUuid, isFullUuid, isCompressedUuid, splitSubAssetRef
+    compressUuid, decompressUuid, isFullUuid, isCompressedUuid, splitSubAssetRef, nameToId
 } from '../../src/utils/uuid.js';
 
 // Real pair verified against a production Cocos Creator 3.8 project:
@@ -45,5 +45,21 @@ describe('uuid utils', () => {
             splitSubAssetRef(FULL),
             { uuid: FULL, subId: null }
         );
+    });
+
+    // All pairs verified against real zombie-miner metas (subMeta.name → subId)
+    it('should derive sub-asset ids from names (nameToId)', () => {
+        assert.strictEqual(nameToId('texture'), '6c48a');
+        assert.strictEqual(nameToId('spriteFrame'), 'f9941');
+        assert.strictEqual(nameToId('Circle.019.mesh'), '2e1ee');   // gltf-mesh
+        assert.strictEqual(nameToId('Coin1.material'), 'a424f');    // gltf-material
+        assert.strictEqual(nameToId('Coin.prefab'), '4b8b9');       // gltf-scene
+    });
+
+    it('should extend nameToId ids on demand', () => {
+        const base = nameToId('texture');
+        const extended = nameToId('texture', 3);
+        assert.strictEqual(extended.length, base.length + 3);
+        assert.ok(extended.startsWith(base));
     });
 });
