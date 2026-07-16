@@ -25,6 +25,7 @@ import {
     remapTargetOverridesForSplice
 } from './targetOverrides.js';
 import { VALUE_TYPE_FIELDS } from '../core/valueTypes.js';
+import { collectComponentIndices } from '../core/componentIndices.js';
 import {
     createComponent, createScriptComponent, resolveTemplateType, templateTypes
 } from './ComponentTemplates.js';
@@ -177,7 +178,36 @@ export function resolveLayer(value) {
  * overwritten with a scalar (it would orphan the referenced object) — the
  * dotted-path form must be used instead.
  */
+/**
+ * True when `given` would replace an array of {__id__} references with an array
+ * that contains a bare inline object (no __id__): the engine would then read an
+ * inline object where it expects a reference — silent file corruption (#2).
+ * Purely structural (no doc), so it composes into mergeTyped, which has none.
+ * `null` holes and genuine reference elements are fine; an empty replacement or
+ * a re-link with references is fine too.
+ */
+function isRefArrayClobber(existing, given) {
+    if (!Array.isArray(existing) || !Array.isArray(given)) return false;
+    if (!existing.some(e => isRef(e))) return false;
+    return given.some(e => e !== null && typeof e === 'object' && !isRef(e));
+}
+
+function refArrayClobberError(what, existing) {
+    const t = existing.find(e => isRef(e));
+    return new OperationError(
+        `"${what}" is an array of references to standalone objects — writing inline objects ` +
+        `into it would corrupt the file (the engine expects an {__id__} reference, ref #${t.__id__}). ` +
+        `Use op "insert_array_element" to add an element or "remove_array_element" to remove one.`
+    );
+}
+
 export function mergeTyped(existing, given, what) {
+    // Whole-array replacement: writing inline objects over an array of {__id__}
+    // references (entries: CardEntry[]) serializes an inline object where the
+    // engine expects a reference — silent corruption the per-slot
+    // guardTypedRefArrayWrite cannot see (its key is the array name, not an
+    // index). Reject here so it is caught however the array is addressed (#2).
+    if (isRefArrayClobber(existing, given)) throw refArrayClobberError(what, existing);
     if (given === null || typeof given !== 'object' || Array.isArray(given)) return given;
     if (given.__type__) return given; // caller provided a full serialized value
     if (existing === null || typeof existing !== 'object' || !existing.__type__) return given;
@@ -193,6 +223,11 @@ export function mergeTyped(existing, given, what) {
             );
         }
         const cur = existing[key];
+        // Same corruption one level down: merging an inline-object array into a
+        // reference sub-array (CardEntry.members: CardMember[]). recurse below
+        // only follows {__type__} objects, so an array field would slip past —
+        // guard it explicitly (#2).
+        if (isRefArrayClobber(cur, val)) throw refArrayClobberError(`${what}.${rawKey}`, cur);
         // A field that references a standalone object cannot be rewritten in
         // place: mergeTyped has no `doc`, so it cannot follow `{__id__}` into
         // the referenced value object. A scalar/array/null would orphan the ref
@@ -244,18 +279,7 @@ export function parsePropertyPath(path) {
  * very common field name; review #4).
  */
 export function componentIdxSet(doc) {
-    const set = new Set();
-    for (const obj of doc.objects) {
-        if (!obj || typeof obj !== 'object') continue;
-        const list = doc.isNode(obj) ? obj._components
-            : obj.__type__ === 'cc.MountedComponentsInfo' ? obj.components
-            : null;
-        if (!Array.isArray(list)) continue;
-        for (const r of list) {
-            if (isRef(r)) set.add(r.__id__);
-        }
-    }
-    return set;
+    return collectComponentIndices(doc.objects, (o) => doc.isNode(o));
 }
 
 /**
@@ -1473,23 +1497,43 @@ function insertArrayElement(doc, op, ctx) {
         // Empty array: nothing to copy, so `type` is required and the field set
         // comes solely from `value` (docs R2 — no defaults to fall back on).
         const type = elementType(op.type, undefined, property);
-        const body = value !== undefined ? valueAsFields(value, property) : {};
-        if (INLINE_VALUE_TYPES.has(type)) {
-            inserted = { __type__: type, ...body };
-            note = ` (inline ${type}, from value only)`;
-        } else {
-            inserted = { __id__: doc.addObject({ __type__: type, ...body }) };
-            note = ` (${type}, from value only — verify its fields against the source)`;
-        }
+        ({ inserted, note } = buildElementFromType(doc, type, value, property));
     } else {
-        // Scalar array (numbers/strings): insert `value` verbatim.
-        if (value === undefined) {
+        // Non-empty array but no element to clone: an all-null typed-ref array
+        // ([null] — branch above found no live {__id__} to read the type from),
+        // a null hole picked by `from` in a value-type array, or a genuine
+        // scalar array. Falling straight through to a raw `value` splice would
+        // put a bare inline object where the engine expects an {__id__} ref or
+        // a {__type__} value — the silent corruption guardTypedRefArrayWrite
+        // blocks for set_component_property (review #1). Drive construction off
+        // an explicit `type` or the __type__ of any non-null inline sibling.
+        const inlineType = arr.find(e => e && typeof e === 'object' && e.__type__)?.__type__;
+        const valueIsReference = value && typeof value === 'object' && '__id__' in value;
+        if (valueIsReference) {
+            inserted = value;
+            note = ' (reference)';
+        } else if (op.type !== undefined || inlineType !== undefined) {
+            const type = elementType(op.type, inlineType, property);
+            ({ inserted, note } = buildElementFromType(doc, type, value, property));
+        } else if (value === undefined) {
             throw new OperationError(
                 `"${property}" holds scalar values — pass "value" for the new element.`
             );
+        } else if (value === null || typeof value !== 'object') {
+            // Genuine scalar array (numbers/strings): insert `value` verbatim.
+            inserted = value;
+            note = '';
+        } else {
+            // A bare object with no `type` and no non-null sibling to infer
+            // from: the array may be a reference/value array serialized wholly
+            // as nulls. Refuse rather than corrupt it (review #1).
+            throw new OperationError(
+                `Cannot determine the element type for "${property}" — no non-null element to ` +
+                `infer it from. Pass "type" (the element __type__), or "value" as a reference ` +
+                `({"$node": ...} / {"$component": ...}); writing a bare object here would risk ` +
+                `corrupting a reference array.`
+            );
         }
-        inserted = value;
-        note = '';
     }
 
     arr.splice(at, 0, inserted);
@@ -1505,6 +1549,23 @@ function insertArrayElement(doc, op, ctx) {
         summary: `${path}.${describeComponentType(component.__type__, ctx)}` +
             `${mounted ? ' (mounted)' : ''}: inserted into ${property}[${at}]${note}`,
         nodeIdx
+    };
+}
+
+/**
+ * Build a new array element of an explicit/inferred `type` from `value` alone,
+ * when there is no neighbor to clone: an inline {__type__} for a value-type,
+ * else a standalone {__id__} object. Shared by the empty-array and the
+ * no-clonable-neighbor branches so both allocate the same shape (review #1).
+ */
+function buildElementFromType(doc, type, value, property) {
+    const body = value !== undefined ? valueAsFields(value, property) : {};
+    if (INLINE_VALUE_TYPES.has(type)) {
+        return { inserted: { __type__: type, ...body }, note: ` (inline ${type}, from value only)` };
+    }
+    return {
+        inserted: { __id__: doc.addObject({ __type__: type, ...body }) },
+        note: ` (${type}, from value only — verify its fields against the source)`
     };
 }
 

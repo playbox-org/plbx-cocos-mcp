@@ -13,6 +13,15 @@ class MockSceneParser {
     getObject(id) {
         return this.#objects[id] || null;
     }
+
+    // Flat array form (indexed by id) so component-membership detection
+    // (#isComponentIdx → collectComponentIndices) works against the mock.
+    get objects() {
+        const ids = Object.keys(this.#objects).map(Number);
+        const arr = new Array(ids.length ? Math.max(...ids) + 1 : 0).fill(null);
+        for (const id of ids) arr[id] = this.#objects[id];
+        return arr;
+    }
 }
 
 describe('PropertyExtractor', () => {
@@ -579,20 +588,50 @@ describe('PropertyExtractor', () => {
             assert.strictEqual(props.entries, '[×1]');
         });
 
-        it('does not recurse into a component (has node back-ref)', () => {
+        it('does not recurse into a component (real _components member)', () => {
             const parser = new MockSceneParser();
             parser.addObject(30, {
                 __idx__: 30,
                 __type__: 'MyScript',
-                node: { __id__: 31 }, // component marker
+                node: { __id__: 31 },
                 foo: 1
             });
-            parser.addObject(31, { __idx__: 31, __type__: 'cc.Node', _name: 'Owner' });
+            // 30 is an ACTUAL component: it is listed in its owning node's
+            // _components. Classification is by membership, not the `node`
+            // back-ref (review #3/#4) — a non-member with a `node` field would
+            // expand as a data struct instead (see the next test).
+            parser.addObject(31, {
+                __idx__: 31, __type__: 'cc.Node', _name: 'Owner',
+                _components: [{ __id__: 30 }]
+            });
             const extractor = new PropertyExtractor(parser, { detailed: true });
             const props = extractor.extract({ __type__: 'Holder', ref: { __id__: 30 } });
             // Resolves to the owning node name, NOT an expanded struct
             // (detailed mode appends the #id suffix)
             assert.strictEqual(props.ref, '→Owner#30');
+        });
+
+        it('expands array-element data structs carrying a `node` back-ref (review #3/#5)', () => {
+            // The motivating CardEntry[] shape: each element is a data struct
+            // that references a named node (not a component). It must expand
+            // into its fields, NOT collapse to "→<NodeName>" via the back-ref
+            // name heuristic (which would fire in the array branch too).
+            const objects = [
+                { __type__: 'cc.Node', _name: 'Spawner', _components: [] },
+                { __type__: 'Waypoint', node: { __id__: 0 }, pause: 2 },
+                { __type__: 'Waypoint', node: { __id__: 0 }, pause: 5 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const extractor = new PropertyExtractor(parser, { detailed: true });
+
+            const props = extractor.extract({
+                __type__: 'Path', waypoints: [{ __id__: 1 }, { __id__: 2 }]
+            });
+            assert.strictEqual(props.waypoints.length, 2);
+            assert.strictEqual(props.waypoints[0].__struct__, 'Waypoint');
+            assert.strictEqual(props.waypoints[0].pause, 2);
+            assert.strictEqual(props.waypoints[1].pause, 5);
         });
 
         it('guards against cycles between data structs', () => {
@@ -607,11 +646,14 @@ describe('PropertyExtractor', () => {
         });
 
         it('classifies components by _components membership, not the node back-ref (review #4)', () => {
-            // Both objects carry a `node` ref to an unnamed node; only [1] is a
-            // real component (listed in _components). The user data struct with
-            // a `node` @property (very common field name) must still expand.
+            // Both objects carry a `node` ref to the SAME NAMED node; only [1]
+            // is a real component (listed in _components). The user data struct
+            // with a `node` @property (very common field name) must still expand
+            // — and the node's non-empty name must NOT short-circuit it via the
+            // back-ref name heuristic (review #3: an empty _name previously
+            // masked this).
             const objects = [
-                { __type__: 'cc.Node', _name: '', _components: [{ __id__: 1 }] },
+                { __type__: 'cc.Node', _name: 'Root', _components: [{ __id__: 1 }] },
                 { __type__: 'CompX', node: { __id__: 0 }, foo: 1 },
                 { __type__: 'Waypoint', node: { __id__: 0 }, pause: 2 }
             ];
@@ -622,8 +664,12 @@ describe('PropertyExtractor', () => {
             const props = extractor.extract({
                 __type__: 'Holder', compRef: { __id__: 1 }, wp: { __id__: 2 }
             });
-            assert.ok(!('compRef' in props));                 // component: never expanded
-            assert.strictEqual(props.wp.__struct__, 'Waypoint'); // data struct: expanded
+            // component: resolved to its owner's name via the back-ref heuristic
+            // (never expanded as a struct)
+            assert.strictEqual(props.compRef, '→Root#1');
+            // data struct: expanded, even though it has the same `node` back-ref
+            // to the same NAMED node — membership, not the name, decides
+            assert.strictEqual(props.wp.__struct__, 'Waypoint');
             assert.strictEqual(props.wp.pause, 2);
         });
     });
@@ -648,6 +694,25 @@ describe('PropertyExtractor', () => {
                 ['speed', 'entries', 'alpha', 'beta']
             );
             assert.strictEqual(props.entries[0].__struct__, 'CardEntry');
+        });
+
+        it('a newly-surfaced Vec2[] never displaces a value-type scalar visible on main (review #4)', () => {
+            // main dropped Vec2[] entirely, so {s1,s2,s3,color} filled the first
+            // 4 text slots. The branch now surfaces `offsets`, but it must go
+            // AFTER the value-type `color` (which was visible on main) — never
+            // interleaved in key order, or `color` would fall past the cap.
+            const extractor = new PropertyExtractor(new MockSceneParser());
+            const props = extractor.extract({
+                __type__: 'MyScript',
+                s1: 1, s2: 2, s3: 3,
+                offsets: [{ __type__: 'cc.Vec2', x: 1, y: 2 }], // invisible on main
+                color: { __type__: 'cc.Color', r: 1, g: 2, b: 3, a: 4 } // visible on main
+            });
+            const keys = Object.keys(props);
+            // color (a value-type scalar) must precede offsets (the new Vec2[])
+            assert.ok(keys.indexOf('color') < keys.indexOf('offsets'));
+            // and within the first 4 slots the previously-visible fields survive
+            assert.deepStrictEqual(keys.slice(0, 4), ['s1', 's2', 's3', 'color']);
         });
     });
 

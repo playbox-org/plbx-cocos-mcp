@@ -258,6 +258,62 @@ describe('insert_array_element', () => {
         assert.strictEqual(members[0].__type__, 'cc.Mat4'); // inline, no {__id__}
         assert.strictEqual(members[0].m00, 2);
     });
+
+    test('cc.Mat3 inserts inline (was missing from the value-type registry, review #7)', () => {
+        const doc = makeCardsDoc();
+        applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'entries.1.members', type: 'cc.Mat3', value: { m00: 3 }
+        }]);
+        const m = entryOf(doc, 1).members[0];
+        assert.strictEqual(m.__type__, 'cc.Mat3'); // inline, NOT a standalone {__id__}
+        assert.strictEqual(m.__id__, undefined);
+        assert.strictEqual(m.m00, 3);
+    });
+
+    // review #1: an array with no clonable neighbor (all-null, or a null-hole
+    // `from`) must NOT fall through to a raw scalar splice that would write a
+    // bare object where the engine expects a reference / a {__type__} value.
+    test('all-null typed-ref array + type allocates a standalone reference (review #1)', () => {
+        const doc = makeCardsDoc();
+        comp(doc).entries = [null]; // serialized entirely as null — no live ref to read the type from
+        applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'entries', type: 'CardEntry', value: { type: 7 }
+        }]);
+        const entries = comp(doc).entries;
+        assert.strictEqual(entries.length, 2);
+        assert.ok(entries[1].__id__ !== undefined);          // {__id__} reference, not inline
+        const added = doc.getObject(entries[1].__id__);
+        assert.strictEqual(added.__type__, 'CardEntry');
+        assert.strictEqual(added.type, 7);
+        assertRoundTrips(doc);
+    });
+
+    test('all-null typed array with no type and a bare object is rejected, not corrupted (review #1)', () => {
+        const doc = makeCardsDoc();
+        comp(doc).entries = [null];
+        assert.throws(() => applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'entries', value: { type: 7 }
+        }]), /Cannot determine the element type/);
+        assert.deepStrictEqual(comp(doc).entries, [null]); // untouched
+    });
+
+    test('null-hole `from` in a value-type array builds an inline element (review #1)', () => {
+        const doc = makeCardsDoc();
+        // offsets is cc.Vec2[]; push a legal null hole and clone-target it
+        entryOf(doc, 0).offsets.push(null); // [{Vec2}, {Vec2}, null]
+        applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'entries.0.offsets', from: 2, value: { x: 9, y: 8 }
+        }]);
+        const offsets = entryOf(doc, 0).offsets;
+        // inserted inline (has __type__), not a bare object
+        assert.strictEqual(offsets[offsets.length - 1].__type__, 'cc.Vec2');
+        assert.strictEqual(offsets[offsets.length - 1].x, 9);
+        assertRoundTrips(doc);
+    });
 });
 
 describe('remove_array_element', () => {
@@ -420,6 +476,40 @@ describe('footgun guard (docs §3a)', () => {
         }]);
         assert.strictEqual(entryOf(doc, 0).type, 3);
         assert.strictEqual(entryOf(doc, 0).offsets.length, 2); // preserved through the merge
+    });
+
+    test('replacing a whole typed-ref array with inline objects is rejected (review #2a)', () => {
+        const doc = makeCardsDoc();
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'entries', value: [{ type: 1 }]
+        }]), /references to standalone objects|insert_array_element/);
+        assert.strictEqual(comp(doc).entries.length, 2); // untouched
+    });
+
+    test('merging inline objects into a nested reference sub-array is rejected (review #2b)', () => {
+        const doc = makeCardsDoc();
+        // entries[0].members is a {__id__}[]; seed a live reference so the array
+        // is recognizably a ref-array, then try to clobber it with inline objects
+        const memberIdx = doc.addObject({ __type__: 'CardMember', hp: 1 });
+        entryOf(doc, 0).members = [{ __id__: memberIdx }];
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'entries.0', value: { members: [{ hp: 3 }] }
+        }]), /references to standalone objects|insert_array_element/);
+        // the ref sub-array is intact
+        assert.deepStrictEqual(entryOf(doc, 0).members, [{ __id__: memberIdx }]);
+    });
+
+    test('replacing a typed-ref array with references (not inline objects) still works', () => {
+        const doc = makeCardsDoc();
+        // links is a reference-to-existing array — re-linking with a reference
+        // value is legitimate and must not be blocked by the clobber guard
+        applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'links', value: [{ $node: '/' }]
+        }]);
+        assert.deepStrictEqual(comp(doc).links, [{ __id__: 1 }]);
     });
 
     test('writing null into the append slot / a hole is allowed (review #6)', () => {

@@ -304,6 +304,14 @@ export function dropTargetOverrides(doc, sourceIdx, pathPrefix, { sourceLocalID 
  * @returns {{dropped: number, shifted: number}}
  */
 export function remapTargetOverridesForSplice(doc, sourceIdx, arrayPath, { removed, inserted }) {
+    // Only the root PrefabInfo registry is scanned — unlike findDanglingOverrides,
+    // which walks every PrefabInfo.targetOverrides. This rests on a design
+    // invariant, not a scan: a LIVE, array-index-addressing override is always
+    // hosted on the root registry. Non-root (per-stub) targetOverrides either
+    // address instance internals (which insert/remove_array_element never splice
+    // — instance content is edited only through property overrides) or are dead
+    // by overrideDeadReasons (the engine skips them on load, so a stale index is
+    // moot). The golden corpus holds no live non-root array-index override.
     const registry = existingRegistry(doc);
     if (!registry || !Array.isArray(registry.targetOverrides)) return { dropped: 0, shifted: 0 };
     let shifted = 0;

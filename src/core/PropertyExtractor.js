@@ -8,6 +8,7 @@
 // Embedded value-type structs (Vec3/Color/…) → compact ordered arrays.
 // Shared registry with the write side (operations.js) — see valueTypes.js.
 import { VALUE_TYPE_FIELDS } from './valueTypes.js';
+import { collectComponentIndices } from './componentIndices.js';
 
 // Internal serialization types that look like data structs (no `node` back-ref)
 // but must never be recursed into — they belong to the instance/prefab plumbing,
@@ -49,12 +50,18 @@ export class PropertyExtractor {
      */
     extract(component) {
         const props = {};
-        // Value-type structs (Vec3/Color/…) AND expanded nested data structs
-        // (CardEntry[], cc.StaticLightSettings, …) are appended AFTER scalar/ref
-        // props so they never displace a previously-visible field under the
-        // text formatter's prop cap — keeping text output additive for
-        // main-branch clients (JSON is uncapped and shows everything).
-        const deferred = [];
+        // Two deferral tiers, both appended AFTER scalar/ref props so they never
+        // displace a previously-visible field under the text formatter's prop
+        // cap (keeping text output additive for main-branch clients; JSON is
+        // uncapped and shows everything):
+        //   1. value-type structs (Vec3/Color/…) — these were ALSO deferred on
+        //      main, so they must keep their exact relative position;
+        //   2. newly-surfaced complex forms (expanded structs, Vec2[] arrays) —
+        //      invisible on main, so they go strictly LAST. Interleaving them
+        //      with tier 1 in key order would push a value-type scalar that was
+        //      visible on main past the cap (review #4).
+        const deferredValueTypes = [];
+        const deferredNew = [];
 
         for (const [key, value] of Object.entries(component)) {
             if (this.#shouldSkip(key, value)) continue;
@@ -65,20 +72,17 @@ export class PropertyExtractor {
             // Ref-arrays are exempt from deferral: they rendered inline on
             // main ('→Foo'/'→?' strings, or the '[×N]' summary), so pushing
             // them behind the text prop cap would HIDE a previously-visible
-            // field — breaking the additive-only contract (review #5). Every
-            // other complex form (expanded structs, Vec2[] arrays) was
-            // invisible on main, so appending it at the tail is additive.
-            const defer = this.#isValueType(value) ||
-                (this.#isComplex(extracted) && !this.#isRefArray(value));
-            if (defer) {
-                deferred.push([key, extracted]);
+            // field — breaking the additive-only contract (review #5).
+            if (this.#isValueType(value)) {
+                deferredValueTypes.push([key, extracted]);
+            } else if (this.#isComplex(extracted) && !this.#isRefArray(value)) {
+                deferredNew.push([key, extracted]);
             } else {
                 props[key] = extracted;
             }
         }
-        for (const [key, extracted] of deferred) {
-            props[key] = extracted;
-        }
+        for (const [key, extracted] of deferredValueTypes) props[key] = extracted;
+        for (const [key, extracted] of deferredNew) props[key] = extracted;
 
         // Properties overridden by cc.TargetOverrideInfo serialize as null
         // (or are omitted) — surface the real target as a sibling
@@ -153,8 +157,14 @@ export class PropertyExtractor {
             return `→${label}${suffix}`;
         }
 
-        // Component without _name — try parent node
-        if (refObj.node?.__id__ !== undefined) {
+        // Component without _name — name it after its owning node. This
+        // back-ref heuristic must fire ONLY for an actual component (membership
+        // in some node's _components), never for a user data struct that merely
+        // declares a `node: cc.Node` @property — otherwise the struct resolves
+        // to "→<NodeName>" and its field expansion (#isDataStruct/#extractStruct)
+        // never runs, the very case the PR set out to fix (review #3). `node`
+        // is a very common field name, so the check is by membership, not shape.
+        if (refObj.node?.__id__ !== undefined && this.#isComponentIdx(id)) {
             const parentNode = this.#sceneParser.getObject(refObj.node.__id__);
             if (parentNode?._name) return `→${parentNode._name}${suffix}`;
         }
@@ -233,19 +243,10 @@ export class PropertyExtractor {
      */
     #isComponentIdx(idx) {
         if (this.#componentIdxSet === undefined) {
-            const set = new Set();
-            const objects = Array.isArray(this.#sceneParser.objects) ? this.#sceneParser.objects : [];
-            for (const obj of objects) {
-                if (!obj || typeof obj !== 'object') continue;
-                const list = (obj.__type__ === 'cc.Node' || obj.__type__ === 'cc.Scene')
-                    ? obj._components
-                    : obj.__type__ === 'cc.MountedComponentsInfo' ? obj.components : null;
-                if (!Array.isArray(list)) continue;
-                for (const r of list) {
-                    if (r?.__id__ !== undefined) set.add(r.__id__);
-                }
-            }
-            this.#componentIdxSet = set;
+            this.#componentIdxSet = collectComponentIndices(
+                this.#sceneParser.objects,
+                (o) => o.__type__ === 'cc.Node' || o.__type__ === 'cc.Scene'
+            );
         }
         return this.#componentIdxSet.has(idx);
     }
