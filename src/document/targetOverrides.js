@@ -288,6 +288,59 @@ export function dropTargetOverrides(doc, sourceIdx, pathPrefix, { sourceLocalID 
 }
 
 /**
+ * An array splice on a component property shifts the numeric segment of
+ * every TargetOverrideInfo.propertyPath running THROUGH that array (review
+ * #3): after remove_array_element {index: 0}, ['entries','2','target'] must
+ * become ['entries','1','target'] — and an override addressing the removed
+ * element itself must be dropped — or the engine applies the override to the
+ * WRONG element on load. Only plain-component-source records (B1 form,
+ * sourceInfo: null) can address this document's arrays; that includes
+ * overrides sourced from mounted components.
+ *
+ * @param {number} sourceIdx - component whose array property was spliced
+ * @param {string[]} arrayPath - path segments of the array property
+ * @param {{removed?: number, inserted?: number}} splice - the index removed
+ *   (drop exact match, shift later ones -1) or inserted (shift >= it +1)
+ * @returns {{dropped: number, shifted: number}}
+ */
+export function remapTargetOverridesForSplice(doc, sourceIdx, arrayPath, { removed, inserted }) {
+    const registry = existingRegistry(doc);
+    if (!registry || !Array.isArray(registry.targetOverrides)) return { dropped: 0, shifted: 0 };
+    let shifted = 0;
+    const dead = new Set();
+    for (const r of registry.targetOverrides) {
+        if (!isRef(r)) continue;
+        const obj = doc.getObject(r.__id__);
+        if (obj?.__type__ !== 'cc.TargetOverrideInfo') continue;
+        if (!isRef(obj.source) || obj.source.__id__ !== sourceIdx) continue;
+        if (obj.sourceInfo !== null) continue;
+        const p = obj.propertyPath;
+        if (!pathStartsWith(p, arrayPath) || p.length <= arrayPath.length) continue;
+        const seg = p[arrayPath.length];
+        if (!/^\d+$/.test(String(seg))) continue;
+        const idx = Number(seg);
+        if (removed !== undefined) {
+            if (idx === removed) {
+                dead.add(r.__id__); // its element is gone — the record with it
+            } else if (idx > removed) {
+                p[arrayPath.length] = String(idx - 1);
+                shifted++;
+            }
+        } else if (inserted !== undefined && idx >= inserted) {
+            p[arrayPath.length] = String(idx + 1);
+            shifted++;
+        }
+    }
+    if (dead.size > 0) {
+        // Dropped records (and their TargetInfo objects) become unreachable
+        // and are GC'd on renumber, like dropTargetOverrides.
+        registry.targetOverrides = registry.targetOverrides.filter(
+            r => !(isRef(r) && dead.has(r.__id__)));
+    }
+    return { dropped: dead.size, shifted };
+}
+
+/**
  * Remove every override whose TARGET is the object addressed by
  * (stubIdx, localID) — used when that in-instance object ceases to exist
  * (component recorded in removedComponents).

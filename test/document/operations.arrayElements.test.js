@@ -204,6 +204,60 @@ describe('insert_array_element', () => {
             property: 'entries.0.type'
         }]), /not an array/);
     });
+
+    test('`from` pointing at a null hole of a typed-ref array is rejected (review #2)', () => {
+        const doc = makeCardsDoc();
+        comp(doc).entries.push(null); // legal serialization: [ref, ref, null]
+        assert.throws(() => applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'entries', from: 2, value: { id: 'x' }
+        }]), /null hole/);
+        assert.strictEqual(comp(doc).entries.length, 3); // nothing was spliced
+    });
+
+    test('a null-hole `from` still accepts an explicit reference value', () => {
+        const doc = makeCardsDoc();
+        comp(doc).entries.push(null);
+        applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'entries', from: 2, value: { $node: '/' }
+        }]);
+        assert.deepStrictEqual(comp(doc).entries[3], { __id__: 1 });
+    });
+
+    test('a data struct with a `node` @property is cloned as owned, not treated as a component (review #4)', () => {
+        const doc = makeCardsDoc();
+        // `node` is a very common user field name — it must not trip the
+        // component classification (components are found by _components
+        // membership, not by the back-ref heuristic).
+        const wpIdx = doc.addObject({ __type__: 'Waypoint', node: { __id__: 1 }, pause: 2 });
+        comp(doc).waypoints = [{ __id__: wpIdx }];
+
+        applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'waypoints', value: { pause: 5 }
+        }]);
+        const wps = comp(doc).waypoints;
+        assert.strictEqual(wps.length, 2);
+        assert.notStrictEqual(wps[1].__id__, wpIdx);   // fresh object, not an alias
+        const added = doc.getObject(wps[1].__id__);
+        assert.strictEqual(added.__type__, 'Waypoint');
+        assert.strictEqual(added.pause, 5);
+        assert.deepStrictEqual(added.node, { __id__: 1 }); // node LINK kept by value
+        assert.strictEqual(doc.getObject(wpIdx).pause, 2); // source untouched
+    });
+
+    test('cc.Mat4 inserts inline into an empty array (shared value-type registry, review #8)', () => {
+        const doc = makeCardsDoc();
+        applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'entries.1.members', type: 'cc.Mat4', value: { m00: 2 }
+        }]);
+        const members = entryOf(doc, 1).members;
+        assert.strictEqual(members.length, 1);
+        assert.strictEqual(members[0].__type__, 'cc.Mat4'); // inline, no {__id__}
+        assert.strictEqual(members[0].m00, 2);
+    });
 });
 
 describe('remove_array_element', () => {
@@ -269,6 +323,75 @@ describe('remove_array_element', () => {
         assert.strictEqual(offsets.length, 1);
         assert.strictEqual(offsets[0].x, 20);
     });
+
+    test('removing a node reference from a link array just splices (review #1)', () => {
+        const doc = makeCardsDoc();
+        // links[0] → the root node: dropping the LINK must neither throw
+        // ("referenced from outside") nor GC the live node.
+        applyOperations(doc, [{
+            op: 'remove_array_element', node: '/', component: 'CardsBase',
+            property: 'links', index: 0
+        }]);
+        assert.deepStrictEqual(comp(doc).links, []);
+        assert.strictEqual(doc.getObject(1).__type__, 'cc.Node'); // target kept
+        assertRoundTrips(doc);
+    });
+
+    test('removing a reference to a live component keeps the component (review #1)', () => {
+        const doc = makeCardsDoc();
+        const fooIdx = doc.addObject({
+            __type__: 'FooComp', node: { __id__: 1 }, _id: '', __prefab: null
+        });
+        doc.getObject(1)._components.push({ __id__: fooIdx });
+        comp(doc).controllers = [{ __id__: fooIdx }];
+
+        // No force needed — the element is a link, not an owned subtree
+        applyOperations(doc, [{
+            op: 'remove_array_element', node: '/', component: 'CardsBase',
+            property: 'controllers', index: 0
+        }]);
+        assert.deepStrictEqual(comp(doc).controllers, []);
+
+        doc.renumber();
+        assert.ok(doc.objects.some(o => o?.__type__ === 'FooComp')); // not GC'd
+    });
+
+    test('array splices remap targetOverride propertyPaths through the array (review #3)', () => {
+        const doc = makeCardsDoc();
+        const registry = doc.getObject(4); // prefab-root PrefabInfo = the registry
+        const ovIdx = doc.addObject({
+            __type__: 'cc.TargetOverrideInfo',
+            source: { __id__: 2 }, sourceInfo: null,
+            propertyPath: ['entries', '1', 'target'],
+            target: { __id__: 1 }, targetInfo: null
+        });
+        const tiIdx = doc.addObject({ __type__: 'cc.TargetInfo', localID: ['someFileId01'] });
+        const ov = doc.getObject(ovIdx);
+        ov.targetInfo = { __id__: tiIdx };
+        registry.targetOverrides = [{ __id__: ovIdx }];
+
+        // insert before it → the index segment shifts up
+        applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'entries', index: 0, value: { type: 9 }
+        }]);
+        assert.deepStrictEqual(ov.propertyPath, ['entries', '2', 'target']);
+
+        // remove before it → shifts back down
+        applyOperations(doc, [{
+            op: 'remove_array_element', node: '/', component: 'CardsBase',
+            property: 'entries', index: 0
+        }]);
+        assert.deepStrictEqual(ov.propertyPath, ['entries', '1', 'target']);
+
+        // removing the overridden element itself drops the record
+        applyOperations(doc, [{
+            op: 'remove_array_element', node: '/', component: 'CardsBase',
+            property: 'entries', index: 1
+        }]);
+        assert.deepStrictEqual(registry.targetOverrides, []);
+        assertValid(doc);
+    });
 });
 
 describe('footgun guard (docs §3a)', () => {
@@ -297,6 +420,24 @@ describe('footgun guard (docs §3a)', () => {
         }]);
         assert.strictEqual(entryOf(doc, 0).type, 3);
         assert.strictEqual(entryOf(doc, 0).offsets.length, 2); // preserved through the merge
+    });
+
+    test('writing null into the append slot / a hole is allowed (review #6)', () => {
+        const doc = makeCardsDoc();
+        // Null holes are a legal serialization (the golden files contain them)
+        applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'entries.2', value: null
+        }]);
+        assert.strictEqual(comp(doc).entries.length, 3);
+        assert.strictEqual(comp(doc).entries[2], null);
+
+        applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'entries.2', value: null // overwrite the hole with null again
+        }]);
+        assert.strictEqual(comp(doc).entries[2], null);
+        assertRoundTrips(doc);
     });
 });
 

@@ -21,8 +21,10 @@ import {
     removeInstanceComponent, restoreInstanceComponent, findMountedComponent
 } from './instances.js';
 import {
-    dropTargetOverrides, upsertTargetOverride, transformValueTracked, pruneDanglingOverrides
+    dropTargetOverrides, upsertTargetOverride, transformValueTracked, pruneDanglingOverrides,
+    remapTargetOverridesForSplice
 } from './targetOverrides.js';
+import { VALUE_TYPE_FIELDS } from '../core/valueTypes.js';
 import {
     createComponent, createScriptComponent, resolveTemplateType, templateTypes
 } from './ComponentTemplates.js';
@@ -235,6 +237,44 @@ export function parsePropertyPath(path) {
 }
 
 /**
+ * Indices of every COMPONENT object in the document: membership in some
+ * node's _components (or a MountedComponentsInfo.components). This — not the
+ * `node` back-ref heuristic — is what tells a component apart from a user
+ * data struct that happens to declare `@property node: cc.Node` (`node` is a
+ * very common field name; review #4).
+ */
+export function componentIdxSet(doc) {
+    const set = new Set();
+    for (const obj of doc.objects) {
+        if (!obj || typeof obj !== 'object') continue;
+        const list = doc.isNode(obj) ? obj._components
+            : obj.__type__ === 'cc.MountedComponentsInfo' ? obj.components
+            : null;
+        if (!Array.isArray(list)) continue;
+        for (const r of list) {
+            if (isRef(r)) set.add(r.__id__);
+        }
+    }
+    return set;
+}
+
+/**
+ * True when the object at `idx` is a standalone VALUE object (user data
+ * struct, cc.CurveRange, particle module, …): typed, not a node, not a
+ * component. Such objects are OWNED through their references; refs to
+ * nodes/components are structural links. `components` comes from
+ * componentIdxSet(doc) so traversals can reuse one set.
+ *
+ * NOTE: typedRefTargets deliberately does NOT use this predicate — its guard
+ * must be broader (a bare value corrupts an array of component references
+ * just the same).
+ */
+function isValueObjectIdx(doc, idx, components) {
+    const obj = doc.getObject(idx);
+    return !!(obj && obj.__type__ && !doc.isNode(obj) && !components.has(idx));
+}
+
+/**
  * Navigate to the property container. Every string segment tolerates the
  * serialized underscore prefix ("spriteFrame" matches "_spriteFrame",
  * "shapeModule.enable" matches "_shapeModule._enable") and must exist —
@@ -249,6 +289,7 @@ const HIDDEN_FIELDS = ['__type__', '_objFlags', '__editorExtras__', 'node', '__p
 
 function locateProperty(doc, component, path, { allowCreate = false } = {}) {
     const segments = parsePropertyPath(path);
+    let components = null; // built lazily, only when the path crosses a ref
     let container = component;
     for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
@@ -271,15 +312,16 @@ function locateProperty(doc, component, path, { allowCreate = false } = {}) {
         let next = container[segments[i]];
         if (isRef(next)) {
             const ref = doc.getObject(next.__id__);
+            components ??= componentIdxSet(doc);
             // Follow a ref ONLY into a standalone value object (cc.CurveRange
             // behind cc.Line._width, particle modules, MeshRenderer.bakeSettings,
             // …). A ref to a node or a component is a structural link, not a
             // sub-property: navigating through it would mutate a DIFFERENT
             // node/component and bypass layer/instance-override validation.
-            const isValueObj = ref?.__type__ && !doc.isNode(ref) && !isRef(ref.node);
+            const isValueObj = isValueObjectIdx(doc, next.__id__, components);
             if (!isValueObj) {
                 const kind = ref && doc.isNode(ref) ? 'a node'
-                    : ref && isRef(ref.node) ? 'another component'
+                    : ref && components.has(next.__id__) ? 'another component'
                     : 'a non-value reference';
                 throw new OperationError(
                     `Cannot navigate "${path}": "${segments.slice(0, i + 1).join('.')}" is ` +
@@ -1067,15 +1109,15 @@ function setPropertyOnComponent(doc, compIdx, property, rawValue, ctx, { isScrip
     const isReference = value && typeof value === 'object' &&
         ('__id__' in value || '__uuid__' in value);
 
-    guardTypedRefArrayWrite(doc, container, key, existing, isReference, property);
+    guardTypedRefArrayWrite(doc, container, key, existing, value, isReference, property);
 
     // Write THROUGH a reference to a standalone value object (cc.Line._width
     // → cc.CurveRange etc.): merge into the referenced object, keep the ref.
     // Nodes/components stay plain replacements — they are retargeted, not
     // edited, through a property write.
     const standalone = !isReference && isRef(existing) ? doc.getObject(existing.__id__) : null;
-    const isValueObject = standalone?.__type__ &&
-        !doc.isNode(standalone) && !isRef(standalone.node);
+    const isValueObject = standalone !== null &&
+        isValueObjectIdx(doc, existing.__id__, componentIdxSet(doc));
     if (isValueObject && value !== null) {
         if (typeof value !== 'object' || Array.isArray(value)) {
             throw new OperationError(
@@ -1175,7 +1217,7 @@ function setAssetRef(doc, op, ctx) {
     });
     // An asset ({__uuid__}) never belongs in an array of {__id__} references
     // to typed objects — reject an append/hole write there (footgun guard).
-    guardTypedRefArrayWrite(doc, container, key, container[key], false, property);
+    guardTypedRefArrayWrite(doc, container, key, container[key], value, false, property);
     // Same supersede rule as setPropertyOnComponent (asset values are never
     // instance refs, so only the drop side applies here)
     dropTargetOverrides(doc, compIdx, segments.map(String));
@@ -1200,10 +1242,12 @@ function setAssetRef(doc, op, ctx) {
 // elements needs object allocation + a reference, which a leaf-value writer
 // cannot do — these two ops are that missing half.
 
-/** cc value-types serialized INLINE inside an array (no {__id__} indirection) */
-const INLINE_VALUE_TYPES = new Set([
-    'cc.Vec2', 'cc.Vec3', 'cc.Vec4', 'cc.Color', 'cc.Size', 'cc.Rect', 'cc.Quat', 'cc.Mat4'
-]);
+/**
+ * cc value-types serialized INLINE inside an array (no {__id__} indirection).
+ * Derived from the shared registry so the write side can never accept a type
+ * the read side does not render (review #8).
+ */
+const INLINE_VALUE_TYPES = new Set(Object.keys(VALUE_TYPE_FIELDS));
 
 /** __type__s of the standalone objects an array's {__id__} elements point at */
 function typedRefTargets(doc, arr) {
@@ -1222,10 +1266,11 @@ function typedRefTargets(doc, arr) {
  * standalone objects (CardEntry[], …) silently corrupts the file — the engine
  * expects a reference, not an inline object. Reject with a pointer to the
  * dedicated ops. A proper reference/asset write into an EXISTING index is
- * unaffected (that is the safe merge-through-ref path).
+ * unaffected (that is the safe merge-through-ref path), and so is `null` —
+ * null holes are a legal serialization the golden files contain (review #6).
  */
-function guardTypedRefArrayWrite(doc, container, key, existing, isReference, property) {
-    if (isReference) return;
+function guardTypedRefArrayWrite(doc, container, key, existing, value, isReference, property) {
+    if (isReference || value === null) return;
     if (!Array.isArray(container) || typeof key !== 'number') return;
     if (existing !== undefined && existing !== null) return;
     const targets = typedRefTargets(doc, container);
@@ -1242,8 +1287,8 @@ function guardTypedRefArrayWrite(doc, container, key, existing, isReference, pro
 function locateArrayProperty(doc, op, ctx) {
     const idx = doc.resolveNode(requireString(op, 'node'));
     const property = requireString(op, 'property');
-    const { component, mounted } = resolveWritableComponent(doc, idx, op, ctx);
-    const { container, key } = locateProperty(doc, component, property);
+    const { compIdx, component, mounted } = resolveWritableComponent(doc, idx, op, ctx);
+    const { container, key, segments } = locateProperty(doc, component, property);
     const arr = container[key];
     if (!Array.isArray(arr)) {
         throw new OperationError(
@@ -1251,7 +1296,12 @@ function locateArrayProperty(doc, op, ctx) {
             `insert_array_element/remove_array_element target an array-valued property.`
         );
     }
-    return { nodeIdx: idx, path: doc.nodePath(idx), property, component, mounted, arr };
+    return {
+        nodeIdx: idx, path: doc.nodePath(idx), property, compIdx, component, mounted, arr,
+        // Normalized segments (string form) — the shape TargetOverrideInfo
+        // propertyPath entries use, for the splice remap (review #3).
+        pathStrings: segments.map(String)
+    };
 }
 
 /** Pick the element type, validating an explicit `type` against the neighbor's */
@@ -1278,7 +1328,7 @@ function elementType(explicit, neighborType, property) {
  * components, and assets ({__uuid__}) are structural links kept by value.
  * A memo preserves internal sharing and breaks cycles. Returns the new index.
  */
-function cloneOwnedElement(doc, srcIdx) {
+function cloneOwnedElement(doc, srcIdx, components = componentIdxSet(doc)) {
     const memo = new Map();
     const alloc = (oldIdx) => {
         if (memo.has(oldIdx)) return memo.get(oldIdx);
@@ -1290,8 +1340,7 @@ function cloneOwnedElement(doc, srcIdx) {
     const cloneContent = (value) => {
         if (value === null || typeof value !== 'object') return value;
         if (isRef(value)) {
-            const t = doc.getObject(value.__id__);
-            const owned = t && t.__type__ && !doc.isNode(t) && !isRef(t.node);
+            const owned = isValueObjectIdx(doc, value.__id__, components);
             return { __id__: owned ? alloc(value.__id__) : value.__id__ };
         }
         if (Array.isArray(value)) return value.map(cloneContent);
@@ -1308,14 +1357,13 @@ function cloneOwnedElement(doc, srcIdx) {
  * Mirrors SceneDocument.subtreeObjectIds for the CCClass[]-element case, so the
  * shared reachability guard (resolveExternalRefs) applies unchanged.
  */
-function valueSubtreeIds(doc, startIdx) {
+function valueSubtreeIds(doc, startIdx, components = componentIdxSet(doc)) {
     const owned = new Set();
     const stack = [startIdx];
     const collect = (value) => {
         if (value === null || typeof value !== 'object') return;
         if (isRef(value)) {
-            const t = doc.getObject(value.__id__);
-            if (t && t.__type__ && !doc.isNode(t) && !isRef(t.node)) stack.push(value.__id__);
+            if (isValueObjectIdx(doc, value.__id__, components)) stack.push(value.__id__);
             return;
         }
         if (Array.isArray(value)) { value.forEach(collect); return; }
@@ -1348,7 +1396,8 @@ function valueSubtreeIds(doc, startIdx) {
  * the new element's index.
  */
 function insertArrayElement(doc, op, ctx) {
-    const { nodeIdx, path, property, component, mounted, arr } = locateArrayProperty(doc, op, ctx);
+    const { nodeIdx, path, property, compIdx, component, mounted, arr, pathStrings } =
+        locateArrayProperty(doc, op, ctx);
     const at = childInsertIndex(op.index, arr.length);
     const value = op.value === undefined ? undefined : transformValue(doc, op.value, ctx);
 
@@ -1368,15 +1417,16 @@ function insertArrayElement(doc, op, ctx) {
 
     let inserted;
     let note;
+    const components = componentIdxSet(doc);
     const neighborObj = isRef(neighbor) ? doc.getObject(neighbor.__id__) : null;
-    const neighborIsOwned = neighborObj?.__type__ &&
-        !doc.isNode(neighborObj) && !isRef(neighborObj.node);
-    if (isRef(neighbor) && neighborIsOwned) {
+    const neighborIsOwned = isRef(neighbor) &&
+        isValueObjectIdx(doc, neighbor.__id__, components);
+    if (neighborIsOwned) {
         // Array that OWNS standalone data structs (CardEntry[]): clone the
         // neighbor deeply (fresh owned sub-objects), then merge value.
         const srcIdx = neighbor.__id__;
         const type = elementType(op.type, neighborObj.__type__, property);
-        const newIdx = cloneOwnedElement(doc, srcIdx);
+        const newIdx = cloneOwnedElement(doc, srcIdx, components);
         if (value !== undefined) doc.objects[newIdx] = mergeTyped(doc.getObject(newIdx), value, property);
         inserted = { __id__: newIdx };
         const fromN = op.from ?? arr.indexOf(neighbor);
@@ -1394,6 +1444,25 @@ function insertArrayElement(doc, op, ctx) {
         }
         inserted = value;
         note = ' (reference)';
+    } else if (neighbor == null && typedRefTargets(doc, arr).length > 0) {
+        // `from` pointed at a null hole of a typed-ref array (the default
+        // picker skips nulls, so this only happens with an explicit `from`):
+        // the reference branches above all miss on a null neighbor, and
+        // falling through to the scalar branch would splice the raw value
+        // INLINE into an array of {__id__} references — exactly the silent
+        // corruption guardTypedRefArrayWrite exists for (review #2).
+        // An explicit reference value is still fine.
+        if (value && typeof value === 'object' && '__id__' in value) {
+            inserted = value;
+            note = ' (reference)';
+        } else {
+            throw new OperationError(
+                `"${property}"[${op.from}] is a null hole of an array of references to typed ` +
+                `objects (${typedRefTargets(doc, arr)[0]}) — there is nothing to clone from it. ` +
+                `Pass "from" pointing at a non-null element, or value as a reference ` +
+                `({"$node": ...} / {"$component": ...}).`
+            );
+        }
     } else if (neighbor && typeof neighbor === 'object' && neighbor.__type__) {
         // Inline value-type array (cc.Vec2[]): build an inline object.
         const type = elementType(op.type, neighbor.__type__, property);
@@ -1424,6 +1493,12 @@ function insertArrayElement(doc, op, ctx) {
     }
 
     arr.splice(at, 0, inserted);
+
+    // Overrides addressing entries[i>=at] now address the wrong slot — shift
+    // their propertyPath index segment along with the splice (review #3).
+    const remapped = remapTargetOverridesForSplice(doc, compIdx, pathStrings, { inserted: at });
+    if (remapped.shifted) note += ` (shifted ${remapped.shifted} target-override path(s))`;
+
     return {
         op: 'insert_array_element',
         target: path,
@@ -1447,14 +1522,17 @@ function valueAsFields(value, property) {
 /**
  * remove_array_element {node, component?/componentIndex?, property, index, force?}
  *
- * Removes one element from an array-valued property. For a reference element,
- * its owned subtree becomes unreachable and is garbage-collected on renumber;
- * reachable references INTO it from elsewhere block the removal (or are nulled
- * with force) exactly like remove_node/remove_component. Inline/scalar elements
- * are just spliced out.
+ * Removes one element from an array-valued property. For a reference to an
+ * OWNED value object (CardEntry[], …) its subtree becomes unreachable and is
+ * garbage-collected on renumber; reachable references INTO it from elsewhere
+ * block the removal (or are nulled with force) exactly like
+ * remove_node/remove_component. A reference to a live node/component
+ * (pipeControllers: Foo[]) is just a link — it is spliced out and the target
+ * stays in the scene (review #1). Inline/scalar elements are just spliced out.
  */
 function removeArrayElement(doc, op, ctx) {
-    const { nodeIdx, path, property, component, mounted, arr } = locateArrayProperty(doc, op, ctx);
+    const { nodeIdx, path, property, compIdx, component, mounted, arr, pathStrings } =
+        locateArrayProperty(doc, op, ctx);
     const index = op.index;
     if (!Number.isInteger(index) || index < 0 || index >= arr.length) {
         throw new OperationError(
@@ -1467,13 +1545,28 @@ function removeArrayElement(doc, op, ctx) {
 
     let note = '';
     if (isRef(removedEl)) {
-        const removed = valueSubtreeIds(doc, removedEl.__id__);
-        const nulled = resolveExternalRefs(
-            doc, removed, op.force, `element ${index} of "${property}" is referenced from outside`
-        );
-        note = nulled
-            ? ` (nulled ${nulled} external refs)`
-            : ` (${removed.size} object(s) freed on save)`;
+        const components = componentIdxSet(doc);
+        if (isValueObjectIdx(doc, removedEl.__id__, components)) {
+            const removed = valueSubtreeIds(doc, removedEl.__id__, components);
+            const nulled = resolveExternalRefs(
+                doc, removed, op.force, `element ${index} of "${property}" is referenced from outside`
+            );
+            note = nulled
+                ? ` (nulled ${nulled} external refs)`
+                : ` (${removed.size} object(s) freed on save)`;
+        } else {
+            // Mirror of the insert reference branch: the array held a LINK to
+            // an existing node/component, not an owned subtree — dropping the
+            // link must not GC (or block on) the live target (review #1).
+            note = ' (dropped the reference; the target object is kept)';
+        }
+    }
+
+    // Overrides addressing the removed element die with it; those addressing
+    // later elements shift down along with the splice (review #3).
+    const remapped = remapTargetOverridesForSplice(doc, compIdx, pathStrings, { removed: index });
+    if (remapped.dropped || remapped.shifted) {
+        note += ` (target-overrides: ${remapped.dropped} dropped, ${remapped.shifted} shifted)`;
     }
 
     return {

@@ -6,16 +6,8 @@
  */
 
 // Embedded value-type structs (Vec3/Color/…) → compact ordered arrays.
-// The field order per type matches the editor/API constructors.
-const VALUE_TYPE_FIELDS = {
-    'cc.Vec2': ['x', 'y'],
-    'cc.Vec3': ['x', 'y', 'z'],
-    'cc.Vec4': ['x', 'y', 'z', 'w'],
-    'cc.Quat': ['x', 'y', 'z', 'w'],
-    'cc.Color': ['r', 'g', 'b', 'a'],
-    'cc.Size': ['width', 'height'],
-    'cc.Rect': ['x', 'y', 'width', 'height']
-};
+// Shared registry with the write side (operations.js) — see valueTypes.js.
+import { VALUE_TYPE_FIELDS } from './valueTypes.js';
 
 // Internal serialization types that look like data structs (no `node` back-ref)
 // but must never be recursed into — they belong to the instance/prefab plumbing,
@@ -35,6 +27,7 @@ export class PropertyExtractor {
     #assetResolver;
     #refResolver;
     #targetOverridesBySource; // lazy: component idx → [{key, targetId}]
+    #componentIdxSet; // lazy: indices referenced from _components / mounted records
     #skipKeys = new Set([
         '__type__', '__idx__', 'node', '_enabled', '_name',
         '_objFlags', '__editorExtras__', '__prefab', '_string'
@@ -69,7 +62,15 @@ export class PropertyExtractor {
             const extracted = this.#extractValue(value);
             if (extracted === undefined) continue;
 
-            if (this.#isValueType(value) || this.#isComplex(extracted)) {
+            // Ref-arrays are exempt from deferral: they rendered inline on
+            // main ('→Foo'/'→?' strings, or the '[×N]' summary), so pushing
+            // them behind the text prop cap would HIDE a previously-visible
+            // field — breaking the additive-only contract (review #5). Every
+            // other complex form (expanded structs, Vec2[] arrays) was
+            // invisible on main, so appending it at the tail is additive.
+            const defer = this.#isValueType(value) ||
+                (this.#isComplex(extracted) && !this.#isRefArray(value));
+            if (defer) {
                 deferred.push([key, extracted]);
             } else {
                 props[key] = extracted;
@@ -216,6 +217,39 @@ export class PropertyExtractor {
         return true; // expanded struct object
     }
 
+    /** True for a RAW array of {__id__} references (visible inline on main) */
+    #isRefArray(value) {
+        if (!Array.isArray(value)) return false;
+        const first = value.find(v => v != null);
+        return typeof first === 'object' && first !== null && '__id__' in first;
+    }
+
+    /**
+     * True when the object at `idx` is a component: membership in some node's
+     * _components (or a MountedComponentsInfo.components) — NOT the `node`
+     * back-ref heuristic, which false-positives on a user data struct that
+     * declares `@property node: cc.Node` (review #4). Built lazily over the
+     * flat objects array, so it works for both SceneParser and SceneDocument.
+     */
+    #isComponentIdx(idx) {
+        if (this.#componentIdxSet === undefined) {
+            const set = new Set();
+            const objects = Array.isArray(this.#sceneParser.objects) ? this.#sceneParser.objects : [];
+            for (const obj of objects) {
+                if (!obj || typeof obj !== 'object') continue;
+                const list = (obj.__type__ === 'cc.Node' || obj.__type__ === 'cc.Scene')
+                    ? obj._components
+                    : obj.__type__ === 'cc.MountedComponentsInfo' ? obj.components : null;
+                if (!Array.isArray(list)) continue;
+                for (const r of list) {
+                    if (r?.__id__ !== undefined) set.add(r.__id__);
+                }
+            }
+            this.#componentIdxSet = set;
+        }
+        return this.#componentIdxSet.has(idx);
+    }
+
     /** True for an embedded value-type struct (cc.Vec3, cc.Color, …) */
     #isValueType(value) {
         return typeof value === 'object' && value !== null &&
@@ -224,19 +258,21 @@ export class PropertyExtractor {
 
     /**
      * True for a plain data CCClass object worth expanding: not a node/scene,
-     * not a value-type, not internal plumbing, and NOT a component (components
-     * carry a `node` back-ref). These are @property structs (CardEntry,
-     * CardConfig, cc.CurveRange, …) stored as their own objects in the flat
-     * array and referenced by {__id__}, with no _name to resolve.
+     * not a value-type, not internal plumbing, and NOT a component. Component
+     * detection is by MEMBERSHIP (referenced from a node's _components /
+     * mounted records), not by the `node` back-ref — a user data struct with
+     * a `node: cc.Node` @property must still expand (review #4). These are
+     * @property structs (CardEntry, CardConfig, cc.CurveRange, …) stored as
+     * their own objects in the flat array and referenced by {__id__}.
      */
-    #isDataStruct(obj) {
+    #isDataStruct(obj, idx) {
         if (!obj || typeof obj !== 'object') return false;
         const type = obj.__type__;
         if (!type) return false;
         if (type === 'cc.Node' || type === 'cc.Scene') return false;
         if (VALUE_TYPE_FIELDS[type]) return false;
         if (INTERNAL_STRUCT_TYPES.has(type)) return false;
-        if (obj.node?.__id__ !== undefined) return false; // it's a component
+        if (this.#isComponentIdx(idx)) return false;
         return true;
     }
 
@@ -289,7 +325,7 @@ export class PropertyExtractor {
             // Unnamed ref: expand nested data CCClass structs (detailed only)
             if (this.#detailed) {
                 const target = this.#sceneParser.getObject(value.__id__);
-                if (this.#isDataStruct(target)) {
+                if (this.#isDataStruct(target, value.__id__)) {
                     return this.#extractStruct(target, depth, seen);
                 }
             }
@@ -313,7 +349,7 @@ export class PropertyExtractor {
                         if (named) return named;
                         // Unnamed ref → nested data-struct expansion
                         const target = this.#sceneParser.getObject(ref.__id__);
-                        if (this.#isDataStruct(target)) {
+                        if (this.#isDataStruct(target, ref.__id__)) {
                             return this.#extractStruct(target, depth, seen);
                         }
                         return '→?';

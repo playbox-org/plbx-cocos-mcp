@@ -605,5 +605,65 @@ describe('PropertyExtractor', () => {
             assert.strictEqual(props.root.next.__struct__, 'B');
             assert.strictEqual(props.root.next.back, '<cycle A>');
         });
+
+        it('classifies components by _components membership, not the node back-ref (review #4)', () => {
+            // Both objects carry a `node` ref to an unnamed node; only [1] is a
+            // real component (listed in _components). The user data struct with
+            // a `node` @property (very common field name) must still expand.
+            const objects = [
+                { __type__: 'cc.Node', _name: '', _components: [{ __id__: 1 }] },
+                { __type__: 'CompX', node: { __id__: 0 }, foo: 1 },
+                { __type__: 'Waypoint', node: { __id__: 0 }, pause: 2 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const extractor = new PropertyExtractor(parser, { detailed: true });
+
+            const props = extractor.extract({
+                __type__: 'Holder', compRef: { __id__: 1 }, wp: { __id__: 2 }
+            });
+            assert.ok(!('compRef' in props));                 // component: never expanded
+            assert.strictEqual(props.wp.__struct__, 'Waypoint'); // data struct: expanded
+            assert.strictEqual(props.wp.pause, 2);
+        });
+    });
+
+    describe('additive text-cap contract (review #5)', () => {
+        it('keeps ref-arrays inline in their original slot, never deferred', () => {
+            const parser = new MockSceneParser();
+            parser.addObject(50, { __idx__: 50, __type__: 'CardEntry', type: 1 });
+            parser.addObject(51, { __idx__: 51, __type__: 'CardEntry', type: 2 });
+            const extractor = new PropertyExtractor(parser, { detailed: true });
+
+            const props = extractor.extract({
+                __type__: 'CardsBase', node: { __id__: 1 },
+                speed: 5,
+                entries: [{ __id__: 50 }, { __id__: 51 }],
+                alpha: 1, beta: 2, gamma: 3, delta: 4
+            });
+            // main showed {speed entries alpha beta} in the first 4 text slots —
+            // the expanded entries array must not be pushed past the prop cap
+            assert.deepStrictEqual(
+                Object.keys(props).slice(0, 4),
+                ['speed', 'entries', 'alpha', 'beta']
+            );
+            assert.strictEqual(props.entries[0].__struct__, 'CardEntry');
+        });
+    });
+
+    describe('cc.Mat4 (shared value-type registry, review #8)', () => {
+        it('renders cc.Mat4 as a 16-number ordered array', () => {
+            const extractor = new PropertyExtractor(new MockSceneParser());
+            const props = extractor.extract({
+                __type__: 'MyScript',
+                _mat: {
+                    __type__: 'cc.Mat4',
+                    m00: 1, m01: 0, m02: 0, m03: 0, m04: 0, m05: 1, m06: 0, m07: 0,
+                    m08: 0, m09: 0, m10: 1, m11: 0, m12: 4, m13: 5, m14: 6, m15: 1
+                }
+            });
+            assert.deepStrictEqual(props._mat,
+                [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 4, 5, 6, 1]);
+        });
     });
 });

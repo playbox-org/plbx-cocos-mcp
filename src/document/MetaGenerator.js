@@ -64,7 +64,9 @@ function headName(absPath) {
         const head = Array.isArray(arr) ? arr[0] : arr;
         if (typeof head?._name === 'string' && head._name) return head._name;
         const rootIdx = head?.data?.__id__;
-        if (rootIdx != null && typeof arr[rootIdx]?._name === 'string') return arr[rootIdx]._name;
+        if (rootIdx != null && typeof arr[rootIdx]?._name === 'string' && arr[rootIdx]._name) {
+            return arr[rootIdx]._name;
+        }
     } catch {
         // fall through to the filename-derived default
     }
@@ -174,7 +176,9 @@ export function ensureParentDirMetas(absPath, assetsRoot) {
     const root = path.resolve(assetsRoot);
     let dir = path.dirname(path.resolve(absPath));
     const chain = [];
-    while (dir.startsWith(root) && dir !== root) {
+    // Separator-suffixed prefix check: "<proj>/assets-backup" must not pass
+    // as being under "<proj>/assets".
+    while (dir.startsWith(root + path.sep)) {
         chain.unshift(dir);
         dir = path.dirname(dir);
     }
@@ -306,31 +310,53 @@ function readPngSize(buf) {
     const width = buf.readUInt32BE(16);
     const height = buf.readUInt32BE(20);
     const colorType = buf[25];
-    // 4 = gray+alpha, 6 = RGBA; indexed/opaque PNGs can still carry a tRNS chunk
-    const hasAlpha = colorType === 4 || colorType === 6 || buf.includes('tRNS', 8, 'latin1');
+    // 4 = gray+alpha, 6 = RGBA; indexed/opaque PNGs can still carry a tRNS
+    // chunk. Walk the chunk HEADERS up to IDAT (tRNS precedes IDAT per spec)
+    // — a byte scan over the whole file could false-positive on the "tRNS"
+    // byte sequence inside compressed IDAT data.
+    let hasAlpha = colorType === 4 || colorType === 6;
+    let off = 8;
+    while (!hasAlpha && off + 8 <= buf.length) {
+        const len = buf.readUInt32BE(off);
+        const type = buf.toString('latin1', off + 4, off + 8);
+        if (type === 'tRNS') hasAlpha = true;
+        if (type === 'IDAT' || type === 'IEND') break;
+        off += 12 + len; // length(4) + type(4) + data(len) + crc(4)
+    }
     return { width, height, hasAlpha };
 }
 
 function readJpegSize(buf) {
     if (buf.length < 4 || buf[0] !== 0xff || buf[1] !== 0xd8) return null;
     let off = 2;
-    while (off + 9 < buf.length) {
+    while (off < buf.length) {
         if (buf[off] !== 0xff) { off++; continue; }
-        const marker = buf[off + 1];
-        if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
-            off += 2;
+        // Any run of 0xFF fill bytes before the marker type is legal
+        // (ITU T.81 B.1.1.2) — skip the run, then read the real marker.
+        let m = off + 1;
+        while (m < buf.length && buf[m] === 0xff) m++;
+        if (m >= buf.length) return null;
+        const marker = buf[m];
+        // Standalone markers without a length: SOI, TEM, RST0-7;
+        // 0x00 is a stuffed data byte, not a marker.
+        if (marker === 0xd8 || marker === 0x01 || marker === 0x00 ||
+            (marker >= 0xd0 && marker <= 0xd7)) {
+            off = m + 1;
             continue;
         }
-        const len = buf.readUInt16BE(off + 2);
+        if (marker === 0xd9) return null; // EOI — no frame header in the stream
+        if (m + 3 > buf.length) return null;
+        const len = buf.readUInt16BE(m + 1);
         // SOF0..SOF15 minus DHT(C4)/JPG(C8)/DAC(CC) carry the frame size
         if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+            if (m + 8 > buf.length) return null;
             return {
-                height: buf.readUInt16BE(off + 5),
-                width: buf.readUInt16BE(off + 7),
+                height: buf.readUInt16BE(m + 4),
+                width: buf.readUInt16BE(m + 6),
                 hasAlpha: false
             };
         }
-        off += 2 + len;
+        off = m + 1 + len;
     }
     return null;
 }

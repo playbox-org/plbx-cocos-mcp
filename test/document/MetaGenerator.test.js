@@ -212,4 +212,69 @@ describe('MetaGenerator', () => {
         assert.strictEqual(readImageSize(Buffer.from('junk'), '.tga'), null);
         assert.strictEqual(readImageSize(Buffer.from('junk'), '.png'), null);
     });
+
+    it('should skip JPEG 0xFF fill bytes before markers (review #7)', () => {
+        // SOI + APP0 + a run of fill bytes (legal per ITU T.81 B.1.1.2) + SOF0
+        const jpeg = Buffer.from([
+            0xff, 0xd8,
+            0xff, 0xe0, 0x00, 0x04, 0x00, 0x00,
+            0xff, 0xff, 0xff, // fill bytes
+            0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x20,
+            0x03, 0x01, 0x11, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+            0xff, 0xd9
+        ]);
+        assert.deepStrictEqual(readImageSize(jpeg, '.jpg'),
+            { width: 32, height: 16, hasAlpha: false });
+    });
+
+    it('should return null for a JPEG with no frame header (EOI reached)', () => {
+        assert.strictEqual(readImageSize(Buffer.from([0xff, 0xd8, 0xff, 0xd9]), '.jpg'), null);
+    });
+
+    it('should not read tRNS out of compressed IDAT bytes (opaque PNG)', () => {
+        // Opaque RGB PNG (colorType 2) whose IDAT payload happens to contain
+        // the ASCII bytes "tRNS" — a whole-buffer scan would false-positive.
+        const opaque = makePng(2, [
+            pngChunk('IDAT', Buffer.from('xxtRNSxx', 'latin1')),
+            pngChunk('IEND', Buffer.alloc(0))
+        ]);
+        assert.deepStrictEqual(readImageSize(opaque, '.png'),
+            { width: 2, height: 3, hasAlpha: false });
+
+        // A real tRNS chunk before IDAT still counts
+        const trans = makePng(2, [
+            pngChunk('tRNS', Buffer.from([0, 0, 0, 0, 0, 0])),
+            pngChunk('IDAT', Buffer.alloc(4)),
+            pngChunk('IEND', Buffer.alloc(0))
+        ]);
+        assert.deepStrictEqual(readImageSize(trans, '.png'),
+            { width: 2, height: 3, hasAlpha: true });
+    });
+
+    it('should not treat sibling "assets-backup" dirs as inside assets root', () => {
+        const backup = path.join(root, 'assets-backup');
+        fs.mkdirSync(backup, { recursive: true });
+        const file = path.join(backup, 'stray.ts');
+        fs.writeFileSync(file, 'export {}');
+        assert.deepStrictEqual(ensureParentDirMetas(file, assets), []);
+        assert.ok(!fs.existsSync(`${backup}.meta`));
+    });
 });
+
+/** length(4) + type(4) + data + crc(4, fake — the parser never checks it) */
+function pngChunk(type, data) {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    return Buffer.concat([len, Buffer.from(type, 'latin1'), data, Buffer.alloc(4)]);
+}
+
+/** Minimal PNG: signature + IHDR (2×3, given colorType) + given chunks */
+function makePng(colorType, chunks) {
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(2, 0); // width
+    ihdr.writeUInt32BE(3, 4); // height
+    ihdr[8] = 8;              // bit depth
+    ihdr[9] = colorType;
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    return Buffer.concat([sig, pngChunk('IHDR', ihdr), ...chunks]);
+}
