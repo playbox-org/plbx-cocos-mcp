@@ -25,7 +25,7 @@ import {
     remapTargetOverridesForSplice
 } from './targetOverrides.js';
 import { VALUE_TYPE_FIELDS } from '../core/valueTypes.js';
-import { collectComponentIndices } from '../core/componentIndices.js';
+import { collectComponentIndices, INTERNAL_STRUCT_TYPES } from '../core/componentIndices.js';
 import {
     createComponent, createScriptComponent, resolveTemplateType, templateTypes
 } from './ComponentTemplates.js';
@@ -192,22 +192,31 @@ function isRefArrayClobber(existing, given) {
     return given.some(e => e !== null && typeof e === 'object' && !isRef(e));
 }
 
-function refArrayClobberError(what, existing) {
+function refArrayClobberError(what, existing, opts = {}) {
     const t = existing.find(e => isRef(e));
+    // On a collapsed instance stub the array lives in the SOURCE prefab; the
+    // element ops (insert/remove_array_element) only reach mounted components,
+    // so pointing there is a dead end — send the caller to the .prefab instead
+    // (review #3). Off an instance, the element ops are the right answer.
+    const remediation = opts.instance
+        ? `This is a collapsed prefab instance — its internal arrays cannot be edited through ` +
+          `overrides. Edit the source prefab asset (${opts.sourcePrefab ?? 'the .prefab this ' +
+          'instance was created from'}) with apply_edits, then the instance inherits the change.`
+        : `Use op "insert_array_element" to add an element or "remove_array_element" to remove one.`;
     return new OperationError(
         `"${what}" is an array of references to standalone objects — writing inline objects ` +
         `into it would corrupt the file (the engine expects an {__id__} reference, ref #${t.__id__}). ` +
-        `Use op "insert_array_element" to add an element or "remove_array_element" to remove one.`
+        remediation
     );
 }
 
-export function mergeTyped(existing, given, what) {
+export function mergeTyped(existing, given, what, opts = {}) {
     // Whole-array replacement: writing inline objects over an array of {__id__}
     // references (entries: CardEntry[]) serializes an inline object where the
     // engine expects a reference — silent corruption the per-slot
     // guardTypedRefArrayWrite cannot see (its key is the array name, not an
     // index). Reject here so it is caught however the array is addressed (#2).
-    if (isRefArrayClobber(existing, given)) throw refArrayClobberError(what, existing);
+    if (isRefArrayClobber(existing, given)) throw refArrayClobberError(what, existing, opts);
     if (given === null || typeof given !== 'object' || Array.isArray(given)) return given;
     if (given.__type__) return given; // caller provided a full serialized value
     if (existing === null || typeof existing !== 'object' || !existing.__type__) return given;
@@ -227,7 +236,7 @@ export function mergeTyped(existing, given, what) {
         // reference sub-array (CardEntry.members: CardMember[]). recurse below
         // only follows {__type__} objects, so an array field would slip past —
         // guard it explicitly (#2).
-        if (isRefArrayClobber(cur, val)) throw refArrayClobberError(`${what}.${rawKey}`, cur);
+        if (isRefArrayClobber(cur, val)) throw refArrayClobberError(`${what}.${rawKey}`, cur, opts);
         // A field that references a standalone object cannot be rewritten in
         // place: mergeTyped has no `doc`, so it cannot follow `{__id__}` into
         // the referenced value object. A scalar/array/null would orphan the ref
@@ -244,7 +253,7 @@ export function mergeTyped(existing, given, what) {
         }
         const recurse = cur && typeof cur === 'object' && cur.__type__ &&
             val && typeof val === 'object' && !Array.isArray(val) && !val.__type__;
-        merged[key] = recurse ? mergeTyped(cur, val, `${what}.${rawKey}`) : val;
+        merged[key] = recurse ? mergeTyped(cur, val, `${what}.${rawKey}`, opts) : val;
     }
     return merged;
 }
@@ -290,12 +299,13 @@ export function componentIdxSet(doc) {
  * componentIdxSet(doc) so traversals can reuse one set.
  *
  * NOTE: typedRefTargets deliberately does NOT use this predicate — its guard
- * must be broader (a bare value corrupts an array of component references
- * just the same).
+ * must be broader (a bare value corrupts an array of component OR node
+ * references just the same).
  */
 function isValueObjectIdx(doc, idx, components) {
     const obj = doc.getObject(idx);
-    return !!(obj && obj.__type__ && !doc.isNode(obj) && !components.has(idx));
+    return !!(obj && obj.__type__ && !doc.isNode(obj) && !components.has(idx) &&
+        !INTERNAL_STRUCT_TYPES.has(obj.__type__));
 }
 
 /**
@@ -1273,13 +1283,16 @@ function setAssetRef(doc, op, ctx) {
  */
 const INLINE_VALUE_TYPES = new Set(Object.keys(VALUE_TYPE_FIELDS));
 
-/** __type__s of the standalone objects an array's {__id__} elements point at */
+/**
+ * __type__s of the objects an array's {__id__} elements point at, INCLUDING
+ * node refs (cc.Node[]) — a bare scalar corrupts a node-ref slot just the same.
+ */
 function typedRefTargets(doc, arr) {
     const types = [];
     for (const el of arr) {
         if (!isRef(el)) continue;
         const t = doc.getObject(el.__id__);
-        if (t && t.__type__ && !doc.isNode(t)) types.push(t.__type__);
+        if (t && t.__type__) types.push(t.__type__);
     }
     return types;
 }
@@ -1296,6 +1309,32 @@ function typedRefTargets(doc, arr) {
 function guardTypedRefArrayWrite(doc, container, key, existing, value, isReference, property) {
     if (isReference || value === null) return;
     if (!Array.isArray(container) || typeof key !== 'number') return;
+
+    // Overwrite of a LIVE {__id__} element (review #2/#3). The append/hole guard
+    // below only fires on an empty slot; a bare value / asset written OVER an
+    // existing reference falls straight through to the caller's assignment and
+    // silently replaces the {__id__} with a scalar/inline object/{__uuid__}.
+    // Exempt: a plain object over a reference to a VALUE object merges THROUGH
+    // the ref (the safe path in setPropertyOnComponent) — a scalar there is
+    // caught downstream with a "set its fields" hint. An asset ({__uuid__}) over
+    // ANY ref (review #3), and a bare value/inline object over a node/component
+    // ref (review #2), are corruption and rejected here.
+    if (isRef(existing)) {
+        const target = doc.getObject(existing.__id__);
+        const isAsset = typeof value === 'object' && '__uuid__' in value;
+        const isValueObj = isValueObjectIdx(doc, existing.__id__, componentIdxSet(doc));
+        if (isValueObj && !isAsset) return;
+        throw new OperationError(
+            `"${property}"[${key}] holds a reference ({__id__}) to ${target?.__type__ ?? 'a typed object'}; ` +
+            `writing ${isAsset ? 'an asset' : 'a bare value'} there replaces the reference with an inline ` +
+            `${isAsset ? 'asset' : 'value'} and corrupts the file. ` +
+            (isValueObj
+                ? `Edit its fields instead (e.g. "${property}[${key}].<field>"), `
+                : `Retarget with a reference ({"$node": ...} / {"$component": ...}), `) +
+            `or use insert_array_element / remove_array_element to change the set of elements.`
+        );
+    }
+
     if (existing !== undefined && existing !== null) return;
     const targets = typedRefTargets(doc, container);
     if (targets.length === 0) return;
@@ -1423,7 +1462,21 @@ function insertArrayElement(doc, op, ctx) {
     const { nodeIdx, path, property, compIdx, component, mounted, arr, pathStrings } =
         locateArrayProperty(doc, op, ctx);
     const at = childInsertIndex(op.index, arr.length);
-    const value = op.value === undefined ? undefined : transformValue(doc, op.value, ctx);
+    // Tracked, like set_component_property (review #1): a $node/$component that
+    // resolves INSIDE a collapsed instance tracks to null + a ref record, and
+    // serializes as a null hole plus a cc.TargetOverrideInfo (emitted below).
+    const refs = [];
+    const value = op.value === undefined
+        ? undefined
+        : transformValueTracked(doc, op.value, ctx, refs);
+    const valueIsReference = value !== null && typeof value === 'object' && '__id__' in value;
+    // A top-level reference that resolved inside an instance: value is null and a
+    // ref was collected at the root path. It fills a reference slot as a null hole.
+    const valueIsInstanceRef = value === null && refs.some(r => r.path.length === 0);
+    const refElement = () => valueIsInstanceRef ? null : value;
+    const refNote = () => valueIsInstanceRef
+        ? ' (instance reference → null + target-override)'
+        : ' (reference)';
 
     // Structural template: an explicit `from` index, else the first non-null
     // neighbor. Empty arrays have neither — construction is driven by `type`.
@@ -1451,23 +1504,37 @@ function insertArrayElement(doc, op, ctx) {
         const srcIdx = neighbor.__id__;
         const type = elementType(op.type, neighborObj.__type__, property);
         const newIdx = cloneOwnedElement(doc, srcIdx, components);
-        if (value !== undefined) doc.objects[newIdx] = mergeTyped(doc.getObject(newIdx), value, property);
+        if (value !== undefined) {
+            // The new element is a cloned struct; `value` merges its FIELDS. A
+            // whole reference ({"$node"/"$component": ...}) is not a `type`
+            // struct — merging it would throw the cryptic `Unknown field
+            // "__id__"` (review #4). Point a FIELD at an object by nesting it.
+            if (valueIsReference || valueIsInstanceRef) {
+                throw new OperationError(
+                    `"${property}" owns ${type} structs — a new element is cloned from a neighbor and ` +
+                    `"value" merges its FIELDS, so a whole reference is not accepted here. To point a ` +
+                    `field at an object, nest it: value: {"<field>": {"$node"/"$component": ...}}.`
+                );
+            }
+            doc.objects[newIdx] = mergeTyped(doc.getObject(newIdx), value, property);
+        }
         inserted = { __id__: newIdx };
         const fromN = op.from ?? arr.indexOf(neighbor);
         note = ` (${type}, cloned from ${property}[${fromN}])`;
     } else if (isRef(neighbor)) {
         // Array of references to EXISTING nodes/components (pipeControllers:
         // Foo[]): there is nothing to clone — the new element is itself a
-        // reference. Require an explicit reference value ($node/$component).
-        if (!(value && typeof value === 'object' && '__id__' in value)) {
+        // reference. Require an explicit reference value ($node/$component); a
+        // $component into a collapsed instance serializes as null + override.
+        if (!(valueIsReference || valueIsInstanceRef)) {
             throw new OperationError(
                 `"${property}" holds references to existing objects (${neighborObj?.__type__ ?? 'node'}) — ` +
                 `pass value as a reference ({"$node": "..."} or {"$component": {...}}) for the new ` +
                 `element; there is nothing to clone.`
             );
         }
-        inserted = value;
-        note = ' (reference)';
+        inserted = refElement();
+        note = refNote();
     } else if (neighbor == null && typedRefTargets(doc, arr).length > 0) {
         // `from` pointed at a null hole of a typed-ref array (the default
         // picker skips nulls, so this only happens with an explicit `from`):
@@ -1476,9 +1543,9 @@ function insertArrayElement(doc, op, ctx) {
         // INLINE into an array of {__id__} references — exactly the silent
         // corruption guardTypedRefArrayWrite exists for (review #2).
         // An explicit reference value is still fine.
-        if (value && typeof value === 'object' && '__id__' in value) {
-            inserted = value;
-            note = ' (reference)';
+        if (valueIsReference || valueIsInstanceRef) {
+            inserted = refElement();
+            note = refNote();
         } else {
             throw new OperationError(
                 `"${property}"[${op.from}] is a null hole of an array of references to typed ` +
@@ -1494,10 +1561,17 @@ function insertArrayElement(doc, op, ctx) {
         inserted = value !== undefined ? mergeTyped(base, value, property) : base;
         note = ` (inline ${type})`;
     } else if (arr.length === 0) {
-        // Empty array: nothing to copy, so `type` is required and the field set
-        // comes solely from `value` (docs R2 — no defaults to fall back on).
-        const type = elementType(op.type, undefined, property);
-        ({ inserted, note } = buildElementFromType(doc, type, value, property));
+        // Empty array: a reference value is ITSELF the new element (first link
+        // of an empty Foo[]); otherwise `type` is required and fields come from
+        // `value` alone (docs R2). Without the ref early-out the reference gets
+        // wrapped in a fresh unlinked standalone object — silent corruption.
+        if (valueIsReference || valueIsInstanceRef) {
+            inserted = refElement();
+            note = refNote();
+        } else {
+            const type = elementType(op.type, undefined, property);
+            ({ inserted, note } = buildElementFromType(doc, type, value, property));
+        }
     } else {
         // Non-empty array but no element to clone: an all-null typed-ref array
         // ([null] — branch above found no live {__id__} to read the type from),
@@ -1508,10 +1582,9 @@ function insertArrayElement(doc, op, ctx) {
         // blocks for set_component_property (review #1). Drive construction off
         // an explicit `type` or the __type__ of any non-null inline sibling.
         const inlineType = arr.find(e => e && typeof e === 'object' && e.__type__)?.__type__;
-        const valueIsReference = value && typeof value === 'object' && '__id__' in value;
-        if (valueIsReference) {
-            inserted = value;
-            note = ' (reference)';
+        if (valueIsReference || valueIsInstanceRef) {
+            inserted = refElement();
+            note = refNote();
         } else if (op.type !== undefined || inlineType !== undefined) {
             const type = elementType(op.type, inlineType, property);
             ({ inserted, note } = buildElementFromType(doc, type, value, property));
@@ -1542,6 +1615,20 @@ function insertArrayElement(doc, op, ctx) {
     // their propertyPath index segment along with the splice (review #3).
     const remapped = remapTargetOverridesForSplice(doc, compIdx, pathStrings, { inserted: at });
     if (remapped.shifted) note += ` (shifted ${remapped.shifted} target-override path(s))`;
+
+    // $node/$component values resolving inside a collapsed instance serialized
+    // as null above — register the cc.TargetOverrideInfo(s) so the engine
+    // applies the reference on load (review #1), mirroring setPropertyOnComponent.
+    // Emitted AFTER the remap so the freshly-inserted index is not shifted again.
+    for (const ref of refs) {
+        upsertTargetOverride(doc, ctx, {
+            sourceIdx: compIdx,
+            propertyPath: [...pathStrings, String(at), ...ref.path],
+            stubIdx: ref.stubIdx,
+            localID: ref.localID
+        });
+    }
+    if (refs.length) note += ` (${refs.length} target-override${refs.length > 1 ? 's' : ''})`;
 
     return {
         op: 'insert_array_element',

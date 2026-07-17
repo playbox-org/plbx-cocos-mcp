@@ -11,6 +11,20 @@
  * `isNode` is injected so it works over both SceneParser and SceneDocument
  * object arrays (`(o) => o.__type__ === 'cc.Node' || o.__type__ === 'cc.Scene'`).
  */
+/**
+ * Engine serialization types that LOOK like data structs (typed, some even
+ * carry a `node` back-ref) but are instance/prefab PLUMBING — never user
+ * @property data. The read side must not recurse into them (PropertyExtractor)
+ * and the write side must not treat them as owned value-objects
+ * (operations.js `isValueObjectIdx`). Shared here so the two lists can never
+ * drift apart (CODE_REVIEW finding #6).
+ */
+export const INTERNAL_STRUCT_TYPES = new Set([
+    'cc.PrefabInfo', 'cc.PrefabInstance', 'cc.CompPrefabInfo',
+    'cc.TargetInfo', 'cc.TargetOverrideInfo',
+    'CCPropertyOverrideInfo', 'cc.MountedComponentsInfo', 'cc.MountedChildrenInfo'
+]);
+
 export function collectComponentIndices(objects, isNode) {
     const set = new Set();
     if (!Array.isArray(objects)) return set;

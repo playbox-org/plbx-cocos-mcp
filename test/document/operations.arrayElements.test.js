@@ -11,7 +11,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import { SceneDocument } from '../../src/document/SceneDocument.js';
-import { applyOperations, OperationError } from '../../src/document/operations.js';
+import { applyOperations, OperationError, mergeTyped } from '../../src/document/operations.js';
 import { Validator } from '../../src/document/Validator.js';
 
 /** Fresh document each call (ops mutate in place) */
@@ -162,6 +162,21 @@ describe('insert_array_element', () => {
             op: 'insert_array_element', node: '/', component: 'CardsBase',
             property: 'entries.1.members'
         }]), /pass "type"/);
+    });
+
+    test('empty ref-to-existing array accepts a reference value without a type', () => {
+        const doc = makeCardsDoc();
+        comp(doc).links = []; // empty the node-ref array
+        const rootIdx = doc.resolveNode('/');
+        applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'links', value: { $node: '/' }
+        }]);
+        const links = comp(doc).links;
+        assert.strictEqual(links.length, 1);
+        // linked directly, NOT wrapped in a fresh unlinked standalone object
+        assert.deepStrictEqual(links[0], { __id__: rootIdx });
+        assertRoundTrips(doc);
     });
 
     test('empty array with type builds a standalone reference element', () => {
@@ -501,6 +516,23 @@ describe('footgun guard (docs §3a)', () => {
         assert.deepStrictEqual(entryOf(doc, 0).members, [{ __id__: memberIdx }]);
     });
 
+    test('ref-array clobber on an instance stub points at the source .prefab, not the element ops (review #3)', () => {
+        const existing = [{ __id__: 5 }, { __id__: 6 }]; // source-prefab CardEntry[]
+        const given = [{ type: 1 }]; // inline objects
+        // Off an instance: element-op remediation (the array is directly addressable).
+        assert.throws(() => mergeTyped(existing, given, 'entries'),
+            /insert_array_element|remove_array_element/);
+        // On an instance stub: element ops only reach mounted components, so the
+        // remediation must send the caller to the source prefab asset instead.
+        assert.throws(
+            () => mergeTyped(existing, given, 'entries',
+                { instance: true, sourcePrefab: 'assets/Cards.prefab' }),
+            (err) => err instanceof OperationError &&
+                /assets\/Cards\.prefab/.test(err.message) &&
+                !/insert_array_element/.test(err.message)
+        );
+    });
+
     test('replacing a typed-ref array with references (not inline objects) still works', () => {
         const doc = makeCardsDoc();
         // links is a reference-to-existing array — re-linking with a reference
@@ -510,6 +542,77 @@ describe('footgun guard (docs §3a)', () => {
             property: 'links', value: [{ $node: '/' }]
         }]);
         assert.deepStrictEqual(comp(doc).links, [{ __id__: 1 }]);
+    });
+
+    test('set_component_property into the append slot of a NODE-ref array is rejected', () => {
+        const doc = makeCardsDoc();
+        // links is cc.Node[] — the guard must cover node refs, not just non-nodes
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'links.1', value: 5
+        }]), /insert_array_element/);
+        assert.deepStrictEqual(comp(doc).links, [{ __id__: 1 }]); // untouched
+    });
+
+    test('overwriting a live NODE-ref element with a bare value is rejected (review #2)', () => {
+        const doc = makeCardsDoc();
+        // links[0] is a live {__id__} node reference — a scalar there would
+        // replace the reference with an inline value (silent corruption).
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'links.0', value: 5
+        }]), /corrupts the file/);
+        assert.deepStrictEqual(comp(doc).links, [{ __id__: 1 }]); // untouched
+    });
+
+    test('overwriting a live NODE-ref element with an inline object is rejected (review #2)', () => {
+        const doc = makeCardsDoc();
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'links.0', value: { foo: 1 }
+        }]), /corrupts the file/);
+        assert.deepStrictEqual(comp(doc).links, [{ __id__: 1 }]);
+    });
+
+    test('overwriting a live COMPONENT-ref element with a scalar is rejected (review #2)', () => {
+        const doc = makeCardsDoc();
+        const fooIdx = doc.addObject({
+            __type__: 'FooComp', node: { __id__: 1 }, _id: '', __prefab: null
+        });
+        doc.getObject(1)._components.push({ __id__: fooIdx });
+        comp(doc).controllers = [{ __id__: fooIdx }];
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'controllers.0', value: 5
+        }]), /corrupts the file/);
+        assert.deepStrictEqual(comp(doc).controllers, [{ __id__: fooIdx }]);
+    });
+
+    test('overwriting a live value-object element with a scalar still gives the "set its fields" hint', () => {
+        const doc = makeCardsDoc();
+        // entries[0] → CardEntry (value object): a scalar is caught downstream
+        // by the merge-through path, not blocked as append/hole corruption.
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'entries.0', value: 5
+        }]), /set its fields/);
+    });
+
+    test('set_asset_ref over a live typed-ref element is rejected (review #3)', () => {
+        const doc = makeCardsDoc();
+        const ctx = {
+            assetIndex: {
+                resolve: () => ({ entry: { uuid: 'aaaa-uuid', importer: 'sprite-frame' } }),
+                scriptUuidByName: () => ({ exact: new Map(), lower: new Map() })
+            }
+        };
+        // entries[0] is a live {__id__} → CardEntry; an asset ({__uuid__}) there
+        // would overwrite the reference (silent corruption, review #3).
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_asset_ref', node: '/', componentIndex: 0,
+            property: 'entries.0', asset: 'whatever', expectedType: 'cc.SpriteFrame'
+        }], ctx), /corrupts the file/);
+        assert.deepStrictEqual(comp(doc).entries[0], { __id__: 5 }); // untouched
     });
 
     test('writing null into the append slot / a hole is allowed (review #6)', () => {

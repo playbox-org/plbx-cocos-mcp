@@ -149,6 +149,31 @@ describe('$component into a collapsed instance', () => {
             value: { $component: { node: 'Desk', target: 'Table', type: 'cc.Sprite' } }
         }], ctx), /In source prefab .*TableCash[\s\S]*has no "cc\.Sprite"/);
     });
+
+    test('insert_array_element into an instance → null hole + TargetOverrideInfo (review #1)', () => {
+        const ctx = makeCtx();
+        const doc = sceneWithDeskAndHolder(ctx);
+        const { compIdx, component } = scriptComponent(doc, 'Holder');
+        component.pipeControllers = []; // empty array of references
+
+        applyOperations(doc, [{
+            op: 'insert_array_element', node: 'Holder', component: 'PlayerController',
+            property: 'pipeControllers',
+            value: { $component: { node: 'Desk', target: 'Table', type: 'cc.MeshRenderer' } }
+        }], ctx);
+
+        // The slot serializes as a null hole (not an inline object / dangling
+        // ref); the wiring lives in the TargetOverrideInfo.
+        assert.deepStrictEqual(component.pipeControllers, [null]);
+        const ovs = overridesOf(doc, compIdx);
+        assert.strictEqual(ovs.length, 1);
+        assert.deepStrictEqual(ovs[0].path, ['pipeControllers', '0']);
+        assert.deepStrictEqual(ovs[0].localID, [sourceComponentFileId('Table', 'cc.MeshRenderer')]);
+        assert.strictEqual(ovs[0].targetIdx, doc.resolveNode('Desk'));
+
+        assertValid(doc);
+        assertFixedPoint(doc);
+    });
 });
 
 describe('$node through a collapsed instance', () => {

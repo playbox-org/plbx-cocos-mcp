@@ -526,7 +526,9 @@ function setComponentOverride(doc, op, ctx, { instance, sourceDoc, targetIdx, la
         const existing = findOverride(doc, instance, [localId], propertyPath)?.value ??
             readPath(component, propertyPath);
         const isReference = value && typeof value === 'object' && ('__id__' in value || '__uuid__' in value);
-        const finalValue = isReference ? value : mergeTyped(existing, value, property);
+        const finalValue = isReference
+            ? value
+            : mergeTyped(existing, value, property, { instance: true, sourcePrefab: label });
         pushOverride(doc, instance, [localId], propertyPath, finalValue);
     }
 

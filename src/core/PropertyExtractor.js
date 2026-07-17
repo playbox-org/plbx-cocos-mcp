@@ -8,19 +8,23 @@
 // Embedded value-type structs (Vec3/Color/…) → compact ordered arrays.
 // Shared registry with the write side (operations.js) — see valueTypes.js.
 import { VALUE_TYPE_FIELDS } from './valueTypes.js';
-import { collectComponentIndices } from './componentIndices.js';
-
-// Internal serialization types that look like data structs (no `node` back-ref)
-// but must never be recursed into — they belong to the instance/prefab plumbing,
-// not to user @property data.
-const INTERNAL_STRUCT_TYPES = new Set([
-    'cc.PrefabInfo', 'cc.PrefabInstance', 'cc.CompPrefabInfo',
-    'cc.TargetInfo', 'cc.TargetOverrideInfo',
-    'CCPropertyOverrideInfo', 'cc.MountedComponentsInfo', 'cc.MountedChildrenInfo'
-]);
+import { collectComponentIndices, INTERNAL_STRUCT_TYPES } from './componentIndices.js';
 
 // Guard against deep/cyclic data-struct graphs when expanding nested CCClasses.
 const MAX_STRUCT_DEPTH = 5;
+
+// Value-types the read side ALREADY rendered on main — they keep their exact
+// position-preserving deferral. Frozen historical set; any value-type NOT here
+// was added to VALUE_TYPE_FIELDS after main (dropped on main, never took a prop
+// slot) and must defer strictly last. Deriving NEW from the registry difference
+// removes the second, drift-prone edit a new value-type used to need — add it to
+// valueTypes.js only (CODE_REVIEW finding #4, review #6).
+const ORIGINAL_VALUE_TYPES = new Set([
+    'cc.Vec2', 'cc.Vec3', 'cc.Vec4', 'cc.Quat', 'cc.Color', 'cc.Size', 'cc.Rect'
+]);
+const NEW_VALUE_TYPES = new Set(
+    Object.keys(VALUE_TYPE_FIELDS).filter(t => !ORIGINAL_VALUE_TYPES.has(t))
+);
 
 export class PropertyExtractor {
     #sceneParser;
@@ -31,6 +35,12 @@ export class PropertyExtractor {
     #componentIdxSet; // lazy: indices referenced from _components / mounted records
     #skipKeys = new Set([
         '__type__', '__idx__', 'node', '_enabled', '_name',
+        '_objFlags', '__editorExtras__', '__prefab', '_string'
+    ]);
+    // Like #skipKeys but keeps 'node': in a user data struct a `node: cc.Node`
+    // @property is real data (the reference struct-expansion exists to surface).
+    #structSkipKeys = new Set([
+        '__type__', '__idx__', '_enabled', '_name',
         '_objFlags', '__editorExtras__', '__prefab', '_string'
     ]);
 
@@ -74,8 +84,19 @@ export class PropertyExtractor {
             // them behind the text prop cap would HIDE a previously-visible
             // field — breaking the additive-only contract (review #5).
             if (this.#isValueType(value)) {
-                deferredValueTypes.push([key, extracted]);
+                // Value-types visible on main keep their exact deferred position;
+                // ones added to the registry after main (Mat3/Mat4 — dropped on
+                // main, never took a slot) go strictly last so they can't push a
+                // field that WAS visible on main past the prop cap (review #4).
+                (NEW_VALUE_TYPES.has(value.__type__) ? deferredNew : deferredValueTypes)
+                    .push([key, extracted]);
             } else if (this.#isComplex(extracted) && !this.#isRefArray(value)) {
+                deferredNew.push([key, extracted]);
+            } else if (this.#isNewStructLabel(value)) {
+                // Compact-mode struct fallback LABEL (a string) for a data struct
+                // that was dropped on main (no named owner → resolved to null).
+                // Newly surfaced → strictly last, else it eats a slot a
+                // main-visible field held under the prop cap (review #1).
                 deferredNew.push([key, extracted]);
             } else {
                 props[key] = extracted;
@@ -121,8 +142,8 @@ export class PropertyExtractor {
             : [];
     }
 
-    #shouldSkip(key, value) {
-        if (this.#skipKeys.has(key)) return true;
+    #shouldSkip(key, value, keys = this.#skipKeys) {
+        if (keys.has(key)) return true;
         if (key.startsWith('__')) return true;
         if (value === null || value === undefined) return true;
         return false;
@@ -187,6 +208,39 @@ export class PropertyExtractor {
             return this.#resolvePrefabName(obj);
         }
         return null;
+    }
+
+    /**
+     * True when `value` is a {__id__} ref whose compact fallback label is newly
+     * surfaced — dropped (→ undefined) on main — so it belongs in the strictly-
+     * last deferredNew tier and must never displace a field that was visible on
+     * main under the text prop cap (review #1).
+     *
+     * On main a data struct rendered ONLY when the old `node` back-ref heuristic
+     * found a NAMED owner (→<ownerNode>); #structFallbackLabel reproduces that
+     * exact label so it stays inline. The →<type> form (no named owner) was
+     * dropped on main → new → defer. Detailed mode expands structs (no label).
+     */
+    #isNewStructLabel(value) {
+        if (this.#detailed) return false;
+        if (typeof value !== 'object' || value === null) return false;
+        if (!('__id__' in value) || '__uuid__' in value) return false;
+        if (this.#resolveRef(value.__id__)) return false; // resolved by name → visible on main
+        const target = this.#sceneParser.getObject(value.__id__);
+        if (!this.#isDataStruct(target, value.__id__)) return false;
+        const ownerId = target.node?.__id__;
+        const owner = ownerId !== undefined ? this.#sceneParser.getObject(ownerId) : null;
+        return !owner?._name; // no named owner → dropped on main → newly surfaced
+    }
+
+    /** Compact-mode label for an unexpanded data struct: →<ownerNode>, else →<type> */
+    #structFallbackLabel(obj) {
+        const nodeId = obj.node?.__id__;
+        if (nodeId !== undefined) {
+            const owner = this.#sceneParser.getObject(nodeId);
+            if (owner?._name) return `→${owner._name}`;
+        }
+        return `→${obj.__type__}`;
     }
 
     /** Asset name/label by uuid via the injected resolver, '<asset>' when unresolvable */
@@ -282,9 +336,14 @@ export class PropertyExtractor {
      * tagged with __struct__ so the reader knows the concrete class. Detailed
      * mode only (callers gate on this.#detailed). Depth-capped and cycle-guarded.
      */
-    #extractStruct(obj, depth, seen) {
+    #extractStruct(obj, depth, seen, refId) {
         if (depth >= MAX_STRUCT_DEPTH) return `<${obj.__type__}>`;
-        const idx = obj.__idx__;
+        // Identity for cycle detection: the {__id__} ref used to reach this
+        // object. `obj.__idx__` is only tagged by SceneParser, so keying on it
+        // leaves the guard inert on the SceneDocument backend (inspect_node /
+        // mounted components); the ref id is the flat-array index on BOTH
+        // backends (review #2). Fall back to __idx__ if no ref id was passed.
+        const idx = refId ?? obj.__idx__;
         const visited = seen ?? new Set();
         if (idx !== undefined && visited.has(idx)) return `<cycle ${obj.__type__}>`;
         const nextSeen = new Set(visited);
@@ -293,7 +352,7 @@ export class PropertyExtractor {
         const out = { __struct__: obj.__type__ };
         const deferred = [];
         for (const [key, value] of Object.entries(obj)) {
-            if (this.#shouldSkip(key, value)) continue;
+            if (this.#shouldSkip(key, value, this.#structSkipKeys)) continue;
             const extracted = this.#extractValue(value, depth + 1, nextSeen);
             if (extracted === undefined) continue;
             if (this.#isValueType(value)) {
@@ -323,12 +382,13 @@ export class PropertyExtractor {
         if (typeof value === 'object' && '__id__' in value) {
             const named = this.#resolveRef(value.__id__);
             if (named) return named;
-            // Unnamed ref: expand nested data CCClass structs (detailed only)
-            if (this.#detailed) {
-                const target = this.#sceneParser.getObject(value.__id__);
-                if (this.#isDataStruct(target, value.__id__)) {
-                    return this.#extractStruct(target, depth, seen);
-                }
+            // Unnamed data struct: expand in detailed mode; in compact keep the
+            // field visible as a label (was →<ownerNode> on main) not undefined.
+            const target = this.#sceneParser.getObject(value.__id__);
+            if (this.#isDataStruct(target, value.__id__)) {
+                return this.#detailed
+                    ? this.#extractStruct(target, depth, seen, value.__id__)
+                    : this.#structFallbackLabel(target);
             }
             return undefined;
         }
@@ -351,7 +411,7 @@ export class PropertyExtractor {
                         // Unnamed ref → nested data-struct expansion
                         const target = this.#sceneParser.getObject(ref.__id__);
                         if (this.#isDataStruct(target, ref.__id__)) {
-                            return this.#extractStruct(target, depth, seen);
+                            return this.#extractStruct(target, depth, seen, ref.__id__);
                         }
                         return '→?';
                     });

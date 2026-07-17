@@ -632,6 +632,35 @@ describe('PropertyExtractor', () => {
             assert.strictEqual(props.waypoints[0].__struct__, 'Waypoint');
             assert.strictEqual(props.waypoints[0].pause, 2);
             assert.strictEqual(props.waypoints[1].pause, 5);
+            // the `node` @property must survive expansion, not be dropped
+            assert.strictEqual(props.waypoints[0].node, '→Spawner#0');
+            assert.strictEqual(props.waypoints[1].node, '→Spawner#0');
+        });
+
+        it('compact mode keeps an unnamed data-struct field as →<owner>', () => {
+            // compact has no expansion, but the field must stay visible (→owner)
+            const objects = [
+                { __type__: 'cc.Node', _name: 'ParentNode', _components: [] },
+                { __type__: 'CardConfig', node: { __id__: 0 }, icon: { __uuid__: 'bbbb' } }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+
+            const compact = new PropertyExtractor(parser); // detailed: false
+            const props = compact.extract({ __type__: 'Holder', config: { __id__: 1 } });
+            assert.strictEqual(props.config, '→ParentNode');
+        });
+
+        it('compact mode falls back to the struct type when there is no node back-ref', () => {
+            const objects = [
+                { __type__: 'CardConfig', icon: { __uuid__: 'bbbb' } }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+
+            const compact = new PropertyExtractor(parser); // detailed: false
+            const props = compact.extract({ __type__: 'Holder', config: { __id__: 0 } });
+            assert.strictEqual(props.config, '→CardConfig');
         });
 
         it('guards against cycles between data structs', () => {
@@ -729,6 +758,86 @@ describe('PropertyExtractor', () => {
             });
             assert.deepStrictEqual(props._mat,
                 [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 4, 5, 6, 1]);
+        });
+    });
+
+    // These guard the additive-only contract against a REGRESSION the snapshot
+    // fixtures could not catch: none combined such a field with ≥4 sibling props,
+    // so a regenerated snapshot would just record the displaced output as
+    // "expected" instead of flagging it (review #1/#4 recommendation).
+    describe('prop-cap displacement regressions (review #1/#4)', () => {
+        it('#1: compact struct fallback label (→type) is deferred behind visible scalars', () => {
+            // cc.Line shape: 4 scalars visible on main + _width→cc.CurveRange,
+            // which resolved to null (dropped) on main. The new fallback label
+            // must go strictly LAST, never taking a slot a main-visible scalar
+            // held under the text prop cap.
+            const objects = [
+                { __type__: 'cc.CurveRange', mode: 0, constant: 5 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const compact = new PropertyExtractor(parser); // detailed: false
+
+            const keys = Object.keys(compact.extract({
+                __type__: 'cc.Line',
+                _tile: 1, _offset: 2, _worldSpace: true, _tileRotation: 3,
+                _width: { __id__: 0 } // → cc.CurveRange, invisible on main
+            }));
+            assert.deepStrictEqual(keys.slice(0, 4),
+                ['_tile', '_offset', '_worldSpace', '_tileRotation']);
+            assert.strictEqual(keys[keys.length - 1], '_width'); // relocated, still visible
+        });
+
+        it('#1: compact struct label WITH a named owner (→owner, visible on main) stays inline', () => {
+            const objects = [
+                { __type__: 'cc.Node', _name: 'Owner', _components: [] },
+                { __type__: 'CardConfig', node: { __id__: 0 } }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const compact = new PropertyExtractor(parser); // detailed: false
+
+            const keys = Object.keys(compact.extract({
+                __type__: 'Holder',
+                cfg: { __id__: 1 }, // → Owner, was visible on main via the back-ref
+                a: 1, b: 2, c: 3, d: 4
+            }));
+            assert.strictEqual(keys[0], 'cfg'); // NOT deferred — keeps its main slot
+        });
+
+        it('#4: cc.Mat4 is deferred behind a value-type scalar visible on main', () => {
+            const extractor = new PropertyExtractor(new MockSceneParser());
+            const keys = Object.keys(extractor.extract({
+                __type__: 'MyScript',
+                s1: 1, s2: 2,
+                mat: { __type__: 'cc.Mat4',
+                    m00: 1, m01: 0, m02: 0, m03: 0, m04: 0, m05: 1, m06: 0, m07: 0,
+                    m08: 0, m09: 0, m10: 1, m11: 0, m12: 0, m13: 0, m14: 0, m15: 1 }, // new
+                color: { __type__: 'cc.Color', r: 1, g: 2, b: 3, a: 4 } // visible on main
+            }));
+            // color (rendered on main) precedes mat (new); the first 4 slots keep
+            // the fields main showed — mat is appended, it never displaces color.
+            assert.ok(keys.indexOf('color') < keys.indexOf('mat'));
+            assert.deepStrictEqual(keys.slice(0, 4), ['s1', 's2', 'color', 'mat']);
+        });
+    });
+
+    describe('cycle guard on the SceneDocument backend (review #2)', () => {
+        it('detects a struct cycle even without __idx__ tags', () => {
+            // SceneDocument (inspect_node) does not tag objects with __idx__;
+            // the guard must key on the {__id__} ref, or a self-referential
+            // data struct recurses to the depth cap instead of reporting a cycle.
+            const objects = [
+                null, null,
+                { __type__: 'A', next: { __id__: 3 } },
+                { __type__: 'B', back: { __id__: 2 } }
+            ];
+            const doc = { objects, getObject: (id) => objects[id] ?? null };
+            const extractor = new PropertyExtractor(doc, { detailed: true });
+            const props = extractor.extract({ __type__: 'Holder', root: { __id__: 2 } });
+            assert.strictEqual(props.root.__struct__, 'A');
+            assert.strictEqual(props.root.next.__struct__, 'B');
+            assert.strictEqual(props.root.next.back, '<cycle A>');
         });
     });
 });
