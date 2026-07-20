@@ -19,6 +19,7 @@ import {
 } from '../document/instances.js';
 import { fileIdTargets } from '../document/targetOverrides.js';
 import { PropertyExtractor } from '../core/PropertyExtractor.js';
+import { collectComponentIndices } from '../core/componentIndices.js';
 
 export class InspectNode extends BaseTool {
     get name() {
@@ -245,12 +246,18 @@ export class InspectNode extends BaseTool {
         const describeType = (type) =>
             scriptNames.has(type) ? `${scriptNames.get(type)} (script)` : type;
         // Full addresses for {__id__} refs: node path, or "path ▸ Type" for
-        // components (mounted-child internals have no path — name fallback)
+        // components (mounted-child internals have no path — name fallback).
+        // Component-ness by MEMBERSHIP, same rule as PropertyExtractor and
+        // operations.js. The `isRef(obj.node)` shape check fires on a user data
+        // struct declaring `@property node: cc.Node` too, and #resolveRef
+        // consults this resolver BEFORE #isDataStruct — so such a struct would
+        // collapse to a label and never expand (the PR's own motivating case).
+        const componentIdx = collectComponentIndices(doc.objects, (o) => doc.isNode(o));
         const refResolver = (id) => {
             const obj = doc.getObject(id);
             if (!obj) return null;
             if (doc.isNode(obj)) return doc.nodePath(id);
-            if (isRef(obj.node)) {
+            if (componentIdx.has(id) && isRef(obj.node)) {
                 const nodePath = doc.nodePath(obj.node.__id__);
                 return nodePath ? `${nodePath} ▸ ${describeType(obj.__type__)}` : null;
             }

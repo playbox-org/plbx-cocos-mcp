@@ -15,7 +15,7 @@ import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 import {
-    writeMetaFile, ensureParentDirMetas, MetaGenerationError
+    writeMetaFile, ensureParentDirMetas
 } from '../document/MetaGenerator.js';
 
 export class CreateAssetMeta extends BaseTool {
@@ -64,7 +64,10 @@ export class CreateAssetMeta extends BaseTool {
     }
 
     async execute(args, projectRoot) {
-        const assetsRoot = path.resolve(projectRoot, 'assets');
+        // realpath BOTH sides: the containment check must compare resolved
+        // paths, else a symlink under assets/ pointing outside the project
+        // passes it and .meta files get written wherever it leads.
+        const assetsRoot = this.#realpath(path.resolve(projectRoot, 'assets'));
         const abs = this.#resolve(args.path, projectRoot);
         if (!abs) {
             return this.error(`Path not found: ${args.path} (relative to project root or assets/)`);
@@ -97,8 +100,9 @@ export class CreateAssetMeta extends BaseTool {
                 if (isNew) created.push({ path: target, uuid: meta.uuid });
                 else skipped.push(rel);
             } catch (err) {
-                if (err instanceof MetaGenerationError) refused.push({ path: rel, reason: err.message });
-                else throw err;
+                // Any per-target failure (broken symlink → ENOENT, EACCES,
+                // ERR_FS_FILE_TOO_LARGE) is that target's problem, not the run's.
+                refused.push({ path: rel, reason: err.message });
             }
         }
 
@@ -113,11 +117,16 @@ export class CreateAssetMeta extends BaseTool {
         return this.success(this.#report(created, skipped, refused, projectRoot));
     }
 
+    /** Canonical path (symlinks resolved); the input itself when it does not exist */
+    #realpath(p) {
+        try { return fs.realpathSync(p); } catch { return p; }
+    }
+
     /** Resolve relative to project root, falling back to assets/<path> */
     #resolve(ref, projectRoot) {
         for (const rel of [ref, path.join('assets', ref)]) {
             const abs = path.resolve(projectRoot, rel);
-            if (fs.existsSync(abs)) return abs;
+            if (fs.existsSync(abs)) return this.#realpath(abs);
         }
         return null;
     }
@@ -126,6 +135,8 @@ export class CreateAssetMeta extends BaseTool {
     #walk(dir, out) {
         for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
             if (entry.name.startsWith('.') || entry.name.endsWith('.meta')) continue;
+            // Never follow a symlink: it can point outside assets/ entirely.
+            if (entry.isSymbolicLink()) continue;
             const full = path.join(dir, entry.name);
             out.push(full);
             if (entry.isDirectory()) this.#walk(full, out);

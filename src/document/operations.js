@@ -199,7 +199,7 @@ function isRefArrayClobber(existing, given) {
  * array Cocos actually uses one of: a custom @ccclass array (CardEntry[]) needs
  * standalone `{__id__}` references, and an inline value-type array (cc.Vec2[])
  * needs a `__type__` tag. The engine finds neither and silently DROPS the
- * element (the legendale empty-array symptom, docs/set-property-ccclass-array-gap.md).
+ * element (the legendary empty-array symptom).
  *
  * This is the EMPTY/untyped-slot counterpart to isRefArrayClobber: that guard
  * only sees the hazard once the existing array still holds a live `{__id__}`,
@@ -1317,7 +1317,7 @@ function setAssetRef(doc, op, ctx) {
 //
 // A CCClass[] property (e.g. CardsBase.entries: CardEntry[]) serializes as an
 // array of {__id__} references to standalone typed objects, NOT inline objects
-// (README/docs/array-element-ops-analysis.md). set_component_property edits the
+// (see README). set_component_property edits the
 // FIELDS of existing elements (it follows the ref), but changing the SET of
 // elements needs object allocation + a reference, which a leaf-value writer
 // cannot do — these two ops are that missing half.

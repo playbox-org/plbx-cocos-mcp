@@ -12,7 +12,7 @@ import { VALUE_TYPE_FIELDS } from '../core/valueTypes.js';
 export const VALUE_TYPES = new Set(Object.keys(VALUE_TYPE_FIELDS));
 
 // Noise types - data that doesn't help LLM understand scene structure
-const NOISE_TYPES = new Set([
+export const NOISE_TYPES = new Set([
     ...VALUE_TYPES,
 
     // Animation curves

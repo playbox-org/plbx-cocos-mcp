@@ -767,12 +767,13 @@ describe('PropertyExtractor', () => {
     // "expected" instead of flagging it (review #1/#4 recommendation).
     describe('prop-cap displacement regressions (review #1/#4)', () => {
         it('#1: compact struct fallback label (→type) is deferred behind visible scalars', () => {
-            // cc.Line shape: 4 scalars visible on main + _width→cc.CurveRange,
-            // which resolved to null (dropped) on main. The new fallback label
-            // must go strictly LAST, never taking a slot a main-visible scalar
-            // held under the text prop cap.
+            // cc.Line shape: 4 scalars visible on main + _width→WidthCurve (a user
+            // data struct — cc.CurveRange is now noise-filtered like everywhere
+            // else), which resolved to null (dropped) on main. The new fallback
+            // label must go strictly LAST, never taking a slot a main-visible
+            // scalar held under the text prop cap.
             const objects = [
-                { __type__: 'cc.CurveRange', mode: 0, constant: 5 }
+                { __type__: 'WidthCurve', mode: 0, constant: 5 }
             ];
             objects.forEach((o, i) => { o.__idx__ = i; });
             const parser = { objects, getObject: (id) => objects[id] ?? null };

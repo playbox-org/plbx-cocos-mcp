@@ -9,6 +9,7 @@
 // Shared registry with the write side (operations.js) — see valueTypes.js.
 import { VALUE_TYPE_FIELDS } from './valueTypes.js';
 import { collectComponentIndices, INTERNAL_STRUCT_TYPES } from './componentIndices.js';
+import { NOISE_TYPES } from '../filters/TypeFilter.js';
 
 // Guard against deep/cyclic data-struct graphs when expanding nested CCClasses.
 const MAX_STRUCT_DEPTH = 5;
@@ -327,6 +328,11 @@ export class PropertyExtractor {
         if (type === 'cc.Node' || type === 'cc.Scene') return false;
         if (VALUE_TYPE_FIELDS[type]) return false;
         if (INTERNAL_STRUCT_TYPES.has(type)) return false;
+        // Engine plumbing the read pipeline already strips everywhere else
+        // (particle modules, curves, bake settings). Expanding it here undid
+        // that — and even a bare label displaces a main-visible field under
+        // the text prop cap, breaking the additive-only contract.
+        if (NOISE_TYPES.has(type)) return false;
         if (this.#isComponentIdx(idx)) return false;
         return true;
     }

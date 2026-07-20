@@ -1,7 +1,7 @@
 /**
  * array-element operations tests — insert_array_element / remove_array_element
  * plus the footgun guard against writing a bare value into an array of
- * {__id__} references to typed objects (docs/array-element-ops-analysis.md).
+ * {__id__} references to typed objects.
  *
  * A synthetic prefab holds a `CardsBase.entries: CardEntry[]` (references to
  * standalone typed objects, each owning a nested `config: CardConfig` ref and
