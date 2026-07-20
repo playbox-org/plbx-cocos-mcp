@@ -74,6 +74,38 @@ describe('PrefabBuilder', () => {
         assert.deepStrictEqual(withMat.notes, []);
     });
 
+    test('primitive alias resolves to the db://internal mesh + default material', () => {
+        const { doc, notes } = new PrefabBuilder(assetIndex).compile({
+            name: 'Box',
+            visual: { mesh: 'box' }
+        }, 'Box');
+
+        const { errors } = new Validator(doc, assetIndex).validate();
+        assert.deepStrictEqual(errors, []);
+
+        const visualIdx = doc.resolveNode('Visual');
+        const mr = doc.getObject(doc.componentIndices(visualIdx)[0]);
+        assert.strictEqual(mr.__type__, 'cc.MeshRenderer');
+        assert.strictEqual(mr._mesh.__uuid__, '1263d74c-8167-4928-91a6-4e2672411f47@a804a');
+        // Default material auto-assigned → no INVISIBLE note
+        assert.strictEqual(mr._materials.length, 1);
+        assert.strictEqual(mr._materials[0].__uuid__, 'd3c7820c-2a98-4429-8bc7-b8453bc9ac41');
+        assert.deepStrictEqual(notes, []);
+    });
+
+    test('full builtin mesh reference resolves; explicit material overrides default', () => {
+        // Reference by full "<uuid>@<subId>" (plane) with a project material
+        const { doc } = new PrefabBuilder(assetIndex).compile({
+            name: 'Plane',
+            visual: { mesh: '1263d74c-8167-4928-91a6-4e2672411f47@2e76e', material: 'assets/Materials/Dynamite.mtl' }
+        }, 'Plane');
+
+        const visualIdx = doc.resolveNode('Visual');
+        const mr = doc.getObject(doc.componentIndices(visualIdx)[0]);
+        assert.strictEqual(mr._mesh.__uuid__, '1263d74c-8167-4928-91a6-4e2672411f47@2e76e');
+        assert.notStrictEqual(mr._materials[0].__uuid__, 'd3c7820c-2a98-4429-8bc7-b8453bc9ac41');
+    });
+
     test('sprite visual gets UITransform + Sprite with the sprite-frame', () => {
         const { doc } = new PrefabBuilder(assetIndex).compile({
             name: 'Panel',

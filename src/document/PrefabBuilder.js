@@ -15,7 +15,8 @@
  *   name?: string,                  // default: output file name
  *   layer?: number|string,          // default: "default" (3D); use "ui_2d" for UI
  *   visual?: {
- *     mesh?: "Art/crate.glb[@subId]", material?: "path|uuid",
+ *     mesh?: "Art/crate.glb[@subId]" | "box"|"plane"|"sphere"|…  (engine primitive),
+ *     material?: "path|uuid",
  *     sprite?: "UI/icon.png",       // resolves the sprite-frame sub-asset
  *     name?: "Visual", position?, rotation?, scale?: number|{x,y,z}
  *   },
@@ -30,8 +31,28 @@ import { SceneDocument } from './SceneDocument.js';
 import { prefabMeta } from './MetaGenerator.js';
 import { applyOperations, OperationError, LAYERS } from './operations.js';
 import { generateFileId } from '../utils/fileId.js';
+import { resolveBuiltin } from '../core/builtins.js';
 
 export class PrefabBuildError extends Error {}
+
+/**
+ * Convenient aliases for the engine's standard primitive meshes — sub-assets of
+ * db://internal `primitives.fbx`, addressable by their (stable) sub-ids only.
+ * `visual.mesh: "box"` expands to the full builtin reference below.
+ */
+const PRIMITIVES_FBX_UUID = '1263d74c-8167-4928-91a6-4e2672411f47';
+const PRIMITIVE_MESH_IDS = {
+    box: 'a804a',
+    plane: '2e76e',
+    sphere: '17020',
+    cylinder: '8abdc',
+    capsule: '801ec',
+    cone: '38fd2',
+    quad: 'fc873',
+    torus: '40ece'
+};
+/** db://internal default-material.mtl — the editor's default for primitives */
+const DEFAULT_MATERIAL_UUID = 'd3c7820c-2a98-4429-8bc7-b8453bc9ac41';
 
 export class PrefabBuilder {
     #assetIndex;
@@ -194,11 +215,24 @@ export class PrefabBuilder {
         }
     }
 
-    /** Resolve "model.glb[@sub]" into a concrete mesh sub-asset + materials */
+    /** Resolve "model.glb[@sub]" (or a primitive alias) into a mesh sub-asset + materials */
     #resolveMesh(meshRef, materialRef) {
-        if (!this.#assetIndex) throw new PrefabBuildError('mesh resolution requires a project (assetIndex)');
-        const resolved = this.#assetIndex.resolve(meshRef);
-        if (!resolved) throw new PrefabBuildError(`Mesh asset not found: "${meshRef}"`);
+        // Primitive alias ("box", "plane", …) → full db://internal reference.
+        const alias = typeof meshRef === 'string' ? PRIMITIVE_MESH_IDS[meshRef.toLowerCase()] : undefined;
+        if (alias) meshRef = `${PRIMITIVES_FBX_UUID}@${alias}`;
+
+        // Project assets first, then engine builtins (primitive meshes live in
+        // db://internal, in no project .meta) — same fallback order as apply_edits.
+        let resolved = this.#assetIndex ? this.#assetIndex.resolve(meshRef) : null;
+        let isBuiltinMesh = false;
+        if (!resolved) {
+            resolved = resolveBuiltin(meshRef);
+            isBuiltinMesh = resolved !== null;
+        }
+        if (!resolved) {
+            if (!this.#assetIndex) throw new PrefabBuildError('mesh resolution requires a project (assetIndex)');
+            throw new PrefabBuildError(`Mesh asset not found: "${meshRef}"`);
+        }
         const { entry, subAsset } = resolved;
 
         let mesh = subAsset;
@@ -219,6 +253,10 @@ export class PrefabBuilder {
         let materialRefs = [];
         if (materialRef) {
             materialRefs = [materialRef];
+        } else if (isBuiltinMesh) {
+            // Primitive meshes ship no usable standalone material — default to
+            // the engine default material (what the editor's Box/Plane prefabs use).
+            materialRefs = [DEFAULT_MATERIAL_UUID];
         } else {
             // Default to the model's own materials (order as imported)
             materialRefs = entry.subAssets

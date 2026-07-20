@@ -27,7 +27,8 @@ export class BuildPrefab extends BaseTool {
                'Wrapper convention built in: use spec.visual for the model/sprite — it becomes a Visual ' +
                'child node, keeping the root clean for logic/tweens/colliders. ' +
                'Spec: {name?, layer? (number|"default"|"ui_2d"|...), ' +
-               'visual?: {mesh: "path[@subId]"| sprite: "path.png", material?, scale?: number|{x,y,z}, position?, rotation?}, ' +
+               'visual?: {mesh: "path[@subId]" or a primitive alias ("box"|"plane"|"sphere"|"cylinder"|"capsule"|"cone"|"quad"|"torus", ' +
+               'engine builtin, default material auto-assigned) | sprite: "path.png", material?, scale?: number|{x,y,z}, position?, rotation?}, ' +
                'root?: {components?: [{type, properties?}], children?: [{name, position?, rotation?, scale?, layer?, active?, ' +
                'mesh?, sprite?, material?, components?, children?}]}}. ' +
                'Component types: any of the ~44 built-in cc.* templates — UI/2D (UITransform, Sprite, Label, ' +
