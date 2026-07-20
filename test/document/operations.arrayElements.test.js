@@ -10,7 +10,7 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import { SceneDocument } from '../../src/document/SceneDocument.js';
+import { SceneDocument, isRef } from '../../src/document/SceneDocument.js';
 import { applyOperations, OperationError, mergeTyped } from '../../src/document/operations.js';
 import { Validator } from '../../src/document/Validator.js';
 
@@ -31,7 +31,9 @@ function makeCardsDoc() {
             __type__: 'CardsBase', _name: '', _objFlags: 0, node: { __id__: 1 },
             _enabled: true, __prefab: { __id__: 3 }, _id: '',
             entries: [{ __id__: 5 }, { __id__: 7 }],
-            links: [{ __id__: 1 }]   // references to EXISTING nodes (not owned)
+            links: [{ __id__: 1 }],  // references to EXISTING nodes (not owned)
+            clips: []                // empty CCClass[] — the legendale gap slot
+
         },
         { __type__: 'cc.CompPrefabInfo', fileId: 'compFileId0001' },
         {
@@ -500,6 +502,58 @@ describe('footgun guard (docs §3a)', () => {
             property: 'entries', value: [{ type: 1 }]
         }]), /references to standalone objects|insert_array_element/);
         assert.strictEqual(comp(doc).entries.length, 2); // untouched
+    });
+
+    test('writing bare objects into an EMPTY typed array is rejected (legendale gap)', () => {
+        const doc = makeCardsDoc();
+        // clips starts []: isRefArrayClobber has no live {__id__} to key off, so
+        // without the untagged-array guard the bare objects serialize inline and
+        // untyped and the engine drops them (array shows empty).
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'clips', value: [{ name: 'Idle' }, { name: 'Run' }]
+        }]), /insert_array_element/);
+        assert.deepStrictEqual(comp(doc).clips, []); // untouched
+    });
+
+    test('one bare object among refs into an empty array is still rejected', () => {
+        const doc = makeCardsDoc();
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'clips', value: [{ $node: '/' }, { name: 'Idle' }]
+        }]), /insert_array_element/);
+        assert.deepStrictEqual(comp(doc).clips, []);
+    });
+
+    test('a whole-array write whose elements carry __type__ is allowed (inline value type)', () => {
+        const doc = makeCardsDoc();
+        // cc.ClickEvent[]-style: the elements are explicit inline value objects —
+        // the guard keys on the MISSING type tag, so a tagged write is legitimate.
+        applyOperations(doc, [{
+            op: 'set_component_property', node: '/', component: 'CardsBase',
+            property: 'clips',
+            value: [{ __type__: 'cc.Vec2', x: 1, y: 2 }, { __type__: 'cc.Vec2', x: 3, y: 4 }]
+        }]);
+        assert.strictEqual(comp(doc).clips.length, 2);
+        assert.strictEqual(comp(doc).clips[0].__type__, 'cc.Vec2');
+    });
+
+    test('empty [] clear then insert_array_element with explicit type is the correct path (A)', () => {
+        const doc = makeCardsDoc();
+        applyOperations(doc, [
+            { op: 'set_component_property', node: '/', component: 'CardsBase',
+              property: 'clips', value: [] },
+            { op: 'insert_array_element', node: '/', component: 'CardsBase',
+              property: 'clips', type: 'CharacterClip', value: { name: 'Idle' } },
+            { op: 'insert_array_element', node: '/', component: 'CardsBase',
+              property: 'clips', type: 'CharacterClip', value: { name: 'Run' } }
+        ]);
+        const clips = comp(doc).clips;
+        assert.strictEqual(clips.length, 2);
+        assert.ok(isRef(clips[0]) && isRef(clips[1]));           // {__id__} references
+        assert.strictEqual(doc.getObject(clips[0].__id__).__type__, 'CharacterClip');
+        assert.strictEqual(doc.getObject(clips[1].__id__).name, 'Run');
+        assertRoundTrips(doc);
     });
 
     test('merging inline objects into a nested reference sub-array is rejected (review #2b)', () => {

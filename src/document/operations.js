@@ -192,6 +192,48 @@ function isRefArrayClobber(existing, given) {
     return given.some(e => e !== null && typeof e === 'object' && !isRef(e));
 }
 
+/**
+ * True when `given` writes an array containing a BARE object — one with no
+ * `__type__`, no `__id__`, and no `__uuid__` — into an array slot. Such an
+ * element serializes as an inline untyped object, which is corruption in every
+ * array Cocos actually uses one of: a custom @ccclass array (CardEntry[]) needs
+ * standalone `{__id__}` references, and an inline value-type array (cc.Vec2[])
+ * needs a `__type__` tag. The engine finds neither and silently DROPS the
+ * element (the legendale empty-array symptom, docs/set-property-ccclass-array-gap.md).
+ *
+ * This is the EMPTY/untyped-slot counterpart to isRefArrayClobber: that guard
+ * only sees the hazard once the existing array still holds a live `{__id__}`,
+ * so it misses an empty `[]` (nothing to key off) — exactly the slot the
+ * leaf-value writer corrupts. Purely structural (no doc), so it composes into
+ * mergeTyped. A ref (`$node`/`$component` → `{__id__}`), an asset (`{__uuid__}`),
+ * an inline value with its own `__type__` (cc.ClickEvent[]), a scalar, an empty
+ * array and `null` holes are all left alone.
+ */
+function isUntaggedObjectArrayWrite(existing, given) {
+    if (!Array.isArray(given)) return false;
+    // Only when the destination is an array slot: existing is an array (incl.
+    // empty), or absent (a script field being created). A non-array existing
+    // value is a different shape and not this hazard.
+    if (existing != null && !Array.isArray(existing)) return false;
+    return given.some(e => e !== null && typeof e === 'object' && !Array.isArray(e) &&
+        !isRef(e) && !('__uuid__' in e) && !('__type__' in e));
+}
+
+function untaggedArrayError(what, opts = {}) {
+    const remediation = opts.instance
+        ? `This is a collapsed prefab instance — its internal arrays cannot be edited through ` +
+          `overrides. Edit the source prefab asset (${opts.sourcePrefab ?? 'the .prefab this ' +
+          'instance was created from'}) with apply_edits, then the instance inherits the change.`
+        : `Use op "insert_array_element" for each element (pass "type" with the element's ` +
+          `__type__ for a custom @ccclass array), or include "__type__" on every element for an ` +
+          `inline value-type array (cc.Vec2[], …).`;
+    return new OperationError(
+        `"${what}" is a typed array, but "value" contains a bare object with no "__type__", ` +
+        `"__id__" or "__uuid__". A leaf write serializes it inline and untyped, so the engine ` +
+        `drops the element (the array shows empty). ` + remediation
+    );
+}
+
 function refArrayClobberError(what, existing, opts = {}) {
     const t = existing.find(e => isRef(e));
     // On a collapsed instance stub the array lives in the SOURCE prefab; the
@@ -217,6 +259,9 @@ export function mergeTyped(existing, given, what, opts = {}) {
     // guardTypedRefArrayWrite cannot see (its key is the array name, not an
     // index). Reject here so it is caught however the array is addressed (#2).
     if (isRefArrayClobber(existing, given)) throw refArrayClobberError(what, existing, opts);
+    // Empty/untyped-slot variant: a bare-object array into an array that has no
+    // live {__id__} for isRefArrayClobber to key off (an empty CardEntry[]).
+    if (isUntaggedObjectArrayWrite(existing, given)) throw untaggedArrayError(what, opts);
     if (given === null || typeof given !== 'object' || Array.isArray(given)) return given;
     if (given.__type__) return given; // caller provided a full serialized value
     if (existing === null || typeof existing !== 'object' || !existing.__type__) return given;
@@ -237,6 +282,7 @@ export function mergeTyped(existing, given, what, opts = {}) {
         // only follows {__type__} objects, so an array field would slip past —
         // guard it explicitly (#2).
         if (isRefArrayClobber(cur, val)) throw refArrayClobberError(`${what}.${rawKey}`, cur, opts);
+        if (isUntaggedObjectArrayWrite(cur, val)) throw untaggedArrayError(`${what}.${rawKey}`, opts);
         // A field that references a standalone object cannot be rewritten in
         // place: mergeTyped has no `doc`, so it cannot follow `{__id__}` into
         // the referenced value object. A scalar/array/null would orphan the ref
