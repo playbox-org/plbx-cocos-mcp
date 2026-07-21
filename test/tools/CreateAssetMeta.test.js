@@ -98,4 +98,49 @@ describe('CreateAssetMeta tool', () => {
         const result = await tool.execute({ path: 'assets/Nope.ts' }, root);
         assert.ok(result.isError);
     });
+
+    // Blocker 1: the containment check runs on the RESOLVED path and the walk
+    // never follows a symlink — otherwise a link under assets/ pointing outside
+    // the project let .meta files be written anywhere it led.
+    describe('symlink containment (review — blocker 1)', () => {
+        it('refuses a symlink whose target escapes the project, writing no .meta there', async () => {
+            const victim = fs.mkdtempSync(path.join(os.tmpdir(), 'victim-'));
+            try {
+                fs.writeFileSync(path.join(victim, 'secret.ts'), 'export {}');
+                fs.symlinkSync(victim, path.join(assets, 'escape'), 'dir');
+
+                const result = await tool.execute({ path: 'assets/escape' }, root);
+                assert.ok(result.isError, 'must reject the escaping symlink');
+                assert.match(result.content[0].text, /assets\//);
+                // Nothing written into the target directory
+                assert.deepStrictEqual(fs.readdirSync(victim).sort(), ['secret.ts']);
+            } finally {
+                fs.rmSync(victim, { recursive: true, force: true });
+            }
+        });
+
+        it('skips a symlink during a recursive walk (broken link does not abort the run)', async () => {
+            const dir = path.join(assets, 'Sub');
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(path.join(dir, 'ok.ts'), 'export {}');
+            fs.symlinkSync(path.join(dir, 'nowhere.ts'), path.join(dir, 'dead.ts')); // broken
+
+            const result = await tool.execute({ path: 'assets/Sub' }, root);
+            assert.ok(!result.isError, result.content[0].text);
+            assert.ok(fs.existsSync(path.join(dir, 'ok.ts.meta')));
+            assert.ok(!fs.existsSync(path.join(dir, 'dead.ts.meta')));
+        });
+
+        it('does not follow a symlink to a file inside assets/ (no duplicate meta)', async () => {
+            const dir = path.join(assets, 'Sub2');
+            fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(path.join(dir, 'real.ts'), 'export {}');
+            fs.symlinkSync(path.join(dir, 'real.ts'), path.join(dir, 'alias.ts'));
+
+            const result = await tool.execute({ path: 'assets/Sub2' }, root);
+            assert.ok(!result.isError, result.content[0].text);
+            assert.ok(fs.existsSync(path.join(dir, 'real.ts.meta')));
+            assert.ok(!fs.existsSync(path.join(dir, 'alias.ts.meta')));
+        });
+    });
 });

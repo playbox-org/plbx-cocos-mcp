@@ -701,6 +701,51 @@ describe('PropertyExtractor', () => {
             assert.strictEqual(props.wp.__struct__, 'Waypoint');
             assert.strictEqual(props.wp.pause, 2);
         });
+
+        // Regression guard: expanding engine plumbing (particle modules, curves,
+        // bake settings) blew detailed JSON up +178% on real files and — via the
+        // prop cap — displaced main-visible fields. #isDataStruct must reject the
+        // same NOISE_TYPES / INTERNAL_STRUCT_TYPES the rest of the read pipeline
+        // strips, while still expanding genuine user structs.
+        it('does NOT expand engine noise/plumbing types, but still expands user structs', () => {
+            const objects = [
+                { __type__: 'cc.ModelBakeSettings', castShadow: true }, // NOISE_TYPE
+                { __type__: 'cc.CurveRange', mode: 0, constant: 5 },     // NOISE_TYPE
+                { __type__: 'cc.PrefabInfo', fileId: 'abc' },            // INTERNAL_STRUCT_TYPE
+                { __type__: 'Waypoint', pause: 3 }                       // user data struct
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const props = new PropertyExtractor(parser, { detailed: true }).extract({
+                __type__: 'MeshRenderer',
+                _bake: { __id__: 0 }, _width: { __id__: 1 }, _prefab: { __id__: 2 },
+                wp: { __id__: 3 }
+            });
+            // Only the user struct expands; none of the plumbing does
+            assert.strictEqual(props.wp.__struct__, 'Waypoint');
+            for (const key of ['_bake', '_width', '_prefab']) {
+                assert.ok(!(props[key] && props[key].__struct__),
+                    `${key} must not expand into a __struct__`);
+            }
+        });
+
+        it('caps struct recursion at MAX_STRUCT_DEPTH with a <Type> placeholder', () => {
+            const chain = [];
+            for (let i = 0; i < 8; i++) {
+                chain.push({ __type__: `L${i}`, v: i, next: i < 7 ? { __id__: i + 1 } : undefined });
+            }
+            chain.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects: chain, getObject: (id) => chain[id] ?? null };
+            const root = new PropertyExtractor(parser, { detailed: true })
+                .extract({ __type__: 'Root', head: { __id__: 0 } });
+
+            const seen = [];
+            let cur = root.head;
+            while (cur && typeof cur === 'object') { seen.push(cur.__struct__); cur = cur.next; }
+            // Five levels expand (L0..L4), then the cap returns the type as a string
+            assert.deepStrictEqual(seen, ['L0', 'L1', 'L2', 'L3', 'L4']);
+            assert.strictEqual(cur, '<L5>');
+        });
     });
 
     describe('additive text-cap contract (review #5)', () => {
