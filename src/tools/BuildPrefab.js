@@ -14,6 +14,7 @@ import { PrefabBuilder, PrefabBuildError } from '../document/PrefabBuilder.js';
 import { Validator } from '../document/Validator.js';
 import { renderSubtree } from '../document/MiniTree.js';
 import { AssetIndex } from '../core/AssetIndex.js';
+import { serializeMeta, ensureParentDirMetas } from '../document/MetaGenerator.js';
 
 export class BuildPrefab extends BaseTool {
     get name() {
@@ -26,7 +27,8 @@ export class BuildPrefab extends BaseTool {
                'Wrapper convention built in: use spec.visual for the model/sprite — it becomes a Visual ' +
                'child node, keeping the root clean for logic/tweens/colliders. ' +
                'Spec: {name?, layer? (number|"default"|"ui_2d"|...), ' +
-               'visual?: {mesh: "path[@subId]"| sprite: "path.png", material?, scale?: number|{x,y,z}, position?, rotation?}, ' +
+               'visual?: {mesh: "path[@subId]" or a primitive alias ("box"|"plane"|"sphere"|"cylinder"|"capsule"|"cone"|"quad"|"torus", ' +
+               'engine builtin, default material auto-assigned) | sprite: "path.png", material?, scale?: number|{x,y,z}, position?, rotation?}, ' +
                'root?: {components?: [{type, properties?}], children?: [{name, position?, rotation?, scale?, layer?, active?, ' +
                'mesh?, sprite?, material?, components?, children?}]}}. ' +
                'Component types: any of the ~44 built-in cc.* templates — UI/2D (UITransform, Sprite, Label, ' +
@@ -111,8 +113,10 @@ export class BuildPrefab extends BaseTool {
         fs.mkdirSync(path.dirname(outputPath), { recursive: true });
         doc.save(outputPath);
         if (newMeta) {
-            fs.writeFileSync(metaPath, JSON.stringify(newMeta, null, 2), 'utf-8');
+            fs.writeFileSync(metaPath, serializeMeta(newMeta), 'utf-8');
         }
+        // Folders created by mkdirSync need their own metas too
+        ensureParentDirMetas(outputPath, path.resolve(projectRoot, 'assets'));
         AssetIndex.invalidate(projectRoot);
         const metaCreated = newMeta !== null;
 

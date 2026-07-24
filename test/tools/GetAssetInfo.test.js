@@ -66,7 +66,7 @@ describe('GetAssetInfo tool', () => {
             assert.strictEqual(result.isError, true);
             const text = result.content[0].text;
             assert.ok(text.includes('no .meta'));
-            assert.ok(text.includes('open the project in Cocos Creator'));
+            assert.ok(text.includes('create_asset_meta'));
         } finally {
             fs.rmSync(tmp, { recursive: true, force: true });
         }

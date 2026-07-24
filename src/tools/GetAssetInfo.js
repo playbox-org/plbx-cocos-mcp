@@ -63,8 +63,9 @@ export class GetAssetInfo extends BaseTool {
                 if (notImported) {
                     return this.error(
                         `"${notImported}" exists on disk but has no .meta — the editor has not ` +
-                        'imported it yet. Ask the user to open the project in Cocos Creator once, ' +
-                        'then retry.'
+                        'imported it yet. Run create_asset_meta to generate one offline (works for ' +
+                        'scripts, images, audio, .mtl/.anim/... — models .fbx/.glb/.gltf still need ' +
+                        'one editor open), then retry.'
                     );
                 }
                 return this.error(

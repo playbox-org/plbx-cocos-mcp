@@ -18,6 +18,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { collectComponentIndices } from '../core/componentIndices.js';
 
 /** True when a value is an `{__id__: N}` reference and nothing else */
 export function isRef(value) {
@@ -309,6 +310,12 @@ export class SceneDocument {
 
         // 2. From each node, follow ownership edges. Stop at references to
         //    nodes outside the set and at components owned by outside nodes.
+        //    Component-ness is by MEMBERSHIP (a node's _components / mounted
+        //    records), not the `node` back-ref heuristic — a user data struct
+        //    with an `@property node: cc.Node` field is an OWNED value-object,
+        //    not a component, so it must be followed (unified ownership model,
+        //    review #5).
+        const components = collectComponentIndices(this.#objects, (o) => this.isNode(o));
         const owned = new Set(nodeSet);
         const walk = (value) => {
             if (value === null || typeof value !== 'object') return;
@@ -320,7 +327,8 @@ export class SceneDocument {
                 if (!target) return;
                 if (this.isNode(target)) {
                     if (!nodeSet.has(idx)) return; // cross-ref to outside node
-                } else if (isRef(target.node) && !nodeSet.has(target.node.__id__)) {
+                } else if (components.has(idx) && isRef(target.node) &&
+                           !nodeSet.has(target.node.__id__)) {
                     return; // component owned by an outside node
                 }
                 owned.add(idx);

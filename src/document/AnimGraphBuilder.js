@@ -29,6 +29,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { animGraphMeta } from './MetaGenerator.js';
 import { SceneDocument } from './SceneDocument.js';
 import { BINARY_OPERATORS } from './AnimGraphReader.js';
 
@@ -352,14 +353,6 @@ export class AnimGraphBuilder {
      * Standard .animgraph.meta content (shape verified on Player.animgraph.meta).
      */
     static createMeta() {
-        return {
-            ver: '1.2.0',
-            importer: 'animation-graph',
-            imported: true,
-            uuid: randomUUID(),
-            files: ['.json'],
-            subMetas: {},
-            userData: {}
-        };
+        return animGraphMeta();
     }
 }

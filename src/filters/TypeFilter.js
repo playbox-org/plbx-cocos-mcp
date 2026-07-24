@@ -5,14 +5,14 @@
  * SOLID: S - Only responsible for type classification
  */
 
-// Inlined value types (primitives) - shared with SceneParser
-export const VALUE_TYPES = new Set([
-    'cc.Vec3', 'cc.Vec2', 'cc.Vec4', 'cc.Quat',
-    'cc.Color', 'cc.Size', 'cc.Rect'
-]);
+// Inlined value types (primitives) - shared with SceneParser. Derived from the
+// single value-type registry so a newly added value-type can't leave this
+// consumer behind (CODE_REVIEW finding #8).
+import { VALUE_TYPE_FIELDS } from '../core/valueTypes.js';
+export const VALUE_TYPES = new Set(Object.keys(VALUE_TYPE_FIELDS));
 
 // Noise types - data that doesn't help LLM understand scene structure
-const NOISE_TYPES = new Set([
+export const NOISE_TYPES = new Set([
     ...VALUE_TYPES,
 
     // Animation curves

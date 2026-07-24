@@ -13,6 +13,15 @@ class MockSceneParser {
     getObject(id) {
         return this.#objects[id] || null;
     }
+
+    // Flat array form (indexed by id) so component-membership detection
+    // (#isComponentIdx → collectComponentIndices) works against the mock.
+    get objects() {
+        const ids = Object.keys(this.#objects).map(Number);
+        const arr = new Array(ids.length ? Math.max(...ids) + 1 : 0).fill(null);
+        for (const id of ids) arr[id] = this.#objects[id];
+        return arr;
+    }
 }
 
 describe('PropertyExtractor', () => {
@@ -510,6 +519,371 @@ describe('PropertyExtractor', () => {
 
             const props = extractor.extract(component);
             assert.deepStrictEqual(props.items, ['→?']);
+        });
+    });
+
+    describe('nested data CCClass structs', () => {
+        // Mirrors CardsBase.entries: CardEntry[] where each CardEntry is its own
+        // object in the flat array (referenced by {__id__}), with a nested
+        // CardConfig struct, an asset ref, an enum int and a Vec2[] — none of
+        // which resolve to a name.
+        function cardParser() {
+            const parser = new MockSceneParser();
+            parser.addObject(20, {
+                __idx__: 20,
+                __type__: 'CardEntry',
+                type: 1, // CardType enum
+                prefab: { __uuid__: 'aaaa', __expectedType__: 'cc.Prefab' },
+                config: { __id__: 21 },
+                offsets: [
+                    { __type__: 'cc.Vec2', x: -20, y: 0 },
+                    { __type__: 'cc.Vec2', x: 20, y: 0 }
+                ],
+                members: []
+            });
+            parser.addObject(21, {
+                __idx__: 21,
+                __type__: 'CardConfig',
+                icon: { __uuid__: 'bbbb' },
+                frame: { __uuid__: 'cccc' }
+            });
+            return parser;
+        }
+
+        it('expands an array of data structs in detailed mode', () => {
+            const parser = cardParser();
+            const extractor = new PropertyExtractor(parser, {
+                detailed: true,
+                assetResolver: (u) => ({ aaaa: 'Knight.prefab', bbbb: 'icon.png', cccc: 'frame.png' }[u])
+            });
+            const props = extractor.extract({ __type__: 'CardsBase', entries: [{ __id__: 20 }] });
+
+            assert.strictEqual(props.entries.length, 1);
+            const e = props.entries[0];
+            assert.strictEqual(e.__struct__, 'CardEntry');
+            assert.strictEqual(e.type, 1);
+            assert.strictEqual(e.prefab, 'Knight.prefab');
+            assert.deepStrictEqual(e.offsets, [[-20, 0], [20, 0]]);
+            // Nested struct expanded recursively with its own asset names
+            assert.strictEqual(e.config.__struct__, 'CardConfig');
+            assert.strictEqual(e.config.icon, 'icon.png');
+            assert.strictEqual(e.config.frame, 'frame.png');
+        });
+
+        it('expands a single data-struct ref in detailed mode', () => {
+            const parser = cardParser();
+            const extractor = new PropertyExtractor(parser, {
+                detailed: true,
+                assetResolver: (u) => ({ bbbb: 'icon.png', cccc: 'frame.png' }[u])
+            });
+            const props = extractor.extract({ __type__: 'Holder', config: { __id__: 21 } });
+            assert.strictEqual(props.config.__struct__, 'CardConfig');
+            assert.strictEqual(props.config.icon, 'icon.png');
+        });
+
+        it('does NOT expand structs in compact mode (stays [×N])', () => {
+            const parser = cardParser();
+            const extractor = new PropertyExtractor(parser); // detailed: false
+            const props = extractor.extract({ __type__: 'CardsBase', entries: [{ __id__: 20 }] });
+            assert.strictEqual(props.entries, '[×1]');
+        });
+
+        it('does not recurse into a component (real _components member)', () => {
+            const parser = new MockSceneParser();
+            parser.addObject(30, {
+                __idx__: 30,
+                __type__: 'MyScript',
+                node: { __id__: 31 },
+                foo: 1
+            });
+            // 30 is an ACTUAL component: it is listed in its owning node's
+            // _components. Classification is by membership, not the `node`
+            // back-ref (review #3/#4) — a non-member with a `node` field would
+            // expand as a data struct instead (see the next test).
+            parser.addObject(31, {
+                __idx__: 31, __type__: 'cc.Node', _name: 'Owner',
+                _components: [{ __id__: 30 }]
+            });
+            const extractor = new PropertyExtractor(parser, { detailed: true });
+            const props = extractor.extract({ __type__: 'Holder', ref: { __id__: 30 } });
+            // Resolves to the owning node name, NOT an expanded struct
+            // (detailed mode appends the #id suffix)
+            assert.strictEqual(props.ref, '→Owner#30');
+        });
+
+        it('expands array-element data structs carrying a `node` back-ref (review #3/#5)', () => {
+            // The motivating CardEntry[] shape: each element is a data struct
+            // that references a named node (not a component). It must expand
+            // into its fields, NOT collapse to "→<NodeName>" via the back-ref
+            // name heuristic (which would fire in the array branch too).
+            const objects = [
+                { __type__: 'cc.Node', _name: 'Spawner', _components: [] },
+                { __type__: 'Waypoint', node: { __id__: 0 }, pause: 2 },
+                { __type__: 'Waypoint', node: { __id__: 0 }, pause: 5 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const extractor = new PropertyExtractor(parser, { detailed: true });
+
+            const props = extractor.extract({
+                __type__: 'Path', waypoints: [{ __id__: 1 }, { __id__: 2 }]
+            });
+            assert.strictEqual(props.waypoints.length, 2);
+            assert.strictEqual(props.waypoints[0].__struct__, 'Waypoint');
+            assert.strictEqual(props.waypoints[0].pause, 2);
+            assert.strictEqual(props.waypoints[1].pause, 5);
+            // the `node` @property must survive expansion, not be dropped
+            assert.strictEqual(props.waypoints[0].node, '→Spawner#0');
+            assert.strictEqual(props.waypoints[1].node, '→Spawner#0');
+        });
+
+        it('compact mode keeps an unnamed data-struct field as →<owner>', () => {
+            // compact has no expansion, but the field must stay visible (→owner)
+            const objects = [
+                { __type__: 'cc.Node', _name: 'ParentNode', _components: [] },
+                { __type__: 'CardConfig', node: { __id__: 0 }, icon: { __uuid__: 'bbbb' } }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+
+            const compact = new PropertyExtractor(parser); // detailed: false
+            const props = compact.extract({ __type__: 'Holder', config: { __id__: 1 } });
+            assert.strictEqual(props.config, '→ParentNode');
+        });
+
+        it('compact mode falls back to the struct type when there is no node back-ref', () => {
+            const objects = [
+                { __type__: 'CardConfig', icon: { __uuid__: 'bbbb' } }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+
+            const compact = new PropertyExtractor(parser); // detailed: false
+            const props = compact.extract({ __type__: 'Holder', config: { __id__: 0 } });
+            assert.strictEqual(props.config, '→CardConfig');
+        });
+
+        it('guards against cycles between data structs', () => {
+            const parser = new MockSceneParser();
+            parser.addObject(40, { __idx__: 40, __type__: 'A', next: { __id__: 41 } });
+            parser.addObject(41, { __idx__: 41, __type__: 'B', back: { __id__: 40 } });
+            const extractor = new PropertyExtractor(parser, { detailed: true });
+            const props = extractor.extract({ __type__: 'Holder', root: { __id__: 40 } });
+            assert.strictEqual(props.root.__struct__, 'A');
+            assert.strictEqual(props.root.next.__struct__, 'B');
+            assert.strictEqual(props.root.next.back, '<cycle A>');
+        });
+
+        it('classifies components by _components membership, not the node back-ref (review #4)', () => {
+            // Both objects carry a `node` ref to the SAME NAMED node; only [1]
+            // is a real component (listed in _components). The user data struct
+            // with a `node` @property (very common field name) must still expand
+            // — and the node's non-empty name must NOT short-circuit it via the
+            // back-ref name heuristic (review #3: an empty _name previously
+            // masked this).
+            const objects = [
+                { __type__: 'cc.Node', _name: 'Root', _components: [{ __id__: 1 }] },
+                { __type__: 'CompX', node: { __id__: 0 }, foo: 1 },
+                { __type__: 'Waypoint', node: { __id__: 0 }, pause: 2 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const extractor = new PropertyExtractor(parser, { detailed: true });
+
+            const props = extractor.extract({
+                __type__: 'Holder', compRef: { __id__: 1 }, wp: { __id__: 2 }
+            });
+            // component: resolved to its owner's name via the back-ref heuristic
+            // (never expanded as a struct)
+            assert.strictEqual(props.compRef, '→Root#1');
+            // data struct: expanded, even though it has the same `node` back-ref
+            // to the same NAMED node — membership, not the name, decides
+            assert.strictEqual(props.wp.__struct__, 'Waypoint');
+            assert.strictEqual(props.wp.pause, 2);
+        });
+
+        // Regression guard: expanding engine plumbing (particle modules, curves,
+        // bake settings) blew detailed JSON up +178% on real files and — via the
+        // prop cap — displaced main-visible fields. #isDataStruct must reject the
+        // same NOISE_TYPES / INTERNAL_STRUCT_TYPES the rest of the read pipeline
+        // strips, while still expanding genuine user structs.
+        it('does NOT expand engine noise/plumbing types, but still expands user structs', () => {
+            const objects = [
+                { __type__: 'cc.ModelBakeSettings', castShadow: true }, // NOISE_TYPE
+                { __type__: 'cc.CurveRange', mode: 0, constant: 5 },     // NOISE_TYPE
+                { __type__: 'cc.PrefabInfo', fileId: 'abc' },            // INTERNAL_STRUCT_TYPE
+                { __type__: 'Waypoint', pause: 3 }                       // user data struct
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const props = new PropertyExtractor(parser, { detailed: true }).extract({
+                __type__: 'MeshRenderer',
+                _bake: { __id__: 0 }, _width: { __id__: 1 }, _prefab: { __id__: 2 },
+                wp: { __id__: 3 }
+            });
+            // Only the user struct expands; none of the plumbing does
+            assert.strictEqual(props.wp.__struct__, 'Waypoint');
+            for (const key of ['_bake', '_width', '_prefab']) {
+                assert.ok(!(props[key] && props[key].__struct__),
+                    `${key} must not expand into a __struct__`);
+            }
+        });
+
+        it('caps struct recursion at MAX_STRUCT_DEPTH with a <Type> placeholder', () => {
+            const chain = [];
+            for (let i = 0; i < 8; i++) {
+                chain.push({ __type__: `L${i}`, v: i, next: i < 7 ? { __id__: i + 1 } : undefined });
+            }
+            chain.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects: chain, getObject: (id) => chain[id] ?? null };
+            const root = new PropertyExtractor(parser, { detailed: true })
+                .extract({ __type__: 'Root', head: { __id__: 0 } });
+
+            const seen = [];
+            let cur = root.head;
+            while (cur && typeof cur === 'object') { seen.push(cur.__struct__); cur = cur.next; }
+            // Five levels expand (L0..L4), then the cap returns the type as a string
+            assert.deepStrictEqual(seen, ['L0', 'L1', 'L2', 'L3', 'L4']);
+            assert.strictEqual(cur, '<L5>');
+        });
+    });
+
+    describe('additive text-cap contract (review #5)', () => {
+        it('keeps ref-arrays inline in their original slot, never deferred', () => {
+            const parser = new MockSceneParser();
+            parser.addObject(50, { __idx__: 50, __type__: 'CardEntry', type: 1 });
+            parser.addObject(51, { __idx__: 51, __type__: 'CardEntry', type: 2 });
+            const extractor = new PropertyExtractor(parser, { detailed: true });
+
+            const props = extractor.extract({
+                __type__: 'CardsBase', node: { __id__: 1 },
+                speed: 5,
+                entries: [{ __id__: 50 }, { __id__: 51 }],
+                alpha: 1, beta: 2, gamma: 3, delta: 4
+            });
+            // main showed {speed entries alpha beta} in the first 4 text slots —
+            // the expanded entries array must not be pushed past the prop cap
+            assert.deepStrictEqual(
+                Object.keys(props).slice(0, 4),
+                ['speed', 'entries', 'alpha', 'beta']
+            );
+            assert.strictEqual(props.entries[0].__struct__, 'CardEntry');
+        });
+
+        it('a newly-surfaced Vec2[] never displaces a value-type scalar visible on main (review #4)', () => {
+            // main dropped Vec2[] entirely, so {s1,s2,s3,color} filled the first
+            // 4 text slots. The branch now surfaces `offsets`, but it must go
+            // AFTER the value-type `color` (which was visible on main) — never
+            // interleaved in key order, or `color` would fall past the cap.
+            const extractor = new PropertyExtractor(new MockSceneParser());
+            const props = extractor.extract({
+                __type__: 'MyScript',
+                s1: 1, s2: 2, s3: 3,
+                offsets: [{ __type__: 'cc.Vec2', x: 1, y: 2 }], // invisible on main
+                color: { __type__: 'cc.Color', r: 1, g: 2, b: 3, a: 4 } // visible on main
+            });
+            const keys = Object.keys(props);
+            // color (a value-type scalar) must precede offsets (the new Vec2[])
+            assert.ok(keys.indexOf('color') < keys.indexOf('offsets'));
+            // and within the first 4 slots the previously-visible fields survive
+            assert.deepStrictEqual(keys.slice(0, 4), ['s1', 's2', 's3', 'color']);
+        });
+    });
+
+    describe('cc.Mat4 (shared value-type registry, review #8)', () => {
+        it('renders cc.Mat4 as a 16-number ordered array', () => {
+            const extractor = new PropertyExtractor(new MockSceneParser());
+            const props = extractor.extract({
+                __type__: 'MyScript',
+                _mat: {
+                    __type__: 'cc.Mat4',
+                    m00: 1, m01: 0, m02: 0, m03: 0, m04: 0, m05: 1, m06: 0, m07: 0,
+                    m08: 0, m09: 0, m10: 1, m11: 0, m12: 4, m13: 5, m14: 6, m15: 1
+                }
+            });
+            assert.deepStrictEqual(props._mat,
+                [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 4, 5, 6, 1]);
+        });
+    });
+
+    // These guard the additive-only contract against a REGRESSION the snapshot
+    // fixtures could not catch: none combined such a field with ≥4 sibling props,
+    // so a regenerated snapshot would just record the displaced output as
+    // "expected" instead of flagging it (review #1/#4 recommendation).
+    describe('prop-cap displacement regressions (review #1/#4)', () => {
+        it('#1: compact struct fallback label (→type) is deferred behind visible scalars', () => {
+            // cc.Line shape: 4 scalars visible on main + _width→WidthCurve (a user
+            // data struct — cc.CurveRange is now noise-filtered like everywhere
+            // else), which resolved to null (dropped) on main. The new fallback
+            // label must go strictly LAST, never taking a slot a main-visible
+            // scalar held under the text prop cap.
+            const objects = [
+                { __type__: 'WidthCurve', mode: 0, constant: 5 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const compact = new PropertyExtractor(parser); // detailed: false
+
+            const keys = Object.keys(compact.extract({
+                __type__: 'cc.Line',
+                _tile: 1, _offset: 2, _worldSpace: true, _tileRotation: 3,
+                _width: { __id__: 0 } // → cc.CurveRange, invisible on main
+            }));
+            assert.deepStrictEqual(keys.slice(0, 4),
+                ['_tile', '_offset', '_worldSpace', '_tileRotation']);
+            assert.strictEqual(keys[keys.length - 1], '_width'); // relocated, still visible
+        });
+
+        it('#1: compact struct label WITH a named owner (→owner, visible on main) stays inline', () => {
+            const objects = [
+                { __type__: 'cc.Node', _name: 'Owner', _components: [] },
+                { __type__: 'CardConfig', node: { __id__: 0 } }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const compact = new PropertyExtractor(parser); // detailed: false
+
+            const keys = Object.keys(compact.extract({
+                __type__: 'Holder',
+                cfg: { __id__: 1 }, // → Owner, was visible on main via the back-ref
+                a: 1, b: 2, c: 3, d: 4
+            }));
+            assert.strictEqual(keys[0], 'cfg'); // NOT deferred — keeps its main slot
+        });
+
+        it('#4: cc.Mat4 is deferred behind a value-type scalar visible on main', () => {
+            const extractor = new PropertyExtractor(new MockSceneParser());
+            const keys = Object.keys(extractor.extract({
+                __type__: 'MyScript',
+                s1: 1, s2: 2,
+                mat: { __type__: 'cc.Mat4',
+                    m00: 1, m01: 0, m02: 0, m03: 0, m04: 0, m05: 1, m06: 0, m07: 0,
+                    m08: 0, m09: 0, m10: 1, m11: 0, m12: 0, m13: 0, m14: 0, m15: 1 }, // new
+                color: { __type__: 'cc.Color', r: 1, g: 2, b: 3, a: 4 } // visible on main
+            }));
+            // color (rendered on main) precedes mat (new); the first 4 slots keep
+            // the fields main showed — mat is appended, it never displaces color.
+            assert.ok(keys.indexOf('color') < keys.indexOf('mat'));
+            assert.deepStrictEqual(keys.slice(0, 4), ['s1', 's2', 'color', 'mat']);
+        });
+    });
+
+    describe('cycle guard on the SceneDocument backend (review #2)', () => {
+        it('detects a struct cycle even without __idx__ tags', () => {
+            // SceneDocument (inspect_node) does not tag objects with __idx__;
+            // the guard must key on the {__id__} ref, or a self-referential
+            // data struct recurses to the depth cap instead of reporting a cycle.
+            const objects = [
+                null, null,
+                { __type__: 'A', next: { __id__: 3 } },
+                { __type__: 'B', back: { __id__: 2 } }
+            ];
+            const doc = { objects, getObject: (id) => objects[id] ?? null };
+            const extractor = new PropertyExtractor(doc, { detailed: true });
+            const props = extractor.extract({ __type__: 'Holder', root: { __id__: 2 } });
+            assert.strictEqual(props.root.__struct__, 'A');
+            assert.strictEqual(props.root.next.__struct__, 'B');
+            assert.strictEqual(props.root.next.back, '<cycle A>');
         });
     });
 });
