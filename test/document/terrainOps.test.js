@@ -41,6 +41,7 @@ import {
     setVertexHeight,
     setWeightAtTexel,
     weightTexelIndex,
+    weightMapDims,
     blockLayers,
     setBlockLayers,
     terrainSize,
@@ -104,6 +105,16 @@ function texel(data, i, j) {
 
 /** Sum of one texel's four channels */
 const texelSum = (data, i, j) => texel(data, i, j).reduce((a, b) => a + b, 0);
+
+/** Texels of the whole weight map that do not sum to 255 (observable or not) */
+function countShort(data) {
+    const [w, h] = weightMapDims(data);
+    let n = 0;
+    for (let j = 0; j < h; j++) {
+        for (let i = 0; i < w; i++) if (texelSum(data, i, j) !== 255) n++;
+    }
+    return n;
+}
 
 /** Every texel of the (single-block) weight map, row by row, one channel */
 function channelGrid(data, k) {
@@ -1084,6 +1095,30 @@ describe('terrainOps — T4 review regressions', () => {
         assert.match(results[0].notes.join('\n'), /rescaled to 255 before painting/);
     });
 
+    // The sum-255 diagnostic must measure the texels this op WROTE, not every texel of the
+    // touched blocks. The editor's own brush stores trunc(w * 255), so a real editor-saved
+    // terrain is full of (254,0,0,0) texels — a block-wide sweep reported those as a bug in the
+    // op, suppressed the true summary clause, and advised re-running paint_layer over a region
+    // that provably cannot reach them.
+    it('does not blame the editor\'s own short texels on the op', () => {
+        const golden = path.join(
+            __dirname, '..', 'fixtures', 'golden', 'terrain', 'terrain.terrain');
+        const data = readTerrain(fs.readFileSync(golden));
+        // precondition: this is a multi-layer block holding short texels the editor wrote
+        assert.deepStrictEqual(blockLayers(data, 0, 0).slice(0, 2), [0, 1]);
+        const shortBefore = countShort(data);
+        assert.ok(shortBefore > 0, `expected editor-authored short texels, got ${shortBefore}`);
+
+        const { results } = apply(data, {
+            op: 'paint_layer', layer: 1, weight: 1, region: { x: 4, z: 4, width: 2, depth: 2 },
+        });
+        const notes = results[0].notes.join('\n');
+        assert.ok(!notes.includes('please report it'), `false alarm in notes:\n${notes}`);
+        assert.match(results[0].summary, /every touched texel sums to 255/);
+        // untouched texels stay exactly as the editor left them
+        assert.strictEqual(countShort(data), shortBefore);
+    });
+
     it('warns when the painted layer becomes a block\'s ONLY layer (whole-block spill)', () => {
         // "Paint the left half" of a 2x1-block terrain: the seam texel column reaches into block
         // [1,0], the auto-assignment makes the layer that block's sole channel, and the engine then
@@ -1211,7 +1246,7 @@ describe('terrainOps — set_block_layers', () => {
         assert.deepStrictEqual(blockLayers(data, 1, 1), [1, 0, -1, -1]);
         assert.deepStrictEqual(blockLayers(data, 0, 0), [0, -1, -1, -1]);
         assert.match(one.results[0].summary, /Set the layer slots of block \[1,1\] to \[1, 0, -1, -1\]/);
-        assert.match(one.results[0].notes.join('\n'), /weights were NOT touched/);
+        assert.match(one.results[0].notes.join('\n'), /weights are not PAINTED by this op/);
 
         const all = apply(data, { op: 'set_block_layers', block: 'all', layers: [1] });
         for (let by = 0; by < 2; by++) {
@@ -1220,6 +1255,57 @@ describe('terrainOps — set_block_layers', () => {
         assert.match(all.results[0].summary, /all 4 blocks to \[1, -1, -1, -1\] = R: /);
         assert.match(all.results[0].summary, /\(4 of 4 block\(s\) actually changed\)/);
         assert.deepStrictEqual([...data.weights], [...weights]);
+    });
+
+    // Un-assigning a channel used to leave its weight byte in place. That byte is not inert:
+    // while the block still blends >= 2 layers the four channels stop summing to 255 (the shader
+    // is a plain weighted sum, so the whole block darkens), and it comes back as coverage nobody
+    // painted the moment that channel gains a layer again.
+    it('zeroes and renormalizes the weights of un-assigned channels', () => {
+        const data = terrain({ weightMapSize: 4, layers: 4 });
+        for (let j = 0; j < 4; j++) {
+            for (let i = 0; i < 4; i++) setWeightAtTexel(data, i, j, [64, 64, 64, 63]);
+        }
+
+        const { results } = apply(data, { op: 'set_block_layers', block: [0, 0], layers: [0, 1, 2] });
+        assert.deepStrictEqual(blockLayers(data, 0, 0), [0, 1, 2, -1]);
+        // channel A zeroed, the three survivors rescaled from 192 back up to 255
+        assert.deepStrictEqual(texel(data, 0, 0), [85, 85, 85, 0]);
+        assert.strictEqual(texelSum(data, 2, 3), 255);
+        assert.match(results[0].notes.join('\n'), /16 texels were renormalized/);
+        assert.match(results[0].notes.join('\n'), /no stale byte resurfaces/);
+
+        // and the stale byte cannot resurface: re-assigning a 4th layer starts from 0, not 63
+        const again = apply(data, { op: 'set_block_layers', block: [0, 0], layers: [0, 1, 2, 3] });
+        assert.deepStrictEqual(texel(data, 0, 0), [85, 85, 85, 0]);
+        assert.strictEqual(texelSum(data, 0, 0), 255);
+        assert.ok(!again.results[0].notes.join('\n').includes('renormalized'),
+            'nothing to repair — the channel was already zeroed when it lost its layer');
+    });
+
+    // The same repair remove_layer performs: a texel covered ONLY by an un-assigned layer has
+    // no weight left at all and would render as nothing.
+    it('falls back to the first remaining layer for texels left with no coverage', () => {
+        const data = terrain({ weightMapSize: 4, layers: 2 });
+        for (let j = 0; j < 4; j++) {
+            for (let i = 0; i < 4; i++) setWeightAtTexel(data, i, j, [0, 255, 0, 0]);
+        }
+        const { results } = apply(data, { op: 'set_block_layers', block: [0, 0], layers: [0] });
+        assert.deepStrictEqual(texel(data, 0, 0), [255, 0, 0, 0]);
+        assert.match(results[0].notes.join('\n'), /16 texels were covered by an un-assigned layer ALONE/);
+        assert.match(results[0].notes.join('\n'), /fall back to layer 0 at full weight/);
+    });
+
+    // Only blocks whose channel SET changed may be touched — a no-op batch has to stay
+    // byte-identical, which the golden round-trip test relies on.
+    it('leaves the weights of unchanged blocks alone', () => {
+        const data = terrain({ blockCount: [2, 1], weightMapSize: 4, layers: 2 });
+        setWeightAtTexel(data, 0, 0, [64, 64, 64, 63]); // block [0,0], deliberately short
+        const before = Uint8Array.from(data.weights);
+        const { results } = apply(data, { op: 'set_block_layers', block: [1, 0], layers: [0, 1] });
+        assert.deepStrictEqual([...data.weights], [...before]);
+        assert.match(results[0].summary, /\(0 of 1 block\(s\) actually changed\)/);
+        assert.ok(!results[0].notes.join('\n').includes('renormalized'));
     });
 
     it('clears a block and warns that nothing will render', () => {

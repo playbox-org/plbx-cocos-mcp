@@ -1,5 +1,5 @@
 /**
- * cc.Terrain / cc.TerrainCollider write-side tests (TERRAIN_PLAN Phase T2)
+ * cc.Terrain / cc.TerrainCollider write-side tests
  *
  * Pins the two new component templates against the editor-saved shape, the
  * three accepted spellings of the terrain-asset property (the serialized key

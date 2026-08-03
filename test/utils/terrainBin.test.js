@@ -9,8 +9,8 @@
  *
  * Golden fixtures are editor output; never reformat or hand-edit them.
  * The mock-project fixture (`assets/Maps/Terrain.terrain`) is generated —
- * regenerate with `node scratchpad/gen-mock-terrain.mjs` (see git history of
- * TERRAIN_PLAN.md T0; the script is throwaway scaffolding, the fixture is committed).
+ * regenerate with a throwaway script over `writeTerrain` (the fixture is committed;
+ * the generator is scaffolding and deliberately not part of the repo).
  */
 
 import { describe, it, before } from 'node:test';

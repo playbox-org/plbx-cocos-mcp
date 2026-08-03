@@ -184,9 +184,18 @@ export function writeMetaFile(absPath, options = {}) {
  * Every folder under assets/ needs its own meta. Walk from `absPath`'s parent
  * up to (excluding) `assetsRoot` — the assets root itself has no meta — and
  * create the missing ones.
- * @returns {Array<{dir: string, meta: object}>} newly created directory metas
+ *
+ * `onCreated` fires immediately after each meta lands on disk, BEFORE the next one
+ * is attempted. A caller unwinding a failed write needs that: the return value only
+ * materializes once the whole chain succeeded, so a throw half-way up would otherwise
+ * leave the metas already written with nothing registered to remove them.
+ *
+ * @param {string} absPath
+ * @param {string} assetsRoot
+ * @param {{onCreated?: (entry: {dir: string, metaPath: string, meta: object}) => void}} [options]
+ * @returns {Array<{dir: string, metaPath: string, meta: object}>} newly created directory metas
  */
-export function ensureParentDirMetas(absPath, assetsRoot) {
+export function ensureParentDirMetas(absPath, assetsRoot, options = {}) {
     const created = [];
     const root = path.resolve(assetsRoot);
     let dir = path.dirname(path.resolve(absPath));
@@ -198,8 +207,11 @@ export function ensureParentDirMetas(absPath, assetsRoot) {
         dir = path.dirname(dir);
     }
     for (const d of chain) {
-        const { meta, created: isNew } = writeMetaFile(d);
-        if (isNew) created.push({ dir: d, meta });
+        const { metaPath, meta, created: isNew } = writeMetaFile(d);
+        if (!isNew) continue;
+        const entry = { dir: d, metaPath, meta };
+        created.push(entry);
+        options.onCreated?.(entry);
     }
     return created;
 }

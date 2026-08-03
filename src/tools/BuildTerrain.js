@@ -33,7 +33,8 @@ export class BuildTerrain extends BaseTool {
                'Spec: {blockCount?: [x,z] (default [1,1]; each block = 32x32 tiles, so the size in ' +
                'METRES is blockCount * 32 * tileSize per axis — [4,4] at tileSize 1 is 128x128 m; ' +
                'there is no metres-based size key), tileSize?: 1 (metres per tile), ' +
-               'weightMapSize?: 128 (texels per block side; power of two, 4..512), lightMapSize?: 128, ' +
+               'weightMapSize?: 128 (texels per block side; power of two, 4..1024 — the editor\'s ' +
+               'own Terrain panel offers 128/256/512/1024), lightMapSize?: 128, ' +
                'baseHeight?: 0 (metres), ' +
                'heightmap?: {source: "Art/hills.png"|"Art/hills.raw"|"inline", rows?: [[metres]], ' +
                'min?: 0, max?: 20 (metres, for .raw/.png sources only — inline rows are already metres), ' +
@@ -86,7 +87,10 @@ export class BuildTerrain extends BaseTool {
         if (!outputPath.startsWith(assetsRoot + path.sep)) {
             return this.error('outputPath must be inside the project\'s assets/ directory');
         }
-        if (fs.existsSync(outputPath) && !args.overwrite) {
+        // Whether the BINARY pre-existed decides both the overwrite guard and, further down,
+        // whether the rollback may unlink it — a question distinct from whether a `.meta` exists
+        const binaryExisted = fs.existsSync(outputPath);
+        if (binaryExisted && !args.overwrite) {
             return this.error(`${args.outputPath} already exists — pass overwrite: true to replace it`);
         }
         // mkdirSync would otherwise throw EEXIST/ENOTDIR out of the tool
@@ -136,34 +140,44 @@ export class BuildTerrain extends BaseTool {
         // Everything below touches the filesystem. `undo` unwinds exactly what THIS call
         // created, so a mid-way ENOSPC/EACCES/ENAMETOOLONG leaves no orphan binary, no
         // meta-less directory and no half-imported asset — the "Nothing was written."
-        // promise the error paths above already make.
+        // promise the error paths above already make. Overwriting an existing binary is the ONE
+        // step outside that promise (the previous bytes are gone once the rename lands), so the
+        // failure report distinguishes "before the rename" from "after it".
         const undo = [];
+        let binaryWritten = false;
         try {
             for (const dir of this.#missingDirs(path.dirname(outputPath))) {
                 fs.mkdirSync(dir);
                 undo.push(() => fs.rmdirSync(dir));
             }
             writeFileAtomic(outputPath, buffer);
-            // Only unlink a file we created: an overwrite would be someone else's data
-            if (newMeta) undo.push(() => fs.unlinkSync(outputPath));
+            binaryWritten = true;
+            // Only unlink a file we created: an overwrite would be someone else's data. The
+            // predicate is whether the BINARY pre-existed — `newMeta` answers a different
+            // question, and a leftover `.meta` beside a missing binary makes the two disagree.
+            if (!binaryExisted) undo.push(() => fs.unlinkSync(outputPath));
             if (newMeta) {
                 fs.writeFileSync(metaPath, serializeMeta(newMeta), 'utf-8');
                 undo.push(() => fs.unlinkSync(metaPath));
             }
-            // Folders created above need their own metas too
-            for (const { meta } of ensureParentDirMetas(outputPath, assetsRoot)) {
-                undo.push(() => fs.unlinkSync(meta));
-            }
+            // Folders created above need their own metas too. Registered through the callback
+            // rather than from the return value, so a failure PART-WAY up the chain still unwinds
+            // the metas already written instead of orphaning them.
+            ensureParentDirMetas(outputPath, assetsRoot, {
+                onCreated: ({ metaPath: dirMetaPath }) => undo.push(() => fs.unlinkSync(dirMetaPath)),
+            });
         } catch (err) {
             for (const step of undo.reverse()) {
                 try { step(); } catch { /* best effort — report the original failure */ }
             }
             return this.error(
                 `Cannot write ${args.outputPath}: ${err.message}\n\n` +
-                (newMeta
-                    ? 'Nothing was written.'
-                    : 'The existing .terrain was left untouched (its .meta was reused, so nothing ' +
-                      'this call created remains).')
+                (binaryExisted && binaryWritten
+                    ? `WARNING: ${args.outputPath} had ALREADY been replaced with the new data when ` +
+                      'this failed — an overwrite is not undoable, so the previous heights, layers ' +
+                      'and weights are gone. Everything else this call created was rolled back. ' +
+                      'Re-read the file with query_terrain before deciding what to do.'
+                    : 'Nothing was written.')
             );
         }
         AssetIndex.invalidate(projectRoot);

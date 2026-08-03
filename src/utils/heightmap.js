@@ -1,7 +1,7 @@
 /**
  * Heightmap decoding + resampling onto a terrain vertex grid.
  *
- * Three sources, exactly the set TERRAIN_PLAN §2.7 fixes:
+ * Three sources, and deliberately no more (a general image library is out of scope):
  * 1. **inline rows** — a 2D JSON array of METRES, `rows[j][i]` with X fastest (the same
  *    row-major order the height grid uses and {@link exportHeights} dumps);
  * 2. **`.raw`** — headerless 16-bit little-endian samples (the World Machine / Unity

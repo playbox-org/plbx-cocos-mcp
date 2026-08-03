@@ -274,7 +274,7 @@ export class TerrainBuilder {
      * {
      *   "blockCount": [2, 2],       // default [1,1]; each block is 32x32 tiles
      *   "tileSize": 1,              // metres per tile, default 1
-     *   "weightMapSize": 128,       // power of two, 4..512, default 128
+     *   "weightMapSize": 128,       // power of two, 4..1024 (editor panel: 128/256/512/1024)
      *   "lightMapSize": 128,        // default 128
      *   "baseHeight": 0,            // metres; flat terrain, or an offset under a heightmap
      *   "heightmap": {"source": "Art/hills.png", "min": 0, "max": 20},

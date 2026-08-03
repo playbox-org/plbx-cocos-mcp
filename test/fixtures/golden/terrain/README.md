@@ -22,5 +22,7 @@ Deliberately **not** copied:
 - The layer textures (`TropMayaGround.png`, `TropMayaSand.png`) — only their uuids appear in the
   binary, and the tests never need the pixels.
 
-A byte-level map of every section of `terrain.terrain` (offsets, lengths, decoded values, height
-min/max in metres, weight statistics) lives in the terrain notes referenced from `TERRAIN_PLAN.md`.
+The verified format notes — section layout, version guards, height/weight encoding, the pow-2 tail
+padding and the importer's behaviour — live in the terrain bullets of
+[README.md](../../../../README.md) (`## Формат Cocos Creator 3.x`); `src/utils/terrainBin.js` is the
+executable specification.

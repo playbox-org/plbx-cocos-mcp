@@ -192,8 +192,31 @@ describe('MetaGenerator', () => {
         assert.ok(fs.existsSync(path.join(assets, 'Scripts', 'Core.meta')));
         assert.ok(!fs.existsSync(`${assets}.meta`));
         assert.strictEqual(created[0].meta.importer, 'directory');
+        assert.strictEqual(created[0].metaPath, path.join(assets, 'Scripts.meta'));
         // second run: nothing new
         assert.deepStrictEqual(ensureParentDirMetas(file, assets), []);
+    });
+
+    // A caller unwinding a failed write cannot use the return value: it only materializes once
+    // the whole chain succeeded, so a throw half-way up would orphan the metas already written.
+    it('should report each folder meta through onCreated as it lands', () => {
+        const file = path.join(assets, 'A', 'B', 'C', 'Spin.ts');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        const seen = [];
+        assert.throws(() => ensureParentDirMetas(file, assets, {
+            onCreated: ({ dir, metaPath }) => {
+                seen.push(path.relative(assets, dir));
+                // the meta is on disk BEFORE the callback runs, so the caller can register a
+                // rollback that actually works
+                assert.ok(fs.existsSync(metaPath));
+                if (seen.length === 2) throw new Error('boom');
+            },
+        }), /boom/);
+        assert.deepStrictEqual(seen, ['A', 'A/B']);
+        // both are on disk, and the caller was told about both — nothing is orphaned silently
+        assert.ok(fs.existsSync(path.join(assets, 'A.meta')));
+        assert.ok(fs.existsSync(path.join(assets, 'A', 'B.meta')));
+        assert.ok(!fs.existsSync(path.join(assets, 'A', 'B', 'C.meta')));
     });
 
     it('should keep prefabMeta/animGraphMeta shapes used by the builders', () => {

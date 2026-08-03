@@ -309,7 +309,9 @@ describe('BuildTerrain tool', () => {
             });
             assert.strictEqual(result.isError, true);
             assert.match(text(result), /Cannot write assets\/Maps\/Terrain\.terrain/);
-            assert.match(text(result), /existing \.terrain was left untouched/);
+            // writeFileAtomic failed BEFORE the rename, so the promise really does hold
+            assert.match(text(result), /Nothing was written\./);
+            assert.ok(!text(result).includes('WARNING'));
         } finally {
             fs.chmodSync(dir, 0o755);
         }
@@ -317,6 +319,64 @@ describe('BuildTerrain tool', () => {
         assert.strictEqual(fs.existsSync(`${victim}.meta`), true);
         // no stray temp file from the aborted atomic write
         assert.deepStrictEqual(fs.readdirSync(dir).filter(f => f.includes('.tmp-')), []);
+    });
+
+    // An overwrite is the one step that cannot be undone. Reporting "left untouched" after the
+    // rename told the agent the asset was intact while the user's heights were already gone.
+    it('reports the overwrite honestly when a step AFTER the rename fails', async () => {
+        const victim = path.join(root, 'assets/Maps/Terrain.terrain');
+        const before = fs.readFileSync(victim);
+        // The last step in the try block is the folder metas; make assets/Maps.meta unwritable
+        // while assets/Maps itself stays writable, so the binary lands and that step throws.
+        fs.rmSync(path.join(root, 'assets/Maps.meta'));
+        fs.symlinkSync(path.join(root, 'nope/deep/Maps.meta'), path.join(root, 'assets/Maps.meta'));
+
+        const result = await build({
+            outputPath: 'assets/Maps/Terrain.terrain', spec: { baseHeight: 7 }, overwrite: true,
+        });
+        assert.strictEqual(result.isError, true);
+        assert.match(text(result), /WARNING: assets\/Maps\/Terrain\.terrain had ALREADY been replaced/);
+        assert.match(text(result), /previous heights, layers and weights are gone/);
+        assert.ok(!text(result).includes('Nothing was written.'));
+        assert.ok(!text(result).includes('left untouched'));
+        // the report is truthful: the bytes really did change
+        assert.notDeepEqual(fs.readFileSync(victim), before);
+    });
+
+    // The undo entry for a folder meta used to be `fs.unlinkSync(<parsed meta object>)`, which
+    // threw ERR_INVALID_ARG_TYPE into the swallowing catch — the rollback was inert. And the
+    // entries were only registered after ensureParentDirMetas returned in full, so a failure
+    // part-way up the chain orphaned the metas it had already written.
+    it('rolls back folder metas written before a later failure', async () => {
+        // assets/Deep/<252 chars>/x.terrain: both dirs are created (252 < 255) and
+        // assets/Deep.meta is written, then the inner folder's own ".meta" name needs 257 bytes
+        // and blows the 255-byte filename limit — a failure part-way up the chain.
+        const longDir = 'y'.repeat(252);
+        const result = await build({
+            outputPath: `assets/Deep/${longDir}/x.terrain`, spec: {},
+        });
+        assert.strictEqual(result.isError, true);
+        assert.match(text(result), /Nothing was written\./);
+        assert.strictEqual(fs.existsSync(path.join(root, 'assets/Deep')), false);
+        assert.strictEqual(fs.existsSync(path.join(root, 'assets/Deep.meta')), false,
+            'the folder meta written before the failure must not be orphaned');
+    });
+
+    // A leftover .meta with no binary reuses the uuid, so `newMeta` is null there — using it as
+    // a proxy for "the binary pre-existed" left the freshly created .terrain on disk.
+    it('removes a binary it created next to a reused .meta', async () => {
+        const dir = path.join(root, 'assets/Orphan');
+        fs.mkdirSync(dir);
+        fs.writeFileSync(path.join(dir, 'Ghost.terrain.meta'),
+            JSON.stringify({ ver: '1.1.50', importer: 'terrain', uuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }));
+        // make the folder meta write fail, i.e. a failure after the binary landed
+        fs.symlinkSync(path.join(root, 'nope/deep/Orphan.meta'), path.join(root, 'assets/Orphan.meta'));
+
+        const result = await build({ outputPath: 'assets/Orphan/Ghost.terrain', spec: {} });
+        assert.strictEqual(result.isError, true);
+        assert.match(text(result), /Nothing was written\./);
+        assert.strictEqual(fs.existsSync(path.join(dir, 'Ghost.terrain')), false,
+            'the binary this call created must be unlinked even though the .meta was reused');
     });
 
     // blockCount x weightMapSize is the one knob that silently costs tens of MB.

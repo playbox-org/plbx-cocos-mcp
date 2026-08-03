@@ -70,34 +70,43 @@ describe('builtins table', () => {
 });
 
 describe('find_asset_references', () => {
-    // The golden scene lives outside assets/ — copy it in for the scan
-    const sceneCopy = path.join(MOCK_PROJECT, 'assets', '__refs_test.scene');
+    /**
+     * The golden scene lives outside assets/, so the scan needs a copy INSIDE it. That copy goes
+     * into a throwaway project, never into the shared fixture: other test files (GetAssetInfo,
+     * LintAssets, …) `cpSync` `mock-project` concurrently, and a file appearing and vanishing
+     * mid-copy makes their `cpSync` fail with ENOENT — a real, reproducible cross-file flake.
+     * @returns {string} project root containing assets/__refs_test.scene
+     */
+    function projectWithScene(t) {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-refs-scene-'));
+        t.after(() => {
+            AssetIndex.invalidate(root);
+            fs.rmSync(root, { recursive: true, force: true });
+        });
+        fs.cpSync(MOCK_PROJECT, root, { recursive: true });
+        fs.copyFileSync(GOLDEN_SCENE, path.join(root, 'assets', '__refs_test.scene'));
+        return root;
+    }
 
     test('project asset: file → node ▸ component .property attribution', async (t) => {
-        fs.copyFileSync(GOLDEN_SCENE, sceneCopy);
-        t.after(() => fs.rmSync(sceneCopy, { force: true }));
-        AssetIndex.invalidate(MOCK_PROJECT);
+        const root = projectWithScene(t);
 
-        const result = await tool.execute({ asset: 'Prefabs/Gold.prefab' }, MOCK_PROJECT);
+        const result = await tool.execute({ asset: 'Prefabs/Gold.prefab' }, root);
         const text = result.content[0].text;
         assert.ok(!result.isError, text);
         assert.match(text, /Asset: project file "assets\/Prefabs\/Gold\.prefab"/);
         // The golden scene instantiates Gold.prefab → PrefabInfo.asset refs
         assert.match(text, /## assets\/__refs_test\.scene \(\d+\)/);
         assert.match(text, /_prefab\.asset|asset/);
-        AssetIndex.invalidate(MOCK_PROJECT);
     });
 
     test('builtin uuid: classified as engine built-in with references listed', async (t) => {
-        fs.copyFileSync(GOLDEN_SCENE, sceneCopy);
-        t.after(() => fs.rmSync(sceneCopy, { force: true }));
-        AssetIndex.invalidate(MOCK_PROJECT);
+        const root = projectWithScene(t);
 
-        const result = await tool.execute({ asset: PRIMITIVES_UUID }, MOCK_PROJECT);
+        const result = await tool.execute({ asset: PRIMITIVES_UUID }, root);
         const text = result.content[0].text;
         assert.match(text, /engine built-in db:\/\/internal\/primitives\.fbx/);
         assert.match(text, /▸ cc\.MeshRenderer \._mesh/);
-        AssetIndex.invalidate(MOCK_PROJECT);
     });
 
     test('unknown uuid: flagged as likely broken', async () => {
@@ -115,11 +124,9 @@ describe('find_asset_references', () => {
     });
 
     test('script asset: references found via compressed __type__, not __uuid__', async (t) => {
-        fs.copyFileSync(GOLDEN_SCENE, sceneCopy);
-        t.after(() => fs.rmSync(sceneCopy, { force: true }));
-        AssetIndex.invalidate(MOCK_PROJECT);
+        const root = projectWithScene(t);
 
-        const result = await tool.execute({ asset: 'Scripts/PlayerController.ts' }, MOCK_PROJECT);
+        const result = await tool.execute({ asset: 'Scripts/PlayerController.ts' }, root);
         const text = result.content[0].text;
         assert.ok(!result.isError, text);
         // A script is referenced as a component's __type__ (compressed uuid) —
@@ -128,7 +135,6 @@ describe('find_asset_references', () => {
             'script attached to nodes must not report as unused');
         assert.match(text, /## assets\/__refs_test\.scene \(\d+\)/);
         assert.match(text, /PlayerController.*\(attached component\)/);
-        AssetIndex.invalidate(MOCK_PROJECT);
     });
 
     test('folder outside the project is rejected (no prefix-sharing escape)', async () => {
@@ -196,14 +202,11 @@ describe('find_asset_references', () => {
     });
 
     test('folder filter narrows the scan', async (t) => {
-        fs.copyFileSync(GOLDEN_SCENE, sceneCopy);
-        t.after(() => fs.rmSync(sceneCopy, { force: true }));
-        AssetIndex.invalidate(MOCK_PROJECT);
+        const root = projectWithScene(t);
 
         const result = await tool.execute(
-            { asset: PRIMITIVES_UUID, folder: 'Prefabs' }, MOCK_PROJECT);
+            { asset: PRIMITIVES_UUID, folder: 'Prefabs' }, root);
         const text = result.content[0].text;
         assert.ok(!text.includes('__refs_test.scene'), 'scene outside Prefabs/ is not scanned');
-        AssetIndex.invalidate(MOCK_PROJECT);
     });
 });

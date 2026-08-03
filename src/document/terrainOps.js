@@ -635,9 +635,11 @@ function setInfo(data, op) {
     const wt = rebuildWeights(data, info);
 
     data.tileSize = info.tileSize;
-    // The file stores an unsnapped tileSize; after an explicit change the only trustworthy
-    // stored value is the snapped one we just validated.
-    data.rawTileSize = info.tileSize;
+    // The file stores an unsnapped tileSize; after an EXPLICIT change the only trustworthy stored
+    // value is the snapped one we just validated. A resize that never mentioned tileSize must
+    // leave the stored value alone, or a `set_info {blockCount}` would silently rewrite a file's
+    // 0.295 as 0.29 — the very fidelity `consistentRawTileSize` exists to keep.
+    if (changedFields.includes('tileSize')) data.rawTileSize = info.tileSize;
     data.blockCount = [...info.blockCount];
     data.weightMapSize = info.weightMapSize;
     data.lightMapSize = info.lightMapSize;
@@ -1151,30 +1153,24 @@ function texelSpacing(data) {
 }
 
 /**
- * Texels of the given blocks that do NOT sum to 255 while their block blends more than one
- * layer — i.e. texels the shader will visibly darken. Measures the invariant `paint_layer`
- * claims in its summary instead of asserting it.
+ * Whether one texel fails the sum-255 convention OBSERVABLY — i.e. its block blends more than
+ * one layer, so the shader (a plain weighted sum) renders the shortfall as darkening. Measures
+ * the invariant `paint_layer` claims in its summary instead of asserting it.
+ *
+ * Scope matters here: only texels the op itself WROTE may be measured. A block-wide sweep would
+ * also count the editor's own output — its brush stores `trunc(w * 255)`, so a real editor-saved
+ * terrain holds thousands of `(254,0,0,0)` texels — and report them as a bug in this op, with a
+ * remedy (re-run the op) that provably cannot reach texels outside the region.
  * @param {object} data
- * @param {number[]} blocks - Block indices
- * @returns {number}
+ * @param {number} base - `weightTexelIndex(data, i, j)`
+ * @param {number[]} slots - The block's four palette slots
+ * @returns {boolean}
  */
-function countShortTexels(data, blocks) {
-    const wms = data.weightMapSize;
-    let short = 0;
-    for (const b of blocks) {
-        const [bx, by] = blockCoords(b, data.blockCount);
-        const slots = blockLayers(data, bx, by);
-        if (maxLayerIndex(slots) === 0) continue; // the weight map is not sampled for this block
-        for (let j = 0; j < wms; j++) {
-            for (let i = 0; i < wms; i++) {
-                const base = weightTexelIndex(data, bx * wms + i, by * wms + j);
-                const sum = data.weights[base] + data.weights[base + 1]
-                    + data.weights[base + 2] + data.weights[base + 3];
-                if (sum !== 255) short++;
-            }
-        }
-    }
-    return short;
+function isShortTexel(data, base, slots) {
+    if (maxLayerIndex(slots) === 0) return false; // the weight map is not sampled for this block
+    const sum = data.weights[base] + data.weights[base + 1]
+        + data.weights[base + 2] + data.weights[base + 3];
+    return sum !== 255;
 }
 
 /**
@@ -1264,6 +1260,7 @@ function paintLayer(data, op, ctx) {
     let ignored = 0;
     let splitSum = 0;
     let zeroed = 0;
+    let short = 0;
     let vLow = Infinity;
     let vHigh = -Infinity;
     let ti0 = Infinity;
@@ -1273,8 +1270,13 @@ function paintLayer(data, op, ctx) {
     regionTexels(data, r, falloff, (bx, by, gi, gj, t) => {
         const b = blockIndex(bx, by, data.blockCount);
         const k = channelOf.get(b);
+        const slots = slotsByBlock.get(b);
+        const base = weightTexelIndex(data, gi, gj);
         const value = Math.round(weight * t * 255);
-        const res = paintTexel(data, weightTexelIndex(data, gi, gj), slotsByBlock.get(b), k, value);
+        const res = paintTexel(data, base, slots, k, value);
+        // The invariant this op advertises, MEASURED rather than asserted — on the texel just
+        // written, while its block's slots are at hand
+        if (isShortTexel(data, base, slots)) short++;
         texels++;
         if (value === 0) zeroed++;
         if (res.ignored) ignored++;
@@ -1342,13 +1344,10 @@ function paintLayer(data, op, ctx) {
             `${fmt(1 - weight)} was split equally between the block's other assigned layers`
         );
     }
-    // The invariant this op advertises, MEASURED rather than asserted.
-    const short = countShortTexels(data, [...touched.keys()]);
     if (short) {
         notes.push(
-            `${plural(short, 'texel')} in a multi-layer block still do not sum to 255 and will ` +
-            'render darkened — this should not happen; re-run paint_layer over the region, or ' +
-            'report it'
+            `${plural(short, 'texel')} THIS OP WROTE in a multi-layer block do not sum to 255 and ` +
+            'will render darkened — this should not happen; please report it'
         );
     }
 
@@ -1441,6 +1440,7 @@ function setBlockLayersOp(data, op, ctx) {
         ? Array.from({ length: bc0 * bc1 }, (_, b) => blockCoords(b, data.blockCount))
         : [[op.block[0], op.block[1]]];
     let changed = 0;
+    const changedBlocks = [];
     for (const [bx, by] of targets) {
         const before = blockLayers(data, bx, by);
         try {
@@ -1448,7 +1448,26 @@ function setBlockLayersOp(data, op, ctx) {
         } catch (err) {
             throw new TerrainOpError(err.message);
         }
-        if (before.some((v, k) => v !== slots[k])) changed++;
+        if (before.some((v, k) => v !== slots[k])) {
+            changed++;
+            changedBlocks.push([bx, by]);
+        }
+    }
+
+    // A channel that just LOST its layer keeps its weight byte, and that byte is not inert: while
+    // the block still blends two or more layers the four channels no longer sum to 255, so the
+    // shader (a plain weighted sum) darkens the whole block; and the moment that channel gains a
+    // layer again the stale byte reappears as coverage nobody painted — `renormalizeBlock` would
+    // then see a sum of 255 already and report nothing. So repair the blocks whose channel SET
+    // changed, exactly as `remove_layer` and `paint_layer`'s auto-assignment do.
+    let renormalized = 0;
+    let filled = 0;
+    let fallbackSlot = -1;
+    for (const [bx, by] of changedBlocks) {
+        const res = renormalizeBlock(data, bx, by);
+        renormalized += res.changed;
+        filled += res.filled;
+        if (res.filled > 0) fallbackSlot = res.first;
     }
 
     const used = slots.filter((v) => v >= 0);
@@ -1460,9 +1479,25 @@ function setBlockLayersOp(data, op, ctx) {
         );
     }
     notes.push(
-        'weights were NOT touched: a channel that just gained a layer keeps whatever weight was ' +
-        'stored there (a freshly built terrain has R = 255, G/B/A = 0). Use paint_layer to set them'
+        'weights are not PAINTED by this op: a channel that just gained a layer keeps whatever ' +
+        'weight was stored there (a freshly built terrain has R = 255, G/B/A = 0). Use paint_layer ' +
+        'to set them'
     );
+    if (renormalized) {
+        notes.push(
+            `${plural(renormalized, 'texel')} were renormalized: the channels of layers this op ` +
+            'un-assigned were zeroed and the remaining ones rescaled back to a sum of 255, so the ' +
+            'block does not render darkened and no stale byte resurfaces if that channel gains a ' +
+            'layer again'
+        );
+    }
+    if (filled) {
+        notes.push(
+            `${plural(filled, 'texel')} were covered by an un-assigned layer ALONE and had no ` +
+            `weight left at all; they fall back to layer ${fallbackSlot} at full weight (what a ` +
+            'freshly created block looks like) instead of rendering as nothing'
+        );
+    }
     return {
         op: 'set_block_layers',
         summary: `Set the layer slots of ${all ? `all ${plural(targets.length, 'block')}` : `block [${op.block}]`} ` +
