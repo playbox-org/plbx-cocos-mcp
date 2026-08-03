@@ -115,6 +115,21 @@ describe('AssetIndex', () => {
         assert.ok(!index.isKnownType('bogusType'));
     });
 
+    it('should list terrains and know the type even without one', () => {
+        // The alias is documentation + isKnownType; listing already worked
+        // through the raw-importer fallback, so results must not change.
+        const terrains = index.list({ type: 'terrain' });
+        assert.strictEqual(terrains.length, 1);
+        assert.strictEqual(terrains[0].name, 'Terrain.terrain');
+        assert.strictEqual(terrains[0].importer, 'terrain');
+        assert.ok(AssetIndex.knownTypes.includes('terrain'));
+
+        // isKnownType is the point: true in a project that has no terrain yet
+        const empty = new AssetIndex('/nonexistent/path');
+        assert.ok(empty.isKnownType('terrain'));
+        assert.deepStrictEqual(empty.list({ type: 'terrain' }), []);
+    });
+
     it('should combine filters', () => {
         const result = index.list({ type: 'image', folder: 'Sprites', pattern: 'panel*' });
         assert.strictEqual(result.length, 1);

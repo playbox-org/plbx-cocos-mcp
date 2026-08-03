@@ -5,6 +5,11 @@
  * - cc.MeshRenderer / cc.SkinnedMeshRenderer → mesh AABB from the import
  *   cache (library/ or .glb accessors, via AssetInspector)
  * - cc.UITransform → contentSize/anchorPoint rect at z=0 (UI pixels)
+ * - cc.Terrain → analytic box from the .terrain binary: X/Z from
+ *   blockCount*32*tileSize, Y from the height range. Terrain geometry is
+ *   anchored at the node ORIGIN (local X∈[0,width], Z∈[0,depth]) and the
+ *   shader offsets it by the node's world POSITION only (`cc_matWorld[3]`),
+ *   so its box carries `translationOnly` and ignores ancestor rotation/scale
  * - collapsed prefab-instance stubs → the source prefab's own bounds with
  *   the stub's transform overrides applied (recursive, depth-limited)
  *
@@ -33,6 +38,7 @@ const IDENTITY_TRS = {
 export class BoundsCalculator {
     #ctx;
     #meshCache = new Map();
+    #terrainCache = new Map();
 
     /**
      * @param {{assetIndex: object|null, assetInspector: object|null, projectRoot: string|null}} ctx
@@ -54,14 +60,15 @@ export class BoundsCalculator {
 
         let local = null;
         for (const box of out.boxes) {
-            local = mergeAabb(local, transformAabb(box.aabb, box.matrix));
+            local = mergeAabb(local, transformAabb(box.aabb, effectiveMat(box.matrix, box)));
         }
 
         let world = null;
         if (local) {
             const worldMat = this.#worldMatrix(doc, nodeIdx);
             for (const box of out.boxes) {
-                world = mergeAabb(world, transformAabb(box.aabb, mat4Multiply(worldMat, box.matrix)));
+                const m = mat4Multiply(worldMat, box.matrix);
+                world = mergeAabb(world, transformAabb(box.aabb, effectiveMat(m, box)));
             }
         }
 
@@ -171,6 +178,24 @@ export class BoundsCalculator {
                 continue;
             }
 
+            if (comp.__type__ === 'cc.Terrain') {
+                // The asset key is `__asset` (double underscore) — the @serializable
+                // member of cc.Terrain; `_asset` is only a getter/setter facade.
+                const assetUuid = comp.__asset?.__uuid__;
+                if (typeof assetUuid !== 'string') {
+                    out.skipped.push({ path: label, reason: 'cc.Terrain has no __asset' });
+                    continue;
+                }
+                const box = this.#terrainBox(assetUuid);
+                if (box.error) {
+                    out.skipped.push({ path: label, reason: box.error });
+                    continue;
+                }
+                out.boxes.push({ aabb: box.aabb, matrix, translationOnly: true });
+                out.contributors.push({ path: label, type: 'cc.Terrain', source: box.source });
+                continue;
+            }
+
             if (comp.__type__ === 'cc.UITransform') {
                 const w = comp._contentSize?.width ?? 0;
                 const h = comp._contentSize?.height ?? 0;
@@ -204,6 +229,42 @@ export class BoundsCalculator {
         }
         this.#meshCache.set(meshUuid, aabb);
         return aabb;
+    }
+
+    /**
+     * Analytic terrain AABB by asset uuid, cached (negatives included).
+     * X/Z span `[0, blockCount*32*tileSize]` from the node origin, Y is the
+     * height range of the grid — a never-sculpted sentinel is still measurable
+     * with a flat Y span of [0, 0].
+     * @returns {{aabb: object, source: string}|{error: string}}
+     */
+    #terrainBox(assetUuid) {
+        if (this.#terrainCache.has(assetUuid)) return this.#terrainCache.get(assetUuid);
+        const result = this.#computeTerrainBox(assetUuid);
+        this.#terrainCache.set(assetUuid, result);
+        return result;
+    }
+
+    #computeTerrainBox(assetUuid) {
+        const inspector = this.#ctx.assetInspector;
+        if (!inspector) {
+            return { error: `terrain asset ${assetUuid} unreadable: no asset inspector available` };
+        }
+        const info = inspector.inspect(assetUuid);
+        if (!info) return { error: `terrain asset ${assetUuid} not found under assets/` };
+        const t = info.terrain;
+        if (!t) return { error: `asset ${assetUuid} is a ${info.importer} asset, not a terrain` };
+        if (t.error) return { error: `terrain asset ${assetUuid} unreadable: ${t.error}` };
+
+        const [w, d] = t.size;
+        const minY = t.heightMin ?? 0;
+        const maxY = t.heightMax ?? 0;
+        const fmt = v => Number(v.toFixed(4));
+        const note = t.isDefaultSentinel ? ' (empty default terrain)' : '';
+        return {
+            aabb: { min: { x: 0, y: minY, z: 0 }, max: { x: w, y: maxY, z: d } },
+            source: `terrain ${fmt(w)}x${fmt(d)}m, height ${fmt(minY)}..${fmt(maxY)}${note}`
+        };
     }
 
     /** World matrix of a node (ancestors' TRS, instance stubs included) */
@@ -251,6 +312,18 @@ export class BoundsCalculator {
             return null;
         }
     }
+}
+
+/**
+ * Effective matrix of a collected box: normally the composed one, but a
+ * `translationOnly` box (cc.Terrain) keeps just the translation column.
+ * Stripping happens on the COMPOSED matrix so ancestor translation coming
+ * through a rotated parent survives — that is exactly the world position the
+ * terrain shader reads out of `cc_matWorld[3]`.
+ */
+function effectiveMat(m, box) {
+    if (!box.translationOnly) return m;
+    return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, m[12], m[13], m[14], 1];
 }
 
 function nodeTrsMat(node) {

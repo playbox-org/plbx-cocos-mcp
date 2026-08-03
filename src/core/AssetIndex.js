@@ -29,6 +29,10 @@ const TYPE_ALIASES = {
     font: ['ttf-font', 'bitmap-font'],
     animation: ['animation-clip', 'animation-graph', 'animation-mask'],
     effect: ['effect'],
+    // `list({type:'terrain'})` already worked through the raw-importer fallback
+    // below; the entry makes `terrain` a documented knownType (list_assets error
+    // message, isKnownType) in projects that have no terrain yet.
+    terrain: ['terrain'],
     directory: ['directory']
 };
 

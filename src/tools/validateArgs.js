@@ -50,8 +50,11 @@ export function normalizeArgs(args, schema, aliases = {}) {
         delete normalized[alias];
     }
 
+    // Object.hasOwn, not `key in props`: `in` walks Object.prototype, so a schema-less
+    // argument named constructor/toString/valueOf/hasOwnProperty/__proto__ would be
+    // silently accepted (and then read back as a function) instead of corrected.
     for (const key of Object.keys(normalized)) {
-        if (key in props) continue;
+        if (Object.hasOwn(props, key)) continue;
         const hint = suggestParam(key, props);
         problems.push(`unknown parameter "${key}"${hint ? ` — did you mean "${hint}"?` : ''}`);
     }
@@ -59,7 +62,7 @@ export function normalizeArgs(args, schema, aliases = {}) {
     // Some MCP clients serialize scalar arguments as strings — coerce
     // unambiguous cases instead of failing the type check
     for (const [key, value] of Object.entries(normalized)) {
-        const prop = props[key];
+        const prop = Object.hasOwn(props, key) ? props[key] : undefined;
         if (prop && value !== undefined) {
             normalized[key] = coerceScalar(value, prop);
         }
@@ -72,7 +75,7 @@ export function normalizeArgs(args, schema, aliases = {}) {
     }
 
     for (const [key, value] of Object.entries(normalized)) {
-        const prop = props[key];
+        const prop = Object.hasOwn(props, key) ? props[key] : undefined;
         if (!prop || value === undefined) continue;
         problems.push(...checkValue(key, value, prop));
     }

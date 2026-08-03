@@ -31,6 +31,27 @@ function assertValid(doc) {
     assert.deepStrictEqual(errors, []);
 }
 
+describe('op dispatch', () => {
+    test('rejects an op name inherited from Object.prototype', () => {
+        // `HANDLERS[op.op]` resolved `constructor` to `Object`, which passed the truthiness guard:
+        // `applyOperations(doc, [{op: 'constructor'}])` returned `[{}]` with no error at all.
+        // Mirrored by the same guard in terrainOps.js so both op tables reject identically.
+        const doc = loadPrefab();
+        for (const name of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+            assert.throws(
+                () => applyOperations(doc, [{ op: name }]),
+                (err) => {
+                    assert.ok(err instanceof OperationError, `${name}: ${err.name}`);
+                    assert.match(err.message, /Unknown op/);
+                    assert.match(err.message, new RegExp(`Unknown op "${name === '__proto__' ? '__proto__' : name}"`));
+                    return true;
+                },
+                name
+            );
+        }
+    });
+});
+
 describe('set_node_property', () => {
     test('position merges partial vectors', () => {
         const doc = loadPrefab();

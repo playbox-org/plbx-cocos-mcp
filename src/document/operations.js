@@ -67,7 +67,9 @@ const IMPORTER_TO_TYPE = {
     'auto-atlas': 'cc.SpriteAtlas',
     'effect': 'cc.EffectAsset',
     'physics-material': 'cc.PhysicsMaterial',
-    'animation-graph': 'cc.animation.AnimationGraph'
+    'animation-graph': 'cc.animation.AnimationGraph',
+    // serves both cc.Terrain.__asset and cc.TerrainCollider._terrain
+    'terrain': 'cc.TerrainAsset'
 };
 
 export class OperationError extends Error {
@@ -127,13 +129,16 @@ const HANDLERS = {
 };
 
 export function applyOperation(doc, op, ctx = {}) {
-    const handler = HANDLERS[op?.op];
-    if (!handler) {
+    // `Object.hasOwn`, not a bare lookup: `HANDLERS.constructor` / `.toString` / `.valueOf` all
+    // resolve through Object.prototype, so a bare truthiness check would let
+    // `{op: "constructor"}` past this guard and "succeed" as a silent no-op. Mirrored in
+    // terrainOps.js's applyTerrainOperation so both op tables reject the same way.
+    if (!Object.hasOwn(HANDLERS, op?.op ?? '')) {
         throw new OperationError(
             `Unknown op "${op?.op}". Supported: ${Object.keys(HANDLERS).join(', ')}`
         );
     }
-    return handler(doc, op, ctx);
+    return HANDLERS[op.op](doc, op, ctx);
 }
 
 // ---------------------------------------------------------------- helpers
@@ -367,6 +372,41 @@ function isValueObjectIdx(doc, idx, components) {
  */
 const HIDDEN_FIELDS = ['__type__', '_objFlags', '__editorExtras__', 'node', '__prefab'];
 
+/**
+ * Per-component top-level property spellings that no underscore rule reaches.
+ *
+ * The underscore-tolerance retry below prepends exactly ONE underscore to the
+ * spelling it was given, so `_asset` → `__asset` already works. Bare `asset`
+ * does not (it only reaches `_asset`, which does not exist), yet `asset` is
+ * the name the editor inspector and the engine's public API show — cc.Terrain
+ * serializes its `protected __asset` member while `_asset` is merely a
+ * getter/setter facade (terrain.ts). Hence this one entry.
+ *
+ * Deliberately NOT listing `_asset` → `__asset`: that path is handled by the
+ * generic retry, and a redundant entry here would mask a regression in it.
+ */
+const PROPERTY_ALIASES = {
+    'cc.Terrain': { asset: '__asset' }
+};
+
+/**
+ * Resolve a COMPONENT-LEVEL (top segment) spelling through PROPERTY_ALIASES.
+ * Returns the serialized key, or undefined when the type has no alias for it
+ * or the aliased key is absent from THIS object (so a stale template never
+ * gets a manufactured field).
+ *
+ * Exported because `locateProperty` below is not the only top-segment
+ * resolver: `overridePathForComponent` in instances.js builds the
+ * `propertyPath` of a prefab-instance override and must agree with it — a
+ * path the engine does not recognise is applied verbatim
+ * (`targetPropOwner[name] = value`, scene-graph/prefab/utils.ts), i.e. a
+ * silently dead override rather than an error.
+ */
+export function aliasTopSegment(component, seg) {
+    const alias = PROPERTY_ALIASES[component?.__type__]?.[seg];
+    return alias !== undefined && alias in component ? alias : undefined;
+}
+
 function locateProperty(doc, component, path, { allowCreate = false } = {}) {
     const segments = parsePropertyPath(path);
     let components = null; // built lazily, only when the path crosses a ref
@@ -375,8 +415,17 @@ function locateProperty(doc, component, path, { allowCreate = false } = {}) {
         const seg = segments[i];
         const last = i === segments.length - 1;
         if (typeof seg === 'string' && !Array.isArray(container) && !(seg in container)) {
+            // Component-level alias first (i === 0 — the map is keyed by the
+            // component type), and only when the aliased key really exists, so
+            // a stale template never gets a manufactured field. Like the retry
+            // below it rewrites segments[i] IN PLACE: callers pass the mutated
+            // segments on to dropTargetOverrides, which must record the
+            // serialized key, not the user's spelling.
+            const alias = i === 0 ? aliasTopSegment(component, seg) : undefined;
             const underscored = `_${seg}`;
-            if (underscored in container) {
+            if (alias !== undefined) {
+                segments[i] = alias;
+            } else if (underscored in container) {
                 segments[i] = underscored;
             } else if (!(allowCreate && last)) {
                 const owner = i === 0

@@ -52,6 +52,17 @@ export function animGraphMeta() {
     return skeleton({ importer: 'animation-graph', ver: '1.2.0' });
 }
 
+/**
+ * Meta for a .terrain written by build_terrain. Sourced from SIMPLE_TYPES so the
+ * builder's meta and create_asset_meta's can never drift; `userData` stays `{}` —
+ * the terrain importer has no userData config at all (verified against the
+ * editor-saved golden meta).
+ */
+export function terrainMeta() {
+    const { importer, ver, files } = SIMPLE_TYPES['.terrain'];
+    return skeleton({ importer, ver, files: [...files] });
+}
+
 /** Editor byte-form: 2-space JSON + trailing newline */
 export function serializeMeta(meta) {
     return JSON.stringify(meta, null, 2) + '\n';
@@ -87,7 +98,8 @@ export function classifyAsset(absPath) {
 }
 
 // ext → fixed parts; userData/files needing the file are handled in createMetaObject
-const SIMPLE_TYPES = {
+// Exported so create_asset_meta's advertised type list can be drift-tested against it.
+export const SIMPLE_TYPES = {
     '.ts': { importer: 'typescript', ver: '4.0.24', files: [] },
     '.js': { importer: 'javascript', ver: '4.0.24', files: [] },
     '.cjs': { importer: 'javascript', ver: '4.0.24', files: [] },
@@ -98,6 +110,9 @@ const SIMPLE_TYPES = {
     '.pmtl': { importer: 'physics-material', ver: '1.0.1' },
     '.anim': { importer: 'animation-clip', ver: '2.0.4', files: ['.bin'] },
     '.animgraph': { importer: 'animation-graph', ver: '1.2.0' },
+    // The importer copies the binary verbatim to library/<uuid>.bin and lifts the layer
+    // table into <uuid>.json; it has no userData (verified on editor-saved metas).
+    '.terrain': { importer: 'terrain', ver: '1.1.50', files: ['.bin', '.json'] },
     '.json': { importer: 'json', ver: '2.0.1' },
     '.effect': { importer: 'effect', ver: '1.7.1' },
     '.rt': { importer: 'render-texture', ver: '1.2.1' },

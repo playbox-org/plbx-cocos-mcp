@@ -173,4 +173,21 @@ describe('BaseTool.run', () => {
         assert.ok(result.isError);
         assert.match(result.content[0].text, /unknown parameter "importer"/);
     });
+
+    // Regression: the unknown-key check used `key in props`, which is true for every
+    // Object.prototype member, so an argument named constructor/toString/__proto__ was
+    // silently accepted (and `props[key]` then handed a function to the type checker)
+    // instead of being reported as the wrong name it is.
+    it('rejects arguments named after Object.prototype members', async () => {
+        for (const key of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+            const result = await new ListAssets().run({ [key]: 'junk' }, '/tmp');
+            assert.ok(result.isError, `"${key}" was accepted`);
+            assert.match(result.content[0].text, new RegExp(`unknown parameter "${key}"`));
+        }
+    });
+
+    it('does not pollute Object.prototype through a __proto__ argument', async () => {
+        await new ListAssets().run(JSON.parse('{"__proto__": {"pwned": 1}}'), '/tmp');
+        assert.strictEqual({}.pwned, undefined);
+    });
 });

@@ -143,9 +143,20 @@ export class PropertyExtractor {
             : [];
     }
 
+    /**
+     * `__`-prefixed keys are engine/serializer bookkeeping (__type__, __id__,
+     * __prefab, __editorExtras__, …) and are hidden — with a narrow allowlist
+     * for the handful of real @serializable members that happen to be spelled
+     * that way. cc.Terrain's terrain-asset reference IS literally named
+     * `__asset` (terrain.ts: `protected __asset`; `_asset` is only a
+     * getter/setter facade with no serialized twin), so without this exception
+     * every read tool would render a cc.Terrain component with no asset at all.
+     */
+    static #VISIBLE_DUNDER_KEYS = new Set(['__asset']);
+
     #shouldSkip(key, value, keys = this.#skipKeys) {
         if (keys.has(key)) return true;
-        if (key.startsWith('__')) return true;
+        if (key.startsWith('__') && !PropertyExtractor.#VISIBLE_DUNDER_KEYS.has(key)) return true;
         if (value === null || value === undefined) return true;
         return false;
     }

@@ -31,10 +31,10 @@ export class BuildPrefab extends BaseTool {
                'engine builtin, default material auto-assigned) | sprite: "path.png", material?, scale?: number|{x,y,z}, position?, rotation?}, ' +
                'root?: {components?: [{type, properties?}], children?: [{name, position?, rotation?, scale?, layer?, active?, ' +
                'mesh?, sprite?, material?, components?, children?}]}}. ' +
-               'Component types: any of the ~44 built-in cc.* templates — UI/2D (UITransform, Sprite, Label, ' +
+               'Component types: any of the ~46 built-in cc.* templates — UI/2D (UITransform, Sprite, Label, ' +
                'RichText, Button, Widget, Canvas, SafeArea, Mask, Graphics, Layout, ProgressBar, Slider...), ' +
-               '3D (MeshRenderer, SkinnedMeshRenderer, SpriteRenderer, Camera, lights, Line, Billboard), ' +
-               'physics 3D+2D (RigidBody, colliders), particles (ParticleSystem, ParticleSystem2D), ' +
+               '3D (MeshRenderer, SkinnedMeshRenderer, SpriteRenderer, Camera, lights, Line, Billboard, Terrain), ' +
+               'physics 3D+2D (RigidBody, colliders incl. TerrainCollider), particles (ParticleSystem, ParticleSystem2D), ' +
                'Animation/SkeletalAnimation/AnimationController/AudioSource — or custom script names ' +
                '(an unknown type returns the full template list).';
     }

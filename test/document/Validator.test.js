@@ -2,13 +2,17 @@
  * Validator tests - invariants on golden files and hand-broken documents
  */
 
-import { test, describe } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { SceneDocument } from '../../src/document/SceneDocument.js';
 import { Validator } from '../../src/document/Validator.js';
+import { applyOperations } from '../../src/document/operations.js';
+import { AssetIndex } from '../../src/core/AssetIndex.js';
+import { materialize, writeTerrain } from '../../src/utils/terrainBin.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GOLDEN_DIR = path.join(__dirname, '..', 'fixtures', 'golden');
@@ -266,5 +270,217 @@ describe('Validator removedComponents checks', () => {
             new Validator(doc, ctx.assetIndex, { projectRoot: MOCK_PROJECT }).validate());
         assert.deepStrictEqual(errors, []);
         assert.ok(warnings.some(w => /resolves to node .* not a component/.test(w)));
+    });
+});
+
+/**
+ * cc.Terrain / cc.TerrainCollider conventions — all WARNINGS (the golden
+ * corpus, which carries no terrain, must stay at zero errors, and so must
+ * every document these tests build).
+ */
+describe('Validator terrain checks', () => {
+    const MOCK_PROJECT = path.join(__dirname, '..', 'fixtures', 'mock-project');
+    // Mock project terrain: 1x1 blocks, plain layers (no normal maps, defaults)
+    const PLAIN = 'assets/Maps/Terrain.terrain';
+    const FANCY = 'assets/Maps/Fancy.terrain';
+    const FANCY_UUID = 'f0f0f0f0-1111-4222-8333-444455556666';
+
+    let projectRoot;
+    let assetIndex;
+
+    before(() => {
+        // Minimal disposable project: the plain terrain + a prefab (for the
+        // wrong-importer case), copied file by file. A recursive copy of the
+        // shared mock project races with suites that write into it.
+        projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-validator-terrain-'));
+        for (const rel of [
+            'assets/Maps/Terrain.terrain', 'assets/Maps/Terrain.terrain.meta',
+            'assets/Prefabs/Gold.prefab', 'assets/Prefabs/Gold.prefab.meta'
+        ]) {
+            fs.mkdirSync(path.dirname(path.join(projectRoot, rel)), { recursive: true });
+            fs.copyFileSync(path.join(MOCK_PROJECT, rel), path.join(projectRoot, rel));
+        }
+
+        // A second terrain whose layer carries a normal map AND non-default
+        // roughness/metallic — the two component flags that must be paired.
+        const data = materialize({
+            blockCount: [1, 1], tileSize: 1, weightMapSize: 4, lightMapSize: 4,
+            layers: [{
+                slot: 0, tileSize: 1,
+                detailMapId: '35b97cf8-601e-4835-8a3e-0d29568af652@6c48a',
+                normalMapId: '11112222-3333-4444-8555-666677778888@6c48a',
+                roughness: 0.5, metallic: 0.25
+            }]
+        });
+        fs.writeFileSync(path.join(projectRoot, FANCY), writeTerrain(data));
+        fs.writeFileSync(path.join(projectRoot, `${FANCY}.meta`), JSON.stringify({
+            ver: '1.1.50', importer: 'terrain', imported: true, uuid: FANCY_UUID,
+            files: ['.bin', '.json'], subMetas: {}, userData: {}
+        }, null, 2) + '\n');
+
+        assetIndex = new AssetIndex(projectRoot);
+    });
+
+    after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
+
+    /** Golden scene + a "Terrain" node with cc.Terrain (+ optional extra ops) */
+    function terrainDoc(extraOps = [], { asset = PLAIN } = {}) {
+        const doc = load('Main.scene_V2.scene');
+        const ops = [
+            { op: 'add_node', parent: '/', name: 'Terrain' },
+            { op: 'add_component', node: 'Terrain', type: 'cc.Terrain' }
+        ];
+        if (asset) {
+            ops.push({
+                op: 'set_asset_ref', node: 'Terrain', component: 'cc.Terrain',
+                property: 'asset', asset
+            });
+        }
+        applyOperations(doc, [...ops, ...extraOps], { assetIndex, projectRoot });
+        return doc;
+    }
+
+    const check = (doc) => new Validator(doc, assetIndex, { projectRoot }).validate();
+
+    /** A specific component of a node (the golden scene has its own RigidBodies) */
+    const componentOf = (doc, node, type) => doc.componentIndices(doc.resolveNode(node))
+        .map(i => doc.getObject(i))
+        .find(c => c.__type__ === type);
+
+    /** Warnings mentioning a terrain component (ignores unrelated scene noise) */
+    const terrainWarnings = (result) => result.warnings.filter(w => /cc\.Terrain/.test(w));
+
+    test('a correctly wired terrain produces no terrain warnings', () => {
+        const { errors, warnings } = check(terrainDoc());
+        assert.deepStrictEqual(errors, []);
+        assert.deepStrictEqual(terrainWarnings({ warnings }), []);
+    });
+
+    test('__asset null is a warning, never an error', () => {
+        const { errors, warnings } = check(terrainDoc([], { asset: null }));
+        assert.deepStrictEqual(errors, []);
+        assert.ok(warnings.some(w => /cc\.Terrain on "Terrain": __asset is null/.test(w)),
+            JSON.stringify(warnings));
+    });
+
+    test('an asset that is not a terrain importer is a warning', () => {
+        const doc = terrainDoc([], { asset: null });
+        const comp = doc.getObject(doc.componentIndices(doc.resolveNode('Terrain'))[0]);
+        comp.__asset = {
+            __uuid__: '836478c3-ffde-4110-8347-cfda26288652', // Gold.prefab
+            __expectedType__: 'cc.TerrainAsset'
+        };
+        const { errors, warnings } = check(doc);
+        assert.deepStrictEqual(errors, []);
+        assert.ok(warnings.some(w => /is a prefab asset, not a terrain/.test(w)), JSON.stringify(warnings));
+    });
+
+    test('_lightmapInfos length must be 0 or one per block', () => {
+        const doc = terrainDoc();
+        const comp = doc.getObject(doc.componentIndices(doc.resolveNode('Terrain'))[0]);
+
+        comp._lightmapInfos = [{}, {}, {}]; // asset has 1x1 = 1 block
+        let result = check(doc);
+        assert.deepStrictEqual(result.errors, []);
+        assert.ok(result.warnings.some(w => /_lightmapInfos has 3 entries but the asset has 1 block/.test(w)),
+            JSON.stringify(result.warnings));
+
+        comp._lightmapInfos = [{}]; // one per block — a normal bake
+        result = check(doc);
+        assert.deepStrictEqual(terrainWarnings(result), []);
+    });
+
+    test('layer normal maps require _useNormalmap', () => {
+        let result = check(terrainDoc([], { asset: FANCY }));
+        assert.deepStrictEqual(result.errors, []);
+        assert.ok(result.warnings.some(w => /carry a normal map but _useNormalmap is false/.test(w)),
+            JSON.stringify(result.warnings));
+
+        result = check(terrainDoc([{
+            op: 'set_component_property', node: 'Terrain', component: 'cc.Terrain',
+            property: '_useNormalmap', value: true
+        }], { asset: FANCY }));
+        assert.ok(!result.warnings.some(w => /_useNormalmap/.test(w)));
+    });
+
+    test('layer roughness/metallic require _usePBR', () => {
+        let result = check(terrainDoc([], { asset: FANCY }));
+        assert.ok(result.warnings.some(w => /roughness\/metallic but _usePBR is false/.test(w)),
+            JSON.stringify(result.warnings));
+
+        result = check(terrainDoc([{
+            op: 'set_component_property', node: 'Terrain', component: 'cc.Terrain',
+            property: '_usePBR', value: true
+        }], { asset: FANCY }));
+        assert.ok(!result.warnings.some(w => /_usePBR/.test(w)));
+
+        // The plain terrain uses the engine defaults (roughness 1, metallic 0)
+        assert.ok(!check(terrainDoc()).warnings.some(w => /_usePBR/.test(w)));
+    });
+
+    test('the layer checks are silent without a readable asset', () => {
+        // No projectRoot ⇒ the binary cannot be read; the flag pairing must not
+        // be guessed, and nothing may crash.
+        const doc = terrainDoc([], { asset: FANCY });
+        const { errors, warnings } = new Validator(doc, assetIndex).validate();
+        assert.deepStrictEqual(errors, []);
+        assert.ok(!warnings.some(w => /_useNormalmap|_usePBR/.test(w)));
+    });
+
+    describe('cc.TerrainCollider', () => {
+        const colliderDoc = (extraOps = []) => terrainDoc([
+            { op: 'add_component', node: 'Terrain', type: 'cc.TerrainCollider' },
+            {
+                op: 'set_asset_ref', node: 'Terrain', component: 'cc.TerrainCollider',
+                property: 'terrain', asset: PLAIN
+            },
+            ...extraOps
+        ]);
+
+        test('a wired collider without a body is clean', () => {
+            const result = check(colliderDoc());
+            assert.deepStrictEqual(result.errors, []);
+            assert.deepStrictEqual(terrainWarnings(result), []);
+        });
+
+        test('_terrain null is a warning', () => {
+            const doc = terrainDoc([{ op: 'add_component', node: 'Terrain', type: 'cc.TerrainCollider' }]);
+            const { errors, warnings } = check(doc);
+            assert.deepStrictEqual(errors, []);
+            assert.ok(warnings.some(w => /cc\.TerrainCollider on "Terrain": _terrain is null/.test(w)),
+                JSON.stringify(warnings));
+        });
+
+        test('a DYNAMIC cc.RigidBody next to it is warnID 9630', () => {
+            // The engine default is DYNAMIC (ERigidBodyType.DYNAMIC = 1), so an
+            // ABSENT _type must be treated as dynamic
+            const doc = colliderDoc([{ op: 'add_component', node: 'Terrain', type: 'cc.RigidBody' }]);
+            const body = componentOf(doc, 'Terrain', 'cc.RigidBody');
+
+            delete body._type;
+            let result = check(doc);
+            assert.deepStrictEqual(result.errors, []);
+            assert.ok(result.warnings.some(w => /DYNAMIC cc\.RigidBody.*9630/.test(w)),
+                JSON.stringify(result.warnings));
+
+            body._type = 1; // explicit DYNAMIC
+            assert.ok(check(doc).warnings.some(w => /9630/.test(w)));
+        });
+
+        test('a STATIC or KINEMATIC cc.RigidBody is fine', () => {
+            const doc = colliderDoc([{ op: 'add_component', node: 'Terrain', type: 'cc.RigidBody' }]);
+            const body = componentOf(doc, 'Terrain', 'cc.RigidBody');
+
+            body._type = 2; // STATIC
+            assert.deepStrictEqual(terrainWarnings(check(doc)), []);
+            body._type = 4; // KINEMATIC
+            assert.deepStrictEqual(terrainWarnings(check(doc)), []);
+        });
+
+        test('a dynamic body without a terrain collider is not flagged', () => {
+            const doc = terrainDoc([{ op: 'add_component', node: 'Terrain', type: 'cc.RigidBody' }]);
+            componentOf(doc, 'Terrain', 'cc.RigidBody')._type = 1;
+            assert.deepStrictEqual(terrainWarnings(check(doc)), []);
+        });
     });
 });

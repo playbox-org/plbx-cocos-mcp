@@ -18,8 +18,8 @@ export class ListAssets extends BaseTool {
     get description() {
         return 'List assets of a Cocos Creator project with optional filters. ' +
                'Returns path, name and UUID for each asset. ' +
-               'Types: sprite, image, model, prefab, scene, material, script, audio, font, animation ' +
-               '(or a raw importer name like fbx, gltf, typescript). ' +
+               'Types: sprite, image, model, prefab, scene, material, script, audio, font, animation, ' +
+               'effect, terrain, directory (or a raw importer name like fbx, gltf, typescript). ' +
                'Note: sprite frames are sub-assets of images — type "sprite" lists images that carry one. ' +
                'Args: {type?, folder?, pattern?, format?} — these are the only filter keys.';
     }
@@ -34,7 +34,7 @@ export class ListAssets extends BaseTool {
             properties: {
                 type: {
                     type: 'string',
-                    description: "Asset type filter: sprite, image, model, prefab, scene, material, script, audio, font, animation, or a raw importer name"
+                    description: "Asset type filter: sprite, image, model, prefab, scene, material, script, audio, font, animation, effect, terrain, directory, or a raw importer name"
                 },
                 folder: {
                     type: 'string',

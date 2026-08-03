@@ -27,7 +27,8 @@ export class CreateAssetMeta extends BaseTool {
         return 'Generate .meta file(s) offline for assets created outside the editor, so scripts/assets ' +
                'written by tools are immediately importable — the editor keeps the UUID on next open. ' +
                'Idempotent: existing .meta files are never touched. Parent folders get metas too. ' +
-               'Supported: .ts/.js scripts, .scene, .prefab, .mtl, .pmtl, .anim, .animgraph, .json, ' +
+               'Supported: .ts/.js/.cjs/.mjs scripts, .scene, .prefab, .mtl, .pmtl, .anim, .animgraph, ' +
+               '.terrain, .json, ' +
                '.effect, .rt, .ttf, audio (.mp3/.wav/.ogg/...), images (.png/.jpg/... — imageType ' +
                '"texture" default, or "sprite-frame" for UI sprites), directories. ' +
                'NOT supported: models (.fbx/.glb/.gltf) — those still need one editor import. ' +

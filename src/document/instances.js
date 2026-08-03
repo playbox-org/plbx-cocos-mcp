@@ -27,7 +27,7 @@ import { SceneDocument, isRef } from './SceneDocument.js';
 import {
     OperationError, requireString, resolveEditableNode, mergeTyped, parsePropertyPath,
     findComponent, normalizeNodeProperty, describeComponentType, REQUIRED_COMPANIONS,
-    childInsertIndex, componentTypeMatcher
+    childInsertIndex, componentTypeMatcher, aliasTopSegment
 } from './operations.js';
 import {
     transformValueTracked, upsertTargetOverride, dropTargetOverrides,
@@ -569,14 +569,22 @@ export function componentFileId(sourceDoc, compIdx, label) {
 
 /**
  * Property path for a component override, tolerating the serialized
- * underscore prefix ("sizeX" → "_sizeX" when only the latter exists).
+ * underscore prefix ("sizeX" → "_sizeX" when only the latter exists) and the
+ * per-type aliases of operations.js (cc.Terrain "asset" → "__asset", which no
+ * underscore rule reaches). The two resolvers MUST agree: the engine applies
+ * an override with a bare `targetPropOwner[name] = value`
+ * (scene-graph/prefab/utils.ts), so an unrecognised path is not an error but
+ * a junk JS field — a silently dead override that leaves the source-prefab
+ * value in place.
  * Editor stores every segment as a string (verified: ["_materials", "0"]).
  */
 function overridePathForComponent(component, property) {
     const segments = parsePropertyPath(property);
     if (typeof segments[0] === 'string' && !(segments[0] in component)) {
+        const alias = aliasTopSegment(component, segments[0]);
         const underscored = `_${segments[0]}`;
-        if (underscored in component) segments[0] = underscored;
+        if (alias !== undefined) segments[0] = alias;
+        else if (underscored in component) segments[0] = underscored;
     }
     return segments.map(String);
 }

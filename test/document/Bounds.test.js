@@ -7,8 +7,11 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { defaultSentinel } from '../../src/utils/terrainBin.js';
 import { SceneDocument } from '../../src/document/SceneDocument.js';
 import { BoundsCalculator } from '../../src/document/Bounds.js';
 import { applyOperations } from '../../src/document/operations.js';
@@ -30,6 +33,31 @@ function makeCtx() {
 }
 
 const near = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} !≈ ${b}`);
+
+/**
+ * Golden scene + `/Holder/[…/]Terrain` carrying a cc.Terrain wired to the mock
+ * project's 1x1-block terrain (32x32 m, heights 0..3 m). The Holder exists so a
+ * query can start ABOVE the terrain node — a query root's own TRS is excluded.
+ */
+function terrainScene(ctx, parent = 'Holder', { wireAsset = true } = {}) {
+    const doc = SceneDocument.load(GOLDEN('Main.scene_V2.scene'));
+    const ops = [{ op: 'add_node', parent: '/', name: 'Holder' }];
+    let parentPath = 'Holder';
+    for (const segment of parent.split('/').slice(1)) {
+        ops.push({ op: 'add_node', parent: parentPath, name: segment });
+        parentPath = `${parentPath}/${segment}`;
+    }
+    ops.push({ op: 'add_node', parent: parentPath, name: 'Terrain' });
+    ops.push({ op: 'add_component', node: `${parentPath}/Terrain`, type: 'cc.Terrain' });
+    if (wireAsset) {
+        ops.push({
+            op: 'set_asset_ref', node: `${parentPath}/Terrain`, component: 'cc.Terrain',
+            property: 'asset', asset: 'assets/Maps/Terrain.terrain'
+        });
+    }
+    applyOperations(doc, ops, ctx);
+    return doc;
+}
 
 describe('BoundsCalculator', () => {
     test('prefab root: child transforms applied, own frame kept', () => {
@@ -139,6 +167,110 @@ describe('BoundsCalculator', () => {
             `no false cycle reports expected, got ${JSON.stringify(skipped)}`);
         // Both crates contribute: the merged AABB spans BoxA (x≈0) to BoxB (x≈5)
         assert.ok(world.size.x > 4.9, `expected span > 4.9, got ${world.size.x}`);
+    });
+
+    test('cc.Terrain contributes an analytic box anchored at the node origin', () => {
+        const ctx = makeCtx();
+        const doc = terrainScene(ctx);
+        const { local, contributors, skipped } = new BoundsCalculator(ctx)
+            .computeSubtree(doc, doc.resolveNode('Holder/Terrain'));
+
+        assert.deepStrictEqual(skipped, []);
+        // 1x1 blocks * 32 tiles * tileSize 1 = 32x32 m; heights span 0..3 m
+        assert.deepStrictEqual(local.min, { x: 0, y: 0, z: 0 });
+        assert.deepStrictEqual(local.max, { x: 32, y: 3, z: 32 });
+        assert.strictEqual(contributors.length, 1);
+        assert.strictEqual(contributors[0].type, 'cc.Terrain');
+        assert.match(contributors[0].source, /terrain 32x32m, height 0\.\.3/);
+    });
+
+    test('the terrain node\'s own rotation/scale do not inflate its box', () => {
+        const ctx = makeCtx();
+        const doc = terrainScene(ctx);
+        applyOperations(doc, [
+            { op: 'set_node_property', node: 'Holder/Terrain', property: 'position', value: { x: 5 } },
+            { op: 'set_node_property', node: 'Holder/Terrain', property: 'rotation', value: { y: 90 } },
+            { op: 'set_node_property', node: 'Holder/Terrain', property: 'scale', value: { x: 3, y: 3, z: 3 } }
+        ]);
+        const { local } = new BoundsCalculator(ctx).computeSubtree(doc, doc.resolveNode('Holder'));
+
+        // The terrain shader offsets vertices by cc_matWorld[3] only
+        assert.deepStrictEqual(local.size, { x: 32, y: 3, z: 32 });
+        assert.deepStrictEqual(local.min, { x: 5, y: 0, z: 0 });
+    });
+
+    test('ancestor rotation/scale only move the terrain box, never resize it', () => {
+        const ctx = makeCtx();
+        const doc = terrainScene(ctx, 'Holder/Rot');
+        applyOperations(doc, [
+            { op: 'set_node_property', node: 'Holder/Rot', property: 'position', value: { x: 10 } },
+            { op: 'set_node_property', node: 'Holder/Rot', property: 'rotation', value: { y: 90 } },
+            { op: 'set_node_property', node: 'Holder/Rot', property: 'scale', value: { x: 2, y: 2, z: 2 } },
+            { op: 'set_node_property', node: 'Holder/Rot/Terrain', property: 'position', value: { x: 5 } }
+        ]);
+        const { local } = new BoundsCalculator(ctx).computeSubtree(doc, doc.resolveNode('Holder'));
+
+        // Ancestor translation still reaches the terrain THROUGH the rotation
+        // and scale (that is what the composed matrix's translation column is):
+        // (10,0,0) + Ry90 * 2 * (5,0,0) = (10,0,-10)
+        assert.deepStrictEqual(local.size, { x: 32, y: 3, z: 32 });
+        near(local.min.x, 10, 1e-9);
+        near(local.min.y, 0, 1e-9);
+        near(local.min.z, -10, 1e-9);
+    });
+
+    test('a terrain without an asset is skipped with a reason', () => {
+        const ctx = makeCtx();
+        const doc = terrainScene(ctx, 'Holder', { wireAsset: false });
+        const { local, skipped } = new BoundsCalculator(ctx)
+            .computeSubtree(doc, doc.resolveNode('Holder/Terrain'));
+        assert.strictEqual(local, null);
+        assert.deepStrictEqual(skipped, [{ path: 'Holder/Terrain', reason: 'cc.Terrain has no __asset' }]);
+    });
+
+    test('a terrain asset outside the project is skipped with a reason', () => {
+        const ctx = makeCtx();
+        const doc = terrainScene(ctx, 'Holder', { wireAsset: false });
+        const compIdx = doc.componentIndices(doc.resolveNode('Holder/Terrain'))[0];
+        doc.getObject(compIdx).__asset = {
+            __uuid__: 'deadbeef-0000-4000-8000-000000000000',
+            __expectedType__: 'cc.TerrainAsset'
+        };
+        const { local, skipped } = new BoundsCalculator(ctx)
+            .computeSubtree(doc, doc.resolveNode('Holder/Terrain'));
+        assert.strictEqual(local, null);
+        assert.match(skipped[0].reason, /terrain asset deadbeef-.* not found under assets\//);
+    });
+
+    test('a never-sculpted (sentinel) terrain is still measurable with a flat Y span', () => {
+        // Minimal disposable project (one .terrain + its meta) rather than a
+        // copy of the shared mock project, which other suites write into.
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-bounds-terrain-'));
+        try {
+            fs.mkdirSync(path.join(tmp, 'assets', 'Maps'), { recursive: true });
+            fs.copyFileSync(
+                MOCK('assets/Maps/Terrain.terrain.meta'),
+                path.join(tmp, 'assets/Maps/Terrain.terrain.meta')
+            );
+            fs.writeFileSync(path.join(tmp, 'assets/Maps/Terrain.terrain'), defaultSentinel());
+            const assetIndex = new AssetIndex(tmp);
+            const ctx = {
+                assetIndex,
+                assetInspector: new AssetInspector(tmp, assetIndex),
+                projectRoot: tmp
+            };
+
+            const doc = terrainScene(ctx);
+            const { local, contributors, skipped } = new BoundsCalculator(ctx)
+                .computeSubtree(doc, doc.resolveNode('Holder/Terrain'));
+
+            assert.deepStrictEqual(skipped, []);
+            assert.deepStrictEqual(local.min, { x: 0, y: 0, z: 0 });
+            assert.deepStrictEqual(local.max, { x: 32, y: 0, z: 32 });
+            assert.match(contributors[0].source, /empty default terrain/);
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
     });
 
     test('unmeasurable meshes are reported as skipped, not silently dropped', () => {

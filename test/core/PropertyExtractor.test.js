@@ -886,4 +886,64 @@ describe('PropertyExtractor', () => {
             assert.strictEqual(props.root.next.back, '<cycle A>');
         });
     });
+
+    // `__`-prefixed keys are serializer bookkeeping and stay hidden — except
+    // the handful of real @serializable members spelled that way. cc.Terrain's
+    // asset reference IS literally `__asset` (terrain.ts: `protected __asset`;
+    // `_asset` is only a getter/setter facade), so hiding it would render a
+    // terrain component with no asset at all in every read tool.
+    describe('__-prefixed key allowlist (cc.Terrain.__asset)', () => {
+        // Editor-saved shape: project-example/guligames-legendale-c7/
+        // assets/scene.scene, array index 65 (Cocos Creator 3.8.8).
+        const terrain = () => ({
+            __type__: 'cc.Terrain',
+            _name: '',
+            _objFlags: 0,
+            __editorExtras__: { locked: true },
+            node: { __id__: 1 },
+            _enabled: true,
+            __prefab: { __id__: 2 },
+            __asset: {
+                __uuid__: '665a0471-f644-43e9-95c8-3415f2590ef5',
+                __expectedType__: 'cc.TerrainAsset'
+            },
+            _effectAsset: null,
+            _lightmapInfos: [],
+            _receiveShadow: true,
+            _useNormalmap: false,
+            _usePBR: false,
+            _lodEnable: false,
+            _lodBias: 0,
+            _id: '91etTnOcxA65CYXOCvdkvm'
+        });
+
+        it('renders __asset through the assetResolver', () => {
+            const extractor = new PropertyExtractor(new MockSceneParser(), {
+                assetResolver: (uuid) =>
+                    uuid === '665a0471-f644-43e9-95c8-3415f2590ef5' ? 'terrain.terrain' : null
+            });
+            const props = extractor.extract(terrain());
+            assert.strictEqual(props.__asset, 'terrain.terrain');
+        });
+
+        it('without a resolver it is still visible as <asset>', () => {
+            const props = new PropertyExtractor(new MockSceneParser()).extract(terrain());
+            assert.strictEqual(props.__asset, '<asset>');
+        });
+
+        it('the allowlist is narrow — every other __ key stays hidden', () => {
+            const extractor = new PropertyExtractor(new MockSceneParser());
+            const props = extractor.extract({
+                ...terrain(),
+                __somethingElse__: 7,
+                __asset2: { __uuid__: 'zzz' }
+            });
+            assert.deepStrictEqual(
+                Object.keys(props).filter(k => k.startsWith('__')), ['__asset']);
+            for (const hidden of ['__type__', '__prefab', '__editorExtras__',
+                '__somethingElse__', '__asset2']) {
+                assert.ok(!(hidden in props), `${hidden} must stay hidden`);
+            }
+        });
+    });
 });

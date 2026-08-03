@@ -10,6 +10,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { FindAssetReferences } from '../../src/tools/FindAssetReferences.js';
@@ -18,6 +19,7 @@ import { resolveBuiltin, builtinLabel, isBuiltin } from '../../src/core/builtins
 import { AssetIndex } from '../../src/core/AssetIndex.js';
 import { Validator } from '../../src/document/Validator.js';
 import { SceneDocument } from '../../src/document/SceneDocument.js';
+import { readTerrain, writeTerrain } from '../../src/utils/terrainBin.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MOCK_PROJECT = path.join(__dirname, '..', 'fixtures', 'mock-project');
@@ -134,6 +136,63 @@ describe('find_asset_references', () => {
             { asset: PRIMITIVES_UUID, folder: '../mock-project-sibling' }, MOCK_PROJECT);
         assert.ok(result.isError);
         assert.match(result.content[0].text, /Folder not found/);
+    });
+
+    test('terrain layer texture: structural hit naming the layer and the map', async () => {
+        // Maps/Terrain.terrain layer 0 = Sprites/coin_bar.png@6c48a, layer 1 = panel.png@6c48a.
+        // A bare image target must still match the "<uuid>@6c48a" texture sub-asset id.
+        const result = await tool.execute({ asset: 'Sprites/coin_bar.png' }, MOCK_PROJECT);
+        const text = result.content[0].text;
+        assert.ok(!result.isError, text);
+        assert.match(text, /## assets\/Maps\/Terrain\.terrain \(1\)/);
+        assert.match(text, /- terrain layer 0 \.detailMap \[sub-asset @6c48a\]/);
+        // the count and the file count include the binary hit
+        assert.match(text, /Found 1 reference\(s\) in 1 file\(s\)/);
+    });
+
+    test('terrain hit found for the exact sub-asset target too', async () => {
+        const result = await tool.execute(
+            { asset: '11112222-3333-4444-8555-666677778888@6c48a' }, MOCK_PROJECT);
+        const text = result.content[0].text;
+        // exact-match target: no "[sub-asset …]" suffix, since the id IS the needle
+        assert.match(text, /- terrain layer 1 \.detailMap$/m);
+    });
+
+    test('an unreferenced uuid gets no terrain hit (no byte-coincidence counting)', async () => {
+        const result = await tool.execute(
+            { asset: '99999999-9999-9999-9999-999999999999' }, MOCK_PROJECT);
+        const text = result.content[0].text;
+        assert.ok(!text.includes('Terrain.terrain'), text);
+        assert.match(text, /No references/);
+    });
+
+    test('a script target skips the binary pass entirely', async () => {
+        // A script is referenced only as a component __type__, which no binary can
+        // hold — the terrain is not scanned at all, so the scanned count drops by one.
+        const withImage = await tool.execute({ asset: 'Sprites/coin_bar.png' }, MOCK_PROJECT);
+        const withScript = await tool.execute({ asset: 'Scripts/PlayerController.ts' }, MOCK_PROJECT);
+        const scanned = (text) => Number(text.match(/scanned (\d+) serialized/)[1]);
+        assert.strictEqual(scanned(withImage.content[0].text),
+            scanned(withScript.content[0].text) + 1);
+    });
+
+    test('a dangling terrain layer uuid is still located and flagged as broken', async (t) => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-refs-terrain-'));
+        t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+        fs.cpSync(MOCK_PROJECT, root, { recursive: true });
+        const file = path.join(root, 'assets/Maps/Terrain.terrain');
+        const data = readTerrain(fs.readFileSync(file));
+        data.layers[0].detailMapId = 'deadbeef-1111-4222-8333-444455556666@6c48a';
+        fs.writeFileSync(file, writeTerrain(data));
+
+        // Bare uuid target (no @subId): the sub-asset-tolerant predicate must still hit
+        const result = await tool.execute(
+            { asset: 'deadbeef-1111-4222-8333-444455556666' }, root);
+        const text = result.content[0].text;
+        assert.match(text, /NOT a project asset and NOT an engine built-in/);
+        assert.match(text, /## assets\/Maps\/Terrain\.terrain \(1\)/);
+        assert.match(text, /- terrain layer 0 \.detailMap \[sub-asset @6c48a\]/);
+        assert.ok(!/No references/.test(text), text);
     });
 
     test('folder filter narrows the scan', async (t) => {

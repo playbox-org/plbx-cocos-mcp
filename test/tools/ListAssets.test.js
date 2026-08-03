@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { ListAssets } from '../../src/tools/ListAssets.js';
+import { AssetIndex } from '../../src/core/AssetIndex.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = join(__dirname, '../fixtures/mock-project');
@@ -81,5 +82,28 @@ describe('ListAssets tool', () => {
         const canonical = await tool.execute({ pattern: 'Coin*' }, PROJECT);
         assert.ok(!aliased.isError);
         assert.strictEqual(aliased.content[0].text, canonical.content[0].text);
+    });
+
+    // Drift guard: the two enumerations in this file are hand-maintained, so a new
+    // AssetIndex type is invisible to the LLM until they are updated. `terrain` was
+    // added to TYPE_ALIASES (and query_terrain's not-found error points here) while
+    // both lists still stopped at "animation"; effect/directory had drifted earlier.
+    it('advertises every friendly AssetIndex type in both enumerations', () => {
+        const typeDescription = tool.inputSchema.properties.type.description;
+        // synonyms of a listed type (spriteframe/texture of sprite, mesh of model) do
+        // not need their own mention; every other alias key does
+        const synonyms = new Set(['spriteframe', 'texture', 'mesh']);
+        const advertised = AssetIndex.knownTypes.filter(t => !synonyms.has(t));
+        assert.ok(advertised.includes('terrain'), 'terrain is no longer a known type');
+        for (const type of advertised) {
+            assert.ok(tool.description.includes(type), `description omits type "${type}"`);
+            assert.ok(typeDescription.includes(type), `type schema omits "${type}"`);
+        }
+    });
+
+    it('should list terrain assets under the type that query_terrain points at', async () => {
+        const result = await tool.execute({ type: 'terrain' }, PROJECT);
+        assert.ok(!result.isError);
+        assert.match(result.content[0].text, /assets\/Maps\/Terrain\.terrain \[terrain\]/);
     });
 });

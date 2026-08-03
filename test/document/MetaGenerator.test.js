@@ -5,8 +5,10 @@ import * as os from 'os';
 import * as path from 'path';
 import {
     createMetaObject, writeMetaFile, ensureParentDirMetas, serializeMeta,
-    classifyAsset, prefabMeta, animGraphMeta, readImageSize, MetaGenerationError
+    classifyAsset, prefabMeta, animGraphMeta, terrainMeta, readImageSize, MetaGenerationError,
+    SIMPLE_TYPES
 } from '../../src/document/MetaGenerator.js';
+import { CreateAssetMeta } from '../../src/tools/CreateAssetMeta.js';
 
 // 1x1 RGBA (colorType 6) transparent PNG
 const PNG_1x1 = Buffer.from(
@@ -204,6 +206,42 @@ describe('MetaGenerator', () => {
         assert.strictEqual(g.importer, 'animation-graph');
         assert.strictEqual(g.ver, '1.2.0');
         assert.deepStrictEqual(g.userData, {});
+    });
+
+    it('should generate a .terrain meta byte-identical to the editor-saved golden', () => {
+        const goldenPath = path.resolve(
+            import.meta.dirname, '../fixtures/golden/terrain/terrain.terrain.meta');
+        const golden = fs.readFileSync(goldenPath, 'utf-8');
+        const goldenMeta = JSON.parse(golden);
+
+        const file = path.join(assets, 'Ground.terrain');
+        fs.writeFileSync(file, Buffer.alloc(2048)); // content is irrelevant to the meta
+        const meta = createMetaObject(file);
+        assert.strictEqual(meta.importer, 'terrain');
+        assert.strictEqual(meta.ver, '1.1.50');
+        assert.deepStrictEqual(meta.files, ['.bin', '.json']);
+        assert.deepStrictEqual(meta.userData, {}); // the terrain importer has no userData
+        assert.match(meta.uuid, UUID_RE);
+        // byte-for-byte the editor's own meta, modulo the UUID
+        assert.strictEqual(
+            serializeMeta(meta).replace(meta.uuid, goldenMeta.uuid),
+            golden);
+        assert.strictEqual(classifyAsset(file), 'supported');
+
+        // terrainMeta() (used by build_terrain) is the same object, sourced from SIMPLE_TYPES
+        const built = terrainMeta();
+        assert.deepStrictEqual({ ...built, uuid: 'x' }, { ...meta, uuid: 'x' });
+        // …and does not alias the SIMPLE_TYPES arrays between calls
+        const other = terrainMeta();
+        assert.notStrictEqual(built.files, other.files);
+        assert.notStrictEqual(built.uuid, other.uuid);
+    });
+
+    it('should advertise every SIMPLE_TYPES extension in create_asset_meta\'s description', () => {
+        const description = new CreateAssetMeta().description;
+        const missing = Object.keys(SIMPLE_TYPES).filter(ext => !description.includes(ext));
+        assert.deepStrictEqual(missing, [],
+            `create_asset_meta's hand-kept "Supported:" list is out of date: ${missing.join(', ')}`);
     });
 
     it('should read PNG/JPEG sizes and return null otherwise', () => {
