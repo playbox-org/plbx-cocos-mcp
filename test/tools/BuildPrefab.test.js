@@ -100,6 +100,29 @@ describe('BuildPrefab tool', () => {
         }
     });
 
+    // Both sides of the containment test must be canonicalized the SAME way: `assets/` fell back to
+    // the unresolved spelling when absent, so a symlinked root (macOS /tmp) refused a legal path.
+    it('accepts a legal path in a symlinked project that has no assets/ yet', async () => {
+        const real = fs.mkdtempSync(path.join(os.tmpdir(), 'real-project-'));
+        const linkHome = fs.mkdtempSync(path.join(os.tmpdir(), 'link-home-'));
+        const linked = path.join(linkHome, 'project');
+        try {
+            fs.symlinkSync(real, linked);
+            assert.strictEqual(fs.existsSync(path.join(linked, 'assets')), false);
+
+            const result = await tool.run({ outputPath: 'assets/UI/Btn.prefab', spec: {} }, linked);
+            assert.ok(!result.isError, text(result));
+            assert.strictEqual(fs.existsSync(path.join(real, 'assets/UI/Btn.prefab')), true);
+            assert.strictEqual(fs.existsSync(path.join(real, 'assets/UI/Btn.prefab.meta')), true);
+            // the folder metas the write creates land inside assets/ too
+            assert.strictEqual(fs.existsSync(path.join(real, 'assets/UI.meta')), true);
+        } finally {
+            AssetIndex.invalidate(linked);
+            fs.rmSync(linkHome, { recursive: true, force: true });
+            fs.rmSync(real, { recursive: true, force: true });
+        }
+    });
+
     // An existing .meta that parses but carries no "uuid" used to print
     // "UUID: undefined (existing .meta kept)" and write the prefab anyway — the editor
     // mints its own uuid on import and every reference made against the printed one dies.

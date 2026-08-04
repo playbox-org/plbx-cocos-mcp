@@ -14,7 +14,7 @@ import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
 import { TerrainBuilder, TerrainBuildError } from '../document/TerrainBuilder.js';
 import { AssetIndex } from '../core/AssetIndex.js';
-import { serializeMeta, ensureParentDirMetas, resolveAssetMeta } from '../document/MetaGenerator.js';
+import { writeMeta, ensureParentDirMetas, resolveAssetMeta } from '../document/MetaGenerator.js';
 import { resolveInAssets } from '../utils/assetPaths.js';
 import { writeFileAtomic } from '../utils/fsAtomic.js';
 import { readTerrainInfo } from '../utils/terrainBin.js';
@@ -140,8 +140,9 @@ export class BuildTerrain extends BaseTool {
             // question, and a leftover `.meta` beside a missing binary makes the two disagree.
             if (!binaryExisted) undo.push(() => fs.unlinkSync(outputPath));
             if (newMeta) {
-                fs.writeFileSync(metaPath, serializeMeta(newMeta), 'utf-8');
+                // Registered BEFORE the write: a failure during it must still unwind a partial meta.
                 undo.push(() => fs.unlinkSync(metaPath));
+                writeMeta(metaPath, newMeta);
             }
             // Folders created above need their own metas too. Registered through the callback
             // rather than from the return value, so a failure PART-WAY up the chain still unwinds

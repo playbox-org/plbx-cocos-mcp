@@ -25,6 +25,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { nameToId } from '../utils/uuid.js';
+import { writeFileAtomic } from '../utils/fsAtomic.js';
 
 export class MetaGenerationError extends Error {}
 
@@ -176,8 +177,18 @@ export function writeMetaFile(absPath, options = {}) {
     const metaPath = `${absPath}.meta`;
     if (fs.existsSync(metaPath)) return { metaPath, meta: null, created: false };
     const meta = createMetaObject(absPath, options);
-    fs.writeFileSync(metaPath, serializeMeta(meta), 'utf-8');
+    writeMeta(metaPath, meta);
     return { metaPath, meta, created: true };
+}
+
+/**
+ * The one way a `.meta` reaches disk: temp+rename. A half-written one is sticky (every later
+ * build_* refuses that path), and a plain write follows a symlinked meta path out of the project.
+ * @param {string} metaPath - `<asset>.meta`, absolute
+ * @param {object} meta
+ */
+export function writeMeta(metaPath, meta) {
+    writeFileAtomic(metaPath, serializeMeta(meta));
 }
 
 /**
@@ -207,7 +218,10 @@ export function resolveAssetMeta(metaPath, displayPath, mint) {
     } catch (err) {
         return {
             uuid: null, newMeta: null,
-            error: `Cannot parse existing ${displayPath}.meta: ${err.message}\n\nNothing was written.`
+            error: `Cannot parse existing ${displayPath}.meta: ${err.message} — delete it and ` +
+                're-run (a fresh .meta will be generated), or fix it by hand. An empty or ' +
+                'truncated .meta is the usual cause; the editor will not import the asset while ' +
+                'it stands either.\n\nNothing was written.'
         };
     }
     if (typeof uuid !== 'string' || uuid === '') {

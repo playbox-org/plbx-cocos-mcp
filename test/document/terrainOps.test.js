@@ -594,7 +594,29 @@ describe('terrainOps — set_layer / remove_layer', () => {
         assert.deepStrictEqual(texel(data, 2, 2), [255, 0, 0, 0]);
         assert.strictEqual(texelSum(data, 2, 2), 255);
         assert.match(results[0].notes.join('\n'), /1 texel .* covered by the removed layer ALONE/s);
-        assert.match(results[0].notes.join('\n'), /fall back to layer 0 at full weight/);
+        assert.match(results[0].notes.join('\n'), /1 texel to layer 0/);
+    });
+
+    it('attributes the fallback per block, not once for the whole batch', () => {
+        // Palettes differ ([2,0] vs [2,1]), so removing slot 2 falls back to DIFFERENT layers; one
+        // shared variable reported the last block's layer for every texel counted.
+        const data = terrain({ blockCount: [2, 1], weightMapSize: 4, layers: 3, slots: [2, 0] });
+        setBlockLayers(data, 1, 0, [2, 1]);
+        for (let j = 0; j < 4; j++) {
+            for (let i = 0; i < 8; i++) setWeightAtTexel(data, i, j, [255, 0, 0, 0]); // layer 2 alone
+        }
+
+        const { results } = apply(data, { op: 'remove_layer', slot: 2 });
+
+        assert.deepStrictEqual([...data.layerBuffer], [0, -1, -1, -1, 1, -1, -1, -1]);
+        const notes = results[0].notes.join('\n');
+        assert.match(notes, /32 texels were covered by the removed layer ALONE/);
+        assert.match(notes, /16 texels to layer 0/);
+        assert.match(notes, /16 texels to layer 1/);
+        // and each block really did get its OWN first surviving layer at full weight
+        assert.deepStrictEqual(texel(data, 0, 0), [255, 0, 0, 0]);
+        assert.deepStrictEqual(texel(data, 4, 0), [255, 0, 0, 0]);
+        assert.strictEqual(countShort(data), 0);
     });
 
     it('reports only the blocks that referenced the layer', () => {
@@ -1421,6 +1443,59 @@ describe('terrainOps — a geometry the binary format cannot store', () => {
         const { results } = apply(zeroTile, { op: 'set_info', tileSize: 1 });
         assert.match(results[0].summary, /tileSize 0 -> 1 m/);
         assert.doesNotThrow(() => validateTerrainData(zeroTile));
+    });
+
+    // The repair used to be refused BY THE REPAIR PATH: `prepare`'s rebuild re-validated the very
+    // geometry the batch replaces. Buffer sizes derive from weightMapSize, so this is the common case.
+    it('repairs a bad size whose buffers are mis-sized too', () => {
+        const data = oddWeightMapTerrain(3);
+        // buffers sized for the real map, not for the bogus declaration
+        data.weights = new Uint8Array(4 * 4 * 4);
+        for (let i = 0; i < data.weights.length; i += 4) data.weights[i] = 255;
+
+        const { results, notes } = apply(
+            data,
+            { op: 'set_info', weightMapSize: 128 },
+            { op: 'paint_layer', layer: 0, weight: 1 },
+        );
+
+        assert.match(results[0].summary, /weightMapSize 3 -> 128/);
+        assert.strictEqual(data.weightMapSize, 128);
+        assert.strictEqual(data.weights.length, 128 * 128 * 4);
+        assert.doesNotThrow(() => validateTerrainData(data), 'the repaired file is writable');
+        assert.match(notes.join('\n'), /stores 64 weights instead of 36/);
+        assert.match(notes.join('\n'), /rebuilt a second time, onto the new one/);
+    });
+
+    // Replacing SOME sizing field is not automatically the repair: the guard composes and re-asks,
+    // so a batch leaving the offending value in place is refused up front, not at write time.
+    it('does not take an unrelated sizing change as the repair', () => {
+        const data = oddWeightMapTerrain();
+        const heights = Uint16Array.from(data.heights);
+        assert.throws(
+            () => apply(data, { op: 'set_info', blockCount: [2, 2] }),
+            /cannot be written back at all: weightMapSize = 6 must be a power of two/
+        );
+        assert.deepStrictEqual([...data.heights], [...heights], 'no op ran');
+        // the same batch WITH the offending field replaced is accepted
+        assert.doesNotThrow(() => apply(data, { op: 'set_info', blockCount: [2, 2], weightMapSize: 4 }));
+        assert.doesNotThrow(() => validateTerrainData(data));
+    });
+
+    // Waiving the format rules must not waive the caps that stop a garbage header asking for GBs.
+    it('still refuses a geometry it could not even allocate', () => {
+        const data = oddWeightMapTerrain();
+        data.blockCount = [4096, 4096];
+        assert.throws(
+            () => apply(data, { op: 'set_info', weightMapSize: 4 }),
+            (err) => {
+                assert.ok(err instanceof TerrainOpError);
+                assert.match(err.message, /cannot be prepared for editing/);
+                assert.match(err.message, /exceeds TERRAIN_MAX_BLOCKS/);
+                assert.match(err.message, /property of the FILE|what the FILE already stores/);
+                return true;
+            }
+        );
     });
 
     it('leaves a writable size outside the editor panel editable', () => {

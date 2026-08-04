@@ -68,7 +68,9 @@ export function isInsideAssets(abs, assetsRoot, options = {}) {
  * @returns {{path: string, requested: string, assetsRoot: string, inside: boolean}}
  */
 export function resolveInAssets(projectRoot, ref, options = {}) {
-    const assetsRoot = realpathOrSelf(path.resolve(projectRoot, 'assets'));
+    // `realpathTarget` on BOTH sides: resolving only the side that exists made a symlinked project
+    // root with no `assets/` yet (macOS /tmp) reject every legal outputPath.
+    const assetsRoot = realpathTarget(path.resolve(projectRoot, 'assets'));
     const requested = path.resolve(projectRoot, ref);
     const abs = realpathTarget(requested);
     return { path: abs, requested, assetsRoot, inside: isInsideAssets(abs, assetsRoot, options) };

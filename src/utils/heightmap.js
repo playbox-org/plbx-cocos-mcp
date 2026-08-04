@@ -153,16 +153,26 @@ export function decodePng(buffer, what = 'heightmap') {
     checkDimensions(ihdr.width, ihdr.height, what);
     if (idat.length === 0) throw new HeightmapError(`${what}: malformed PNG — no IDAT data`);
 
-    let raw;
-    try {
-        raw = zlib.inflateSync(Buffer.concat(idat));
-    } catch (err) {
-        throw new HeightmapError(`${what}: PNG IDAT data could not be inflated (${err.message})`);
-    }
-
     const bpp = ihdr.bitDepth === 16 ? 2 : 1;
     const stride = ihdr.width * bpp;
     const expected = ihdr.height * (stride + 1);
+
+    let raw;
+    try {
+        // Bounded by what the IHDR promises: an IDAT expanding to gigabytes would otherwise be
+        // materialized in full before the check below. The legal maximum (~64 MB) is well inside.
+        raw = zlib.inflateSync(Buffer.concat(idat), { maxOutputLength: expected });
+    } catch (err) {
+        if (err?.code === 'ERR_BUFFER_TOO_LARGE') {
+            throw new HeightmapError(
+                `${what}: PNG pixel data inflates to more than the ${expected} bytes its header ` +
+                `declares (${ihdr.width}x${ihdr.height} at ${ihdr.bitDepth} bit + 1 filter byte ` +
+                'per row) — the file is corrupt'
+            );
+        }
+        throw new HeightmapError(`${what}: PNG IDAT data could not be inflated (${err.message})`);
+    }
+
     if (raw.length !== expected) {
         throw new HeightmapError(
             `${what}: PNG pixel data is ${raw.length} bytes, expected ${expected} ` +

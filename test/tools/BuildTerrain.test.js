@@ -268,17 +268,35 @@ describe('BuildTerrain tool', () => {
     // orphan .terrain with no meta and no report.
     it('removes the binary when the .meta write fails', async () => {
         fs.mkdirSync(path.join(root, 'assets/Locked'));
-        // dangling symlink: existsSync is false (so a fresh meta is minted) but the write throws
-        fs.symlinkSync(path.join(root, 'nope/deep/Late.terrain.meta'),
-            path.join(root, 'assets/Locked/Late.terrain.meta'));
+        // Trigger: the ".meta" companion blows the 255-BYTE filename limit while the binary fits
+        // (254 vs 259), so the binary lands and the meta write is the step that throws.
+        const name = `${'x'.repeat(246)}.terrain`;
+        assert.strictEqual(name.length, 254);
 
-        const result = await build({ outputPath: 'assets/Locked/Late.terrain', spec: {} });
+        const result = await build({ outputPath: `assets/Locked/${name}`, spec: {} });
         assert.strictEqual(result.isError, true);
-        assert.match(text(result), /Cannot write assets\/Locked\/Late\.terrain/);
+        assert.match(text(result), /Cannot write assets\/Locked\//);
         assert.match(text(result), /Nothing was written\./);
-        assert.strictEqual(fs.existsSync(path.join(root, 'assets/Locked/Late.terrain')), false);
-        assert.deepStrictEqual(
-            fs.readdirSync(path.join(root, 'assets/Locked')), ['Late.terrain.meta']); // only the symlink
+        assert.strictEqual(fs.existsSync(path.join(root, 'assets/Locked', name)), false);
+        assert.deepStrictEqual(fs.readdirSync(path.join(root, 'assets/Locked')), []);
+    });
+
+    // A plain writeFileSync FOLLOWS a symlink, so a symlinked `<asset>.meta` took the meta out of
+    // the project (verified); temp+rename replaces the link instead.
+    it('replaces a symlinked .meta path instead of writing through it', async () => {
+        const outside = path.join(root, '..', 'escape-target');
+        fs.mkdirSync(outside, { recursive: true });
+        fs.mkdirSync(path.join(root, 'assets/Sym'));
+        const metaPath = path.join(root, 'assets/Sym/S.terrain.meta');
+        // existsSync is false (dangling), so a fresh meta is minted for this path
+        fs.symlinkSync(path.join(outside, 'escaped.meta'), metaPath);
+
+        const result = await build({ outputPath: 'assets/Sym/S.terrain', spec: {} });
+        assert.strictEqual(result.isError, undefined);
+        assert.strictEqual(fs.existsSync(path.join(outside, 'escaped.meta')), false,
+            'the .meta must not be written outside the project through the link');
+        assert.strictEqual(fs.lstatSync(metaPath).isSymbolicLink(), false, 'the link is replaced');
+        assert.strictEqual(JSON.parse(fs.readFileSync(metaPath, 'utf-8')).importer, 'terrain');
     });
 
     // mkdirSync ran before the write, so a failing write left freshly created,
@@ -327,14 +345,18 @@ describe('BuildTerrain tool', () => {
     it('reports the overwrite honestly when a step AFTER the rename fails', async () => {
         const victim = path.join(root, 'assets/Maps/Terrain.terrain');
         const before = fs.readFileSync(victim);
-        // The last step in the try block is the folder metas; make assets/Maps.meta unwritable
-        // while assets/Maps itself stays writable, so the binary lands and that step throws.
+        // Last step in the try block is the folder metas: assets/ read-only (so assets/Maps.meta
+        // cannot be created) while assets/Maps stays writable, so the binary lands and that throws.
         fs.rmSync(path.join(root, 'assets/Maps.meta'));
-        fs.symlinkSync(path.join(root, 'nope/deep/Maps.meta'), path.join(root, 'assets/Maps.meta'));
-
-        const result = await build({
-            outputPath: 'assets/Maps/Terrain.terrain', spec: { baseHeight: 7 }, overwrite: true,
-        });
+        fs.chmodSync(path.join(root, 'assets'), 0o555);
+        let result;
+        try {
+            result = await build({
+                outputPath: 'assets/Maps/Terrain.terrain', spec: { baseHeight: 7 }, overwrite: true,
+            });
+        } finally {
+            fs.chmodSync(path.join(root, 'assets'), 0o755);
+        }
         assert.strictEqual(result.isError, true);
         assert.match(text(result), /WARNING: assets\/Maps\/Terrain\.terrain had ALREADY been replaced/);
         assert.match(text(result), /previous heights, layers and weights are gone/);
@@ -371,9 +393,13 @@ describe('BuildTerrain tool', () => {
         fs.writeFileSync(path.join(dir, 'Ghost.terrain.meta'),
             JSON.stringify({ ver: '1.1.50', importer: 'terrain', uuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee' }));
         // make the folder meta write fail, i.e. a failure after the binary landed
-        fs.symlinkSync(path.join(root, 'nope/deep/Orphan.meta'), path.join(root, 'assets/Orphan.meta'));
-
-        const result = await build({ outputPath: 'assets/Orphan/Ghost.terrain', spec: {} });
+        fs.chmodSync(path.join(root, 'assets'), 0o555);
+        let result;
+        try {
+            result = await build({ outputPath: 'assets/Orphan/Ghost.terrain', spec: {} });
+        } finally {
+            fs.chmodSync(path.join(root, 'assets'), 0o755);
+        }
         assert.strictEqual(result.isError, true);
         assert.match(text(result), /Nothing was written\./);
         assert.strictEqual(fs.existsSync(path.join(dir, 'Ghost.terrain')), false,

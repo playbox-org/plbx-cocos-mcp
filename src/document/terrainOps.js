@@ -45,6 +45,7 @@ import {
     removeLayer,
     compactPalette,
     weightTexelIndex,
+    weightMapDims,
     texelPosition,
     versionName,
     TERRAIN_HEIGHT_BASE,
@@ -495,10 +496,10 @@ function rebuildLayerBuffer(data, info) {
 function rebuildWeights(data, info) {
     const oldWms = data.weightMapSize;
     const newWms = info.weightMapSize;
-    const oldU = oldWms * data.blockCount[0];
-    const oldV = oldWms * data.blockCount[1];
-    const newU = newWms * info.blockCount[0];
-    const newV = newWms * info.blockCount[1];
+    // Dims and offsets from terrainBin: the resize must not be the one weight path carrying its
+    // own copy of the layout. `info` is a sizing struct, which is all either helper reads.
+    const [oldU, oldV] = weightMapDims(data);
+    const [newU, newV] = weightMapDims(info);
     if (newU === oldU && newV === oldV) return { changed: false, texels: [newU, newV] };
 
     const old = data.weights;
@@ -509,7 +510,7 @@ function rebuildWeights(data, info) {
     const h = Math.min(info.blockCount[1], data.blockCount[1]);
 
     const getOld = (i, j) => {
-        const index = (j * oldU + i) * 4;
+        const index = weightTexelIndex(data, i, j);
         return [old[index] / 255, old[index + 1] / 255, old[index + 2] / 255, old[index + 3] / 255];
     };
     const sampleOld = (x, y, xOff, yOff) => {
@@ -542,7 +543,7 @@ function rebuildWeights(data, info) {
                     const wv = newWms === oldWms
                         ? getOld(u + uOff, v + vOff)
                         : sampleOld((u / (newWms - 1)) * (oldWms - 1), (v / (newWms - 1)) * (oldWms - 1), uOff, vOff);
-                    const index = ((j * newWms + v) * newU + (i * newWms + u)) * 4;
+                    const index = weightTexelIndex(info, i * newWms + u, j * newWms + v);
                     for (let k = 0; k < 4; k++) weights[index + k] = wv[k] * 255;
                 }
             }
@@ -863,22 +864,31 @@ function removeLayerOp(data, op, ctx) {
 
     let renormalized = 0;
     let filled = 0;
-    let fallbackSlot = -1;
+    // Per BLOCK: `first` is that block's own surviving slot, and palettes differ between blocks,
+    // so one last-write-wins value would name a layer most counted texels never fell back to.
+    const fallbackSlots = new Map(); // slot → texels that fell back to it
     for (const b of blocks) {
         const [bx, by] = blockCoords(b, data.blockCount);
         const res = renormalizeBlock(data, bx, by);
         renormalized += res.changed;
         filled += res.filled;
-        if (res.filled > 0) fallbackSlot = res.first;
+        if (res.filled > 0) {
+            fallbackSlots.set(res.first, (fallbackSlots.get(res.first) ?? 0) + res.filled);
+        }
     }
 
     const reindexed = [...remap.entries()].filter(([oldSlot, newSlot]) => oldSlot !== newSlot);
     const notes = [];
     if (filled > 0) {
+        // Every counted texel has a slot to fall back to (`renormalizeTexel` requires one).
+        const perSlot = [...fallbackSlots.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([slot, texels]) => `${plural(texels, 'texel')} to layer ${slot}`);
         notes.push(
             `${plural(filled, 'texel')} were covered by the removed layer ALONE and had no weight ` +
-            `left at all; they fall back to layer ${fallbackSlot} at full weight (what a freshly ` +
-            'created block looks like) instead of rendering as nothing'
+            'left at all; they fall back at full weight to their own block\'s first surviving ' +
+            `layer (what a freshly created block looks like) instead of rendering as nothing — ` +
+            `${perSlot.join(', ')}`
         );
     }
     if (reindexed.length) {
@@ -1555,14 +1565,20 @@ export function applyTerrainOperation(data, op, ctx = {}) {
  * Make `data` writable before any op runs: materialize the "Create > Terrain" sentinel into
  * real buffers (what the editor does on its first save) and drop stored normals (the editor
  * writes none and the engine rebuilds them on load, so `writeTerrain` never emits any).
+ *
+ * `geometryRepairPending`: the stored geometry is unwritable and a `set_info` in THIS batch
+ * replaces it, so the rebuild below must not re-apply the rule that batch is about to satisfy.
+ *
  * @param {object} data
  * @param {string[]} notes
+ * @param {{geometryRepairPending?: boolean}} [options]
  */
-function prepare(data, notes) {
+function prepare(data, notes, options = {}) {
+    const repairPending = options.geometryRepairPending === true;
     if (data.isDefaultSentinel || data.version === TERRAIN_DATA_VERSION_DEFAULT) {
         let materialized;
         try {
-            materialized = materialize(data);
+            materialized = materialize(data, { allowUnwritableGeometry: repairPending });
         } catch (err) {
             throw new TerrainOpError(err.message);
         }
@@ -1595,9 +1611,15 @@ function prepare(data, notes) {
     if (mismatched.length) {
         let rebuilt;
         try {
-            rebuilt = materialize(data);
+            rebuilt = materialize(data, { allowUnwritableGeometry: repairPending });
         } catch (err) {
-            throw new TerrainOpError(err.message);
+            // Only a geometry that cannot even be SIZED reaches here (format rules are waived
+            // while a repair is pending), so keep the up-front guard's "property of the FILE" framing.
+            throw new TerrainOpError(
+                `this .terrain cannot be prepared for editing: ${err.message}. The value is what ` +
+                'the FILE already stores, so no edit can be saved while it stands — and it is too ' +
+                'far out for a set_info to repair (that would still have to allocate these buffers)'
+            );
         }
         Object.assign(data, rebuilt);
         notes.push(
@@ -1605,7 +1627,11 @@ function prepare(data, notes) {
             `but stores ${mismatched.map(([name, have, want]) => `${have} ${name} instead of ${want}`).join(' and ')} ` +
             '— those buffers were REBUILT from scratch (flat 0 m heights / (255,0,0,0) weights / no ' +
             'layer assignments), which is exactly what the engine does with them on load ' +
-            '(terrain.ts:2481-2526). Their previous contents are gone'
+            '(terrain.ts:2481-2526). Their previous contents are gone' +
+            (repairPending
+                ? '. They were rebuilt onto the geometry the file still declares, which this batch\'s ' +
+                  'set_info then replaces — so they are rebuilt a second time, onto the new one'
+                : '')
         );
     }
 
@@ -1712,16 +1738,21 @@ function geometryWriteError(data) {
     }
 }
 
-/** Whether the batch REPLACES a sizing field — a restate of the stored value is not a repair */
+/**
+ * Whether the batch really REPAIRS the geometry: its `set_info` values composed over the stored
+ * ones and re-asked of the format, so `set_info {blockCount}` on a bad `weightMapSize` is not it.
+ */
 function repairsGeometry(ops, data) {
-    return ops.some((op) => op?.op === 'set_info' && SIZING_FIELDS.some((field) => {
-        const value = op[field];
-        if (value === undefined) return false;
-        const stored = data[field];
-        return Array.isArray(value) || Array.isArray(stored)
-            ? JSON.stringify(value) !== JSON.stringify(stored)
-            : value !== stored;
-    }));
+    const setInfos = ops.filter((op) => op?.op === 'set_info');
+    if (setInfos.length === 0) return false;
+    const geometry = {};
+    for (const field of SIZING_FIELDS) geometry[field] = data[field];
+    for (const op of setInfos) {
+        for (const field of SIZING_FIELDS) {
+            if (op[field] !== undefined) geometry[field] = op[field];
+        }
+    }
+    return geometryWriteError(geometry) === null;
 }
 
 /**
@@ -1757,7 +1788,7 @@ export function applyTerrainOperations(data, ops, ctx = {}) {
         );
     }
     const notes = [];
-    prepare(data, notes);
+    prepare(data, notes, { geometryRepairPending: Boolean(geometryError) });
     const results = ops.map((op, i) => {
         try {
             return applyTerrainOperation(data, op, ctx);

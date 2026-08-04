@@ -631,14 +631,20 @@ function sentinelData() {
  * on load), and {@link writeTerrain} puts `rawTileSize` back so such a file still round-trips
  * byte-identically.
  *
+ * `skipPayload` walks the same offsets without COPYING the four big arrays (empty, next to their
+ * counts and `payloadSkipped`) — the layer table sits behind them. See {@link readTerrainLayout}.
+ *
  * @param {Buffer|Uint8Array|ArrayBuffer} buffer - Whole file contents
+ * @param {{skipPayload?: boolean}} [options]
  * @returns {object|null} `{version, isDefaultSentinel, tileSize, rawTileSize, blockCount,
  *   weightMapSize, lightMapSize, heights: Uint16Array, normals: Float32Array,
  *   weights: Uint8Array, layerBuffer: Int16Array,
  *   layers: [{slot, tileSize, detailMapId, normalMapId, roughness, metallic}],
- *   payloadLength}`
+ *   payloadLength}` — plus `{payloadSkipped, heightCount, normalCount, weightCount,
+ *   layerBufferCount}` and empty arrays under `skipPayload`
  */
-export function readTerrain(buffer) {
+export function readTerrain(buffer, options = {}) {
+    const skipPayload = options.skipPayload === true;
     const buf = toBuffer(buffer);
     if (!buf || buf.length < 4) return null;
 
@@ -661,47 +667,67 @@ export function readTerrain(buffer) {
     // The engine reads with the SIGNED readInt16 into a Uint16Array; the wraparound
     // cancels, so the wire format is plain u16 LE — read it as unsigned.
     const heightCount = s.count(2, 'heights');
-    const heights = new Uint16Array(heightCount);
-    for (let i = 0; i < heightCount; i++) {
-        heights[i] = buf.readUInt16LE(s.pos + i * 2);
-    }
-    s.pos += heightCount * 2;
-
-    if (version < TERRAIN_DATA_VERSION8) {
-        // terrain-asset.ts:504-510 — simplifies to trunc(32768 + (raw - 32768) * 0.25);
-        // the Uint16Array store truncates toward zero (40959.75 → 40959).
+    let heights = new Uint16Array(0);
+    if (skipPayload) {
+        s.pos += heightCount * 2;
+    } else {
+        heights = new Uint16Array(heightCount);
         for (let i = 0; i < heightCount; i++) {
-            const h = (heights[i] - TERRAIN_HEIGHT_BASE) * TERRAIN_HEIGHT_FACTOR_V7;
-            heights[i] = TERRAIN_HEIGHT_BASE + h / TERRAIN_HEIGHT_FACTOR;
+            heights[i] = buf.readUInt16LE(s.pos + i * 2);
+        }
+        s.pos += heightCount * 2;
+
+        if (version < TERRAIN_DATA_VERSION8) {
+            // terrain-asset.ts:504-510 — simplifies to trunc(32768 + (raw - 32768) * 0.25);
+            // the Uint16Array store truncates toward zero (40959.75 → 40959).
+            for (let i = 0; i < heightCount; i++) {
+                const h = (heights[i] - TERRAIN_HEIGHT_BASE) * TERRAIN_HEIGHT_FACTOR_V7;
+                heights[i] = TERRAIN_HEIGHT_BASE + h / TERRAIN_HEIGHT_FACTOR;
+            }
         }
     }
 
     // --- normals, >= V6 only (terrain-asset.ts:513-519) ---
     let normals = new Float32Array(0);
+    let normalCount = 0;
     if (version >= TERRAIN_DATA_VERSION6) {
-        const normalCount = s.count(4, 'normals');
-        normals = new Float32Array(normalCount);
-        for (let i = 0; i < normalCount; i++) {
-            normals[i] = buf.readFloatLE(s.pos + i * 4);
+        normalCount = s.count(4, 'normals');
+        if (skipPayload) {
+            s.pos += normalCount * 4;
+        } else {
+            normals = new Float32Array(normalCount);
+            for (let i = 0; i < normalCount; i++) {
+                normals[i] = buf.readFloatLE(s.pos + i * 4);
+            }
+            s.pos += normalCount * 4;
         }
-        s.pos += normalCount * 4;
     }
 
     // --- weights, all versions (terrain-asset.ts:522-526) ---
     const weightCount = s.count(1, 'weights');
-    const weights = new Uint8Array(weightCount);
-    for (let i = 0; i < weightCount; i++) weights[i] = buf[s.pos + i];
-    s.pos += weightCount;
+    let weights = new Uint8Array(0);
+    if (skipPayload) {
+        s.pos += weightCount;
+    } else {
+        weights = new Uint8Array(weightCount);
+        for (let i = 0; i < weightCount; i++) weights[i] = buf[s.pos + i];
+        s.pos += weightCount;
+    }
 
     // --- layerBuffer, >= V2 (terrain-asset.ts:529-535) ---
-    let layerBuffer = Int16Array.from([-1, -1, -1, -1]);
+    let layerBuffer = skipPayload ? new Int16Array(0) : Int16Array.from([-1, -1, -1, -1]);
+    let layerBufferCount = version >= TERRAIN_DATA_VERSION2 ? 0 : layerBuffer.length;
     if (version >= TERRAIN_DATA_VERSION2) {
-        const layerBufferCount = s.count(2, 'layerBuffer');
-        layerBuffer = new Int16Array(layerBufferCount);
-        for (let i = 0; i < layerBufferCount; i++) {
-            layerBuffer[i] = buf.readInt16LE(s.pos + i * 2); // signed: -1 = empty slot
+        layerBufferCount = s.count(2, 'layerBuffer');
+        if (skipPayload) {
+            s.pos += layerBufferCount * 2;
+        } else {
+            layerBuffer = new Int16Array(layerBufferCount);
+            for (let i = 0; i < layerBufferCount; i++) {
+                layerBuffer[i] = buf.readInt16LE(s.pos + i * 2); // signed: -1 = empty slot
+            }
+            s.pos += layerBufferCount * 2;
         }
-        s.pos += layerBufferCount * 2;
     }
 
     // --- layerInfos, >= V3 (terrain-asset.ts:538-562) ---
@@ -747,7 +773,21 @@ export function readTerrain(buffer) {
         layerBuffer,
         layers,
         payloadLength: s.pos,
+        ...(skipPayload
+            ? { payloadSkipped: true, heightCount, normalCount, weightCount, layerBufferCount }
+            : {}),
     };
+}
+
+/**
+ * Geometry + layer palette only ({@link readTerrain} with `skipPayload` + the file read): for a
+ * caller that CHECKS a terrain, not one that samples or edits it (~70 MB of copies skipped).
+ * @param {string} filePath - Absolute path to the `.terrain` file
+ * @returns {object|null} as {@link readTerrain} with `skipPayload`, or null when not a terrain
+ * @throws {Error} on unreadable files (fs errors) or structural corruption
+ */
+export function readTerrainLayout(filePath) {
+    return readTerrain(fs.readFileSync(filePath), { skipPayload: true });
 }
 
 /**
@@ -757,8 +797,25 @@ export function readTerrain(buffer) {
  * @throws {Error} naming the offending field
  */
 export function validateTerrainGeometry(data) {
-    if (!data || typeof data !== 'object') throw new Error('terrain: data must be an object');
+    // Order matters: the messages are the caller-facing contract, so the sizing and
+    // format-only checks stay interleaved exactly as they were before the split.
+    checkBlockCount(data);
+    if (!Number.isFinite(data.tileSize) || data.tileSize <= 0) {
+        throw new Error(`terrain: tileSize must be a finite number > 0, got ${data.tileSize}`);
+    }
+    checkWeightMapRange(data);
+    const wms = data.weightMapSize;
+    if ((wms & (wms - 1)) !== 0) {
+        throw new Error(`terrain: weightMapSize = ${wms} must be a power of two`);
+    }
+    if (!isIntegerIn(data.lightMapSize, -32768, 32767)) {
+        throw new Error(`terrain: lightMapSize = ${data.lightMapSize} must be an integer in the i16 range`);
+    }
+}
 
+/** blockCount: a pair of positive integers — the height/layerBuffer sizing input */
+function checkBlockCount(data) {
+    if (!data || typeof data !== 'object') throw new Error('terrain: data must be an object');
     const bc = data.blockCount;
     if (!Array.isArray(bc) || bc.length !== 2) {
         throw new Error('terrain: blockCount must be an array of exactly 2 numbers');
@@ -768,32 +825,18 @@ export function validateTerrainGeometry(data) {
             throw new Error(`terrain: blockCount[${k}] = ${bc[k]} must be an integer >= 1`);
         }
     }
+}
 
-    if (!Number.isFinite(data.tileSize) || data.tileSize <= 0) {
-        throw new Error(`terrain: tileSize must be a finite number > 0, got ${data.tileSize}`);
-    }
-
+/** weightMapSize in the i16 range — the weights/texel sizing input, power-of-two aside */
+function checkWeightMapRange(data) {
     const wms = data.weightMapSize;
     if (!isIntegerIn(wms, 2, 32767)) {
         throw new Error(`terrain: weightMapSize = ${wms} must be an integer in 2..32767`);
     }
-    if ((wms & (wms - 1)) !== 0) {
-        throw new Error(`terrain: weightMapSize = ${wms} must be a power of two`);
-    }
-    if (!isIntegerIn(data.lightMapSize, -32768, 32767)) {
-        throw new Error(`terrain: lightMapSize = ${data.lightMapSize} must be an integer in the i16 range`);
-    }
 }
 
-/**
- * The allocation guard on top of {@link validateTerrainGeometry}: refuses geometries whose
- * buffers would not fit in a sane amount of memory. Exported so builders/ops can reject an
- * oversized spec with their own message before anything is allocated.
- * @param {object} data - Terrain data object (only the scalar fields are read)
- * @throws {Error} when the geometry is invalid or exceeds the authoring caps
- */
-export function validateTerrainCapacity(data) {
-    validateTerrainGeometry(data);
+/** The two authoring caps of {@link validateTerrainCapacity}, geometry rules aside */
+function checkCapacityCaps(data) {
     const [bc0, bc1] = data.blockCount;
     const blocks = bc0 * bc1;
     if (blocks > TERRAIN_MAX_BLOCKS) {
@@ -811,6 +854,30 @@ export function validateTerrainCapacity(data) {
             `(${TERRAIN_MAX_WEIGHT_TEXELS}) — use fewer blocks or a smaller weight map`
         );
     }
+}
+
+/**
+ * Sizing fields + both caps, format rules waived (power-of-two `weightMapSize`, `tileSize`,
+ * `lightMapSize` range): for a batch that must rebuild buffers before its `set_info` repairs them.
+ * @param {object} data - Terrain data object (only the scalar fields are read)
+ * @throws {Error} naming the offending field
+ */
+export function validateTerrainAllocation(data) {
+    checkBlockCount(data);
+    checkWeightMapRange(data);
+    checkCapacityCaps(data);
+}
+
+/**
+ * The allocation guard on top of {@link validateTerrainGeometry}: refuses geometries whose
+ * buffers would not fit in a sane amount of memory. Exported so builders/ops can reject an
+ * oversized spec with their own message before anything is allocated.
+ * @param {object} data - Terrain data object (only the scalar fields are read)
+ * @throws {Error} when the geometry is invalid or exceeds the authoring caps
+ */
+export function validateTerrainCapacity(data) {
+    validateTerrainGeometry(data);
+    checkCapacityCaps(data);
 }
 
 /**
@@ -838,15 +905,20 @@ function consistentRawTileSize(data) {
  * come straight from a spec, so an unchecked pair would mean a multi-gigabyte allocation
  * long before {@link writeTerrain} ever validates anything.
  *
+ * `allowUnwritableGeometry` drops that to {@link validateTerrainAllocation}: still sized and
+ * capped, but a geometry the FORMAT refuses is accepted — the caller must replace it to write.
+ *
  * Returns a NEW data object; the input is not mutated. Use this to turn a sentinel into
  * a writable terrain before editing.
  *
  * @param {object} data - Terrain data object (e.g. from {@link readTerrain})
+ * @param {{allowUnwritableGeometry?: boolean}} [options]
  * @returns {object} Materialized data object, version V8
  * @throws {Error} when the geometry is invalid or exceeds the authoring caps
  */
-export function materialize(data) {
-    validateTerrainCapacity(data);
+export function materialize(data, options = {}) {
+    if (options.allowUnwritableGeometry) validateTerrainAllocation(data);
+    else validateTerrainCapacity(data);
     const blockCount = [data.blockCount[0], data.blockCount[1]];
     const expected = expectedCounts(blockCount, data.weightMapSize);
 
@@ -1137,14 +1209,13 @@ export function exportHeights(data, region = null, sampleCount = null) {
         cols = clamp(Math.max(2, Math.round(r.width / data.tileSize) + 1), 2, MAX_EXPORT_SAMPLES);
         rowCount = clamp(Math.max(2, Math.round(r.depth / data.tileSize) + 1), 2, MAX_EXPORT_SAMPLES);
         if (cols * rowCount > MAX_EXPORT_CELLS) {
-            // scale both axes by the same factor so the dump keeps the region's aspect
+            // Scale both axes alike to keep the aspect, then bound the product outright: today's
+            // constants make the sqrt enough, and the clamps hold for any others.
             const scale = Math.sqrt(MAX_EXPORT_CELLS / (cols * rowCount));
-            cols = Math.max(2, Math.floor(cols * scale));
-            rowCount = Math.max(2, Math.floor(rowCount * scale));
-            while (cols * rowCount > MAX_EXPORT_CELLS && (cols > 2 || rowCount > 2)) {
-                if (cols >= rowCount) cols = Math.max(2, cols - 1);
-                else rowCount = Math.max(2, rowCount - 1);
-            }
+            const colCap = Math.max(2, Math.floor(MAX_EXPORT_CELLS / 2));
+            cols = clamp(Math.max(2, Math.floor(cols * scale)), 2, colCap);
+            rowCount = clamp(Math.max(2, Math.floor(rowCount * scale)), 2,
+                Math.max(2, Math.floor(MAX_EXPORT_CELLS / cols)));
         }
     } else {
         const pair = Array.isArray(sampleCount) ? sampleCount : [sampleCount, sampleCount];

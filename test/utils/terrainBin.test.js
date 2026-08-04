@@ -22,6 +22,7 @@ import { fileURLToPath } from 'url';
 import {
     readTerrain,
     readTerrainInfo,
+    readTerrainLayout,
     writeTerrain,
     heightAt,
     weightAt,
@@ -52,6 +53,7 @@ import {
     removeLayer,
     validateTerrainGeometry,
     validateTerrainCapacity,
+    validateTerrainAllocation,
     maxLayerIndex,
     heightStats,
     isKnownVersion,
@@ -466,6 +468,83 @@ describe('terrainBin — readTerrainInfo', () => {
         assert.match(joined, /normals count 3 is neither 0 nor 3267/);
         // a mis-sized layerBuffer means no per-block table at all
         assert.deepStrictEqual(info2.blockLayers, []);
+    });
+});
+
+// The layer palette sits BEHIND the payload arrays, so it cannot be reached without walking them
+// — walking without copying is the point (~70 MB and the statistics sweep skipped).
+describe('terrainBin — readTerrainLayout', () => {
+    it('reads the same geometry and layers as the full parse, without the arrays', () => {
+        const full = readTerrain(fs.readFileSync(GOLDEN_TERRAIN));
+        const lite = readTerrainLayout(GOLDEN_TERRAIN);
+
+        assert.strictEqual(lite.payloadSkipped, true);
+        for (const key of ['version', 'isDefaultSentinel', 'tileSize', 'rawTileSize',
+            'weightMapSize', 'lightMapSize', 'payloadLength']) {
+            assert.strictEqual(lite[key], full[key], key);
+        }
+        assert.deepStrictEqual(lite.blockCount, full.blockCount);
+        assert.deepStrictEqual(lite.layers, full.layers, 'the layer palette is fully parsed');
+        assert.strictEqual(lite.payloadLength, GOLDEN.payload, 'it walked to the very end');
+
+        // the four big arrays are empty, and their counts are reported instead
+        assert.strictEqual(lite.heights.length, 0);
+        assert.strictEqual(lite.weights.length, 0);
+        assert.strictEqual(lite.normals.length, 0);
+        assert.strictEqual(lite.layerBuffer.length, 0);
+        assert.strictEqual(lite.heightCount, full.heights.length);
+        assert.strictEqual(lite.weightCount, full.weights.length);
+        assert.strictEqual(lite.layerBufferCount, full.layerBuffer.length);
+        assert.strictEqual(lite.normalCount, full.normals.length);
+    });
+
+    it('handles the sentinel and a non-terrain the same way readTerrain does', () => {
+        const sentinel = readTerrainLayout(GOLDEN_SENTINEL);
+        assert.strictEqual(sentinel.isDefaultSentinel, true);
+        assert.deepStrictEqual(sentinel.blockCount, [1, 1]);
+        assert.deepStrictEqual(sentinel.layers, []);
+        assert.strictEqual(readTerrain(Buffer.from([1, 2, 3, 4]), { skipPayload: true }), null);
+    });
+
+    it('reports the same structural corruption as the full read', () => {
+        const truncated = fs.readFileSync(GOLDEN_TERRAIN).subarray(0, 40);
+        assert.throws(() => readTerrain(truncated, { skipPayload: true }), /truncated|count/);
+    });
+});
+
+describe('terrainBin — validateTerrainAllocation', () => {
+    // For a batch repairing an unwritable geometry: waive the FORMAT rules, keep the caps.
+    const base = { blockCount: [1, 1], tileSize: 1, weightMapSize: 128, lightMapSize: 128 };
+
+    it('accepts a geometry the format refuses but memory does not', () => {
+        for (const bad of [{ weightMapSize: 3 }, { tileSize: 0 }, { lightMapSize: 99999 }]) {
+            const data = { ...base, ...bad };
+            assert.throws(() => validateTerrainGeometry(data), /terrain:/, JSON.stringify(bad));
+            assert.doesNotThrow(() => validateTerrainAllocation(data), JSON.stringify(bad));
+        }
+    });
+
+    it('still enforces the sizing fields and both caps', () => {
+        assert.throws(() => validateTerrainAllocation({ ...base, blockCount: [0, 1] }),
+            /blockCount\[0\] = 0 must be an integer >= 1/);
+        assert.throws(() => validateTerrainAllocation({ ...base, weightMapSize: 1 }),
+            /weightMapSize = 1 must be an integer in 2\.\.32767/);
+        assert.throws(() => validateTerrainAllocation({ ...base, blockCount: [4096, 4096] }),
+            /exceeds TERRAIN_MAX_BLOCKS/);
+        assert.throws(() => validateTerrainAllocation({ ...base, weightMapSize: 8192 }),
+            /over TERRAIN_MAX_WEIGHT_TEXELS/);
+    });
+
+    it('is what materialize drops to under allowUnwritableGeometry, and only then', () => {
+        const odd = { ...base, weightMapSize: 3 };
+        assert.throws(() => materialize(odd), /must be a power of two/);
+        const built = materialize(odd, { allowUnwritableGeometry: true });
+        assert.strictEqual(built.weights.length, 3 * 3 * 4);
+        assert.strictEqual(built.heights.length, 33 * 33);
+        // still not writable — the caller has to replace the value
+        assert.throws(() => validateTerrainData(built), /must be a power of two/);
+        assert.throws(() => materialize({ ...base, blockCount: [4096, 4096] },
+            { allowUnwritableGeometry: true }), /exceeds TERRAIN_MAX_BLOCKS/);
     });
 });
 

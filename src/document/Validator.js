@@ -14,7 +14,7 @@
 import * as path from 'path';
 import { isRef } from './SceneDocument.js';
 import { isBuiltin } from '../core/builtins.js';
-import { readTerrainInfo } from '../utils/terrainBin.js';
+import { readTerrainLayout } from '../utils/terrainBin.js';
 import { loadSourcePrefabByUuid } from './instances.js';
 import { fileIdTargets, overrideDeadReasons, mountedChildNodeIdxs } from './targetOverrides.js';
 import { eulerToQuat, quatApproxEquals } from '../utils/math3d.js';
@@ -544,7 +544,7 @@ export class Validator {
      */
     #checkTerrain(warnings) {
         const doc = this.#doc;
-        const infoCache = new Map(); // asset uuid → readTerrainInfo result | null
+        const infoCache = new Map(); // asset uuid → readTerrainLayout result | null
 
         doc.objects.forEach((obj, idx) => {
             if (obj.__type__ === 'cc.TerrainCollider') {
@@ -641,7 +641,10 @@ export class Validator {
         }
     }
 
-    /** readTerrainInfo for an asset uuid, cached; null when unavailable */
+    /**
+     * Geometry + layers of a terrain asset by uuid, cached; null when unavailable. Layout, not the
+     * full card: these checks read blockCount + layers, and `validate()` runs on every batch.
+     */
     #terrainAssetInfo(assetUuid, cache) {
         if (cache.has(assetUuid)) return cache.get(assetUuid);
         let info = null;
@@ -649,7 +652,7 @@ export class Validator {
             const resolved = this.#assetIndex.resolve(assetUuid);
             if (resolved?.entry.importer === 'terrain') {
                 try {
-                    info = readTerrainInfo(path.resolve(this.#projectRoot, resolved.entry.path));
+                    info = readTerrainLayout(path.resolve(this.#projectRoot, resolved.entry.path));
                 } catch {
                     info = null;
                 }

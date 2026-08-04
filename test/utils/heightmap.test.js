@@ -209,6 +209,28 @@ describe('heightmap: PNG decoding', () => {
             () => decodePng(makePng({ width: MAX_HEIGHTMAP_AXIS + 1, height: 1, idat: Buffer.alloc(0) })),
             new RegExp(`width must be an integer in 1\\.\\.${MAX_HEIGHTMAP_AXIS}`));
     });
+
+    // Unbounded, the size check ran only AFTER the whole stream was materialized: a small file
+    // whose IDAT expands to gigabytes spiked memory before being rejected. The IHDR is the bound.
+    it('bounds the inflate by the size the header declares', () => {
+        // 8x8 at 8 bit = 72 bytes expected; this IDAT inflates to 64 MiB
+        const bomb = makePng({ width: 8, height: 8, idat: Buffer.alloc(64 * 1024 * 1024) });
+        assert.ok(bomb.length < 100_000, `the file itself stays small (${bomb.length} bytes)`);
+
+        const before = process.memoryUsage().arrayBuffers;
+        assert.throws(
+            () => decodePng(bomb, 'heightmap.source "Art/bomb.png"'),
+            (err) => {
+                assert.ok(err instanceof HeightmapError);
+                assert.match(err.message, /heightmap\.source "Art\/bomb\.png"/);
+                assert.match(err.message, /inflates to more than the 72 bytes its header declares/);
+                assert.match(err.message, /8x8 at 8 bit/);
+                return true;
+            });
+        // the 64 MiB was never allocated (the bound throws inside zlib instead)
+        assert.ok(process.memoryUsage().arrayBuffers - before < 8 * 1024 * 1024,
+            'no multi-megabyte buffer was materialized');
+    });
 });
 
 describe('heightmap: raw decoding', () => {
