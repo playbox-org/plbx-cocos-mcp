@@ -16,6 +16,7 @@ import * as zlib from 'zlib';
 import { fileURLToPath } from 'url';
 
 import { BuildTerrain } from '../../src/tools/BuildTerrain.js';
+import { EditTerrain } from '../../src/tools/EditTerrain.js';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
 import { readTerrain, readTerrainInfo } from '../../src/utils/terrainBin.js';
 import { writeFileAtomic } from '../../src/utils/fsAtomic.js';
@@ -394,6 +395,61 @@ describe('BuildTerrain tool', () => {
         assert.match(tool.description, /use weightMapSize 32 or 64 for large maps/);
     });
 
+    // build_terrain and edit_terrain rendered near-identical PRIVATE copies of the same
+    // readTerrainInfo card, already diverged in number formatting, per-layer detail and the
+    // "no layers" wording — so building a terrain and then editing nothing described the
+    // very same bytes two different ways.
+    it('prints the same card as edit_terrain over the same bytes', async () => {
+        await build({
+            outputPath: 'assets/Maps/Shared.terrain',
+            spec: {
+                blockCount: [2, 1], tileSize: 2, weightMapSize: 16, baseHeight: 1.25,
+                layers: [
+                    { detailMap: 'Sprites/coin_bar.png', tileSize: 3, roughness: 0.5 },
+                    { detailMap: 'Sprites/panel.png', metallic: 0.25 },
+                ],
+                fillLayer: 0,
+            },
+        });
+        const built = fs.readFileSync(path.join(root, 'assets/Maps/Shared.terrain'));
+
+        // set_info with the terrain's own numbers is the documented no-op batch
+        const edited = await new EditTerrain().run({
+            terrainPath: 'assets/Maps/Shared.terrain',
+            ops: [{ op: 'set_info', tileSize: 2, blockCount: [2, 1], weightMapSize: 16 }],
+        }, root);
+        assert.ok(!edited.isError, text(edited));
+        assert.ok(fs.readFileSync(path.join(root, 'assets/Maps/Shared.terrain')).equals(built),
+            'the edit must be a no-op, else the two cards describe different bytes');
+
+        const card = cardOf(text(edited));
+        assert.strictEqual(cardOf(await buildText('assets/Maps/Shared.terrain')), card);
+        // and the card really carries the union of what the two copies used to print
+        assert.match(card, /Size: 128 x 64 m \(2 x 1 blocks, 65 x 33 vertices\)/);
+        assert.match(card, /tileSize: 2 m \| weightMapSize: 16 \(32 x 16 texels\)/);
+        assert.match(card, /0\. coin_bar\.png@6c48a \(tileSize 3 m, roughness 0\.5, metallic 0\) — used by 2 block\(s\), coverage 100\.0%/);
+        assert.match(card, /Block slots: \[0,-1,-1,-1\] \[0,-1,-1,-1\]/);
+        assert.match(card, /2 block\(s\) assign only channel R/);
+    });
+
+    /** The report of a rebuild over the same path, for a card-to-card comparison */
+    async function buildText(outputPath) {
+        const result = await build({
+            outputPath,
+            spec: {
+                blockCount: [2, 1], tileSize: 2, weightMapSize: 16, baseHeight: 1.25,
+                layers: [
+                    { detailMap: 'Sprites/coin_bar.png', tileSize: 3, roughness: 0.5 },
+                    { detailMap: 'Sprites/panel.png', metallic: 0.25 },
+                ],
+                fillLayer: 0,
+            },
+            overwrite: true,
+        });
+        assert.ok(!result.isError, text(result));
+        return text(result);
+    }
+
     it('keeps a small terrain free of the size note', async () => {
         const result = await build({ outputPath: 'assets/Maps/Small.terrain', spec: {} });
         assert.doesNotMatch(text(result), /Large asset/);
@@ -458,6 +514,15 @@ describe('writeFileAtomic', () => {
 });
 
 // --- helpers -----------------------------------------------------------------
+
+/** The `## Terrain` block of a report: contiguous lines up to the next blank one */
+function cardOf(report) {
+    const lines = report.split('\n');
+    const start = lines.indexOf('## Terrain');
+    assert.notStrictEqual(start, -1, `no card in:\n${report}`);
+    const end = lines.indexOf('', start);
+    return lines.slice(start, end === -1 ? undefined : end).join('\n');
+}
 
 /** Minimal 8-bit grayscale PNG (filter 0 rows) */
 function grayPng(width, height, samples) {

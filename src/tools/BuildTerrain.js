@@ -14,9 +14,11 @@ import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
 import { TerrainBuilder, TerrainBuildError } from '../document/TerrainBuilder.js';
 import { AssetIndex } from '../core/AssetIndex.js';
-import { serializeMeta, ensureParentDirMetas } from '../document/MetaGenerator.js';
+import { serializeMeta, ensureParentDirMetas, resolveAssetMeta } from '../document/MetaGenerator.js';
+import { resolveInAssets } from '../utils/assetPaths.js';
 import { writeFileAtomic } from '../utils/fsAtomic.js';
 import { readTerrainInfo } from '../utils/terrainBin.js';
+import { terrainCard } from './terrainCard.js';
 
 export class BuildTerrain extends BaseTool {
     get name() {
@@ -76,15 +78,13 @@ export class BuildTerrain extends BaseTool {
     }
 
     async execute(args, projectRoot) {
-        // realpath BOTH sides (as create_asset_meta does): a symlink under assets/ pointing
-        // outside the project must not pass the containment check. The output file does not
-        // exist yet, so resolve its closest existing ancestor and re-append the rest.
-        const assetsRoot = this.#realpath(path.resolve(projectRoot, 'assets'));
-        const outputPath = this.#realpathTarget(path.resolve(projectRoot, args.outputPath));
-        if (!outputPath.endsWith('.terrain')) {
+        // Containment is checked on RESOLVED paths (assetPaths.js): a symlink under assets/
+        // pointing outside the project must not pass it and take the write with it.
+        const { path: outputPath, requested, assetsRoot, inside } = resolveInAssets(projectRoot, args.outputPath);
+        if (!requested.endsWith('.terrain')) {
             return this.error('outputPath must end with .terrain');
         }
-        if (!outputPath.startsWith(assetsRoot + path.sep)) {
+        if (!inside) {
             return this.error('outputPath must be inside the project\'s assets/ directory');
         }
         // Whether the BINARY pre-existed decides both the overwrite guard and, further down,
@@ -113,29 +113,12 @@ export class BuildTerrain extends BaseTool {
             throw err;
         }
 
-        // Meta: reuse an existing one so overwrites keep the UUID; resolve it
-        // BEFORE writing the binary so a corrupt .meta aborts with nothing written
+        // Meta: reuse an existing one so overwrites keep the UUID; resolved
+        // BEFORE writing the binary so an unusable .meta aborts with nothing written
         const metaPath = `${outputPath}.meta`;
-        let uuid;
-        let newMeta = null;
-        if (fs.existsSync(metaPath)) {
-            try {
-                uuid = JSON.parse(fs.readFileSync(metaPath, 'utf-8')).uuid;
-            } catch (err) {
-                return this.error(`Cannot parse existing ${args.outputPath}.meta: ${err.message}\n\nNothing was written.`);
-            }
-            // A meta that parses but carries no uuid is unusable — importing it would
-            // mint a new UUID and orphan every reference. Refuse before writing.
-            if (typeof uuid !== 'string' || uuid === '') {
-                return this.error(
-                    `${args.outputPath}.meta has no "uuid" — delete it and re-run (a fresh .meta ` +
-                    'will be generated), or fix it by hand.\n\nNothing was written.'
-                );
-            }
-        } else {
-            newMeta = TerrainBuilder.createMeta();
-            uuid = newMeta.uuid;
-        }
+        const { uuid, newMeta, error } = resolveAssetMeta(
+            metaPath, args.outputPath, () => TerrainBuilder.createMeta());
+        if (error) return this.error(error);
 
         // Everything below touches the filesystem. `undo` unwinds exactly what THIS call
         // created, so a mid-way ENOSPC/EACCES/ENAMETOOLONG leaves no orphan binary, no
@@ -206,28 +189,6 @@ export class BuildTerrain extends BaseTool {
         return missing;
     }
 
-    /** Canonical path (symlinks resolved); the input itself when it does not exist */
-    #realpath(p) {
-        try { return fs.realpathSync(p); } catch { return p; }
-    }
-
-    /** Canonical path for a file that does not exist yet: realpath the closest existing ancestor */
-    #realpathTarget(target) {
-        const abs = path.resolve(target);
-        const rest = [];
-        let cur = abs;
-        for (;;) {
-            try {
-                return path.join(fs.realpathSync(cur), ...rest);
-            } catch {
-                const parent = path.dirname(cur);
-                if (parent === cur) return abs;
-                rest.unshift(path.basename(cur));
-                cur = parent;
-            }
-        }
-    }
-
     #report(args, uuid, newMeta, info, notes, assetIndex) {
         const lines = [
             `# Built ${args.outputPath}`,
@@ -235,7 +196,7 @@ export class BuildTerrain extends BaseTool {
             `UUID: ${uuid}${newMeta ? ' (new .meta written)' : ' (existing .meta kept)'}`,
             ''
         ];
-        lines.push(...this.#card(info, assetIndex));
+        lines.push(...terrainCard(info, assetIndex));
 
         const warnings = mergeWarnings(notes, info?.warnings ?? []);
         if (warnings.length) {
@@ -256,60 +217,6 @@ export class BuildTerrain extends BaseTool {
         );
         return lines.join('\n');
     }
-
-    /** readTerrainInfo card — the same numbers get_asset_info/query_terrain report */
-    #card(info, assetIndex) {
-        if (!info) return ['(the written file could not be re-read as a terrain — this is a bug)'];
-        const [w, d] = info.size;
-        const [vx, vz] = info.vertexCount;
-        const [ux, uz] = info.weightMapTexels;
-        const lines = [
-            '## Terrain',
-            `Size: ${w} x ${d} m (${info.blockCount[0]} x ${info.blockCount[1]} blocks, ${vx} x ${vz} vertices)`,
-            `tileSize: ${info.tileSize} m | weightMapSize: ${info.weightMapSize} (${ux} x ${uz} texels) | lightMapSize: ${info.lightMapSize}`,
-            `Height: ${fmt(info.heightMin)} .. ${fmt(info.heightMax)} m (mean ${fmt(info.heightMean)})${info.isFlat ? ' — flat' : ''}`,
-            `File: ${info.fileSize} bytes (${info.payloadLength} payload + ${info.padding} zero padding), ${info.versionLabel}`
-        ];
-        if (info.fileSize > LARGE_ASSET_BYTES) {
-            const blocks = info.blockCount[0] * info.blockCount[1];
-            const cheaper = Math.max(4, Math.min(info.weightMapSize, 32));
-            const weightBytes = blocks * info.weightMapSize * info.weightMapSize * 4;
-            const line = `Large asset: ${mb(info.fileSize)} (${mb(info.padding)} of it pow-2 padding); ` +
-                `${mb(weightBytes)} is weight data = ${blocks} blocks x ${info.weightMapSize}^2 texels x 4 channels.`;
-            lines.push(cheaper < info.weightMapSize
-                ? `${line} weightMapSize ${cheaper} would need about ` +
-                  `${mb(blocks * cheaper * cheaper * 4)} of weight data instead.`
-                : line);
-        }
-        if (info.layers.length === 0) {
-            lines.push('Layers: none');
-        } else {
-            lines.push('Layers:');
-            for (const layer of info.layers) {
-                const label = assetIndex?.label(layer.detailMapId) ?? layer.detailMapId;
-                const normal = layer.normalMapId
-                    ? `, normal ${assetIndex?.label(layer.normalMapId) ?? layer.normalMapId}`
-                    : '';
-                const blocks = info.layerUsage.find(u => u.slot === layer.slot)?.blocks.length ?? 0;
-                lines.push(
-                    `  ${layer.slot}. ${label} (tileSize ${layer.tileSize} m, roughness ${layer.roughness}, ` +
-                    `metallic ${layer.metallic}${normal}) — used by ${blocks} block(s)`
-                );
-            }
-        }
-        return lines;
-    }
-}
-
-/** Compact metre formatting: no trailing zeros, null-safe */
-function fmt(v) {
-    if (v === null || v === undefined) return 'n/a';
-    return String(Math.round(v * 1000) / 1000);
-}
-
-/** MB with one decimal, for the large-asset note */
-function mb(bytes) {
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /**
@@ -326,11 +233,3 @@ function mergeWarnings(notes, fileWarnings) {
         : fileWarnings;
     return [...notes, ...kept];
 }
-
-/**
- * Weight data dominates a terrain binary and grows with
- * `blockCount[0] * blockCount[1] * weightMapSize^2 * 4`, then the whole file is rounded
- * up to the next power of two. A perfectly ordinary "512 x 512 m" request lands 33 MB in
- * `assets/`, so anything above this says so, with the cheaper setting spelled out.
- */
-const LARGE_ASSET_BYTES = 8 * 1024 * 1024;

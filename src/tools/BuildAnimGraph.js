@@ -13,7 +13,8 @@ import { BaseTool } from './BaseTool.js';
 import { AnimGraphBuilder, AnimGraphBuildError } from '../document/AnimGraphBuilder.js';
 import { parseAnimGraph, formatAnimGraphText } from '../document/AnimGraphReader.js';
 import { AssetIndex } from '../core/AssetIndex.js';
-import { serializeMeta, ensureParentDirMetas } from '../document/MetaGenerator.js';
+import { serializeMeta, ensureParentDirMetas, resolveAssetMeta } from '../document/MetaGenerator.js';
+import { resolveInAssets } from '../utils/assetPaths.js';
 
 export class BuildAnimGraph extends BaseTool {
     get name() {
@@ -55,11 +56,13 @@ export class BuildAnimGraph extends BaseTool {
     }
 
     async execute(args, projectRoot) {
-        const outputPath = path.resolve(projectRoot, args.outputPath);
-        if (!outputPath.endsWith('.animgraph')) {
+        // Containment is checked on RESOLVED paths (assetPaths.js): a symlink under assets/
+        // pointing outside the project must not pass it and take the write with it.
+        const { path: outputPath, requested, assetsRoot, inside } = resolveInAssets(projectRoot, args.outputPath);
+        if (!requested.endsWith('.animgraph')) {
             return this.error('outputPath must end with .animgraph');
         }
-        if (!outputPath.startsWith(path.resolve(projectRoot, 'assets') + path.sep)) {
+        if (!inside) {
             return this.error('outputPath must be inside the project\'s assets/ directory');
         }
         if (fs.existsSync(outputPath) && !args.overwrite) {
@@ -78,21 +81,12 @@ export class BuildAnimGraph extends BaseTool {
             throw err;
         }
 
-        // Meta: reuse an existing one so overwrites keep the UUID; resolve it
-        // BEFORE writing the graph so a corrupt .meta aborts with nothing written
+        // Meta: reuse an existing one so overwrites keep the UUID; resolved
+        // BEFORE writing the graph so an unusable .meta aborts with nothing written
         const metaPath = `${outputPath}.meta`;
-        let uuid;
-        let newMeta = null;
-        if (fs.existsSync(metaPath)) {
-            try {
-                uuid = JSON.parse(fs.readFileSync(metaPath, 'utf-8')).uuid;
-            } catch (err) {
-                return this.error(`Cannot parse existing ${args.outputPath}.meta: ${err.message}\n\nNothing was written.`);
-            }
-        } else {
-            newMeta = AnimGraphBuilder.createMeta();
-            uuid = newMeta.uuid;
-        }
+        const { uuid, newMeta, error } = resolveAssetMeta(
+            metaPath, args.outputPath, () => AnimGraphBuilder.createMeta());
+        if (error) return this.error(error);
 
         fs.mkdirSync(path.dirname(outputPath), { recursive: true });
         doc.save(outputPath);
@@ -100,7 +94,7 @@ export class BuildAnimGraph extends BaseTool {
             fs.writeFileSync(metaPath, serializeMeta(newMeta), 'utf-8');
         }
         // Folders created by mkdirSync need their own metas too
-        ensureParentDirMetas(outputPath, path.resolve(projectRoot, 'assets'));
+        ensureParentDirMetas(outputPath, assetsRoot);
         AssetIndex.invalidate(projectRoot);
 
         const model = parseAnimGraph(doc.objects, assetIndex);

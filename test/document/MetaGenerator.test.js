@@ -6,7 +6,7 @@ import * as path from 'path';
 import {
     createMetaObject, writeMetaFile, ensureParentDirMetas, serializeMeta,
     classifyAsset, prefabMeta, animGraphMeta, terrainMeta, readImageSize, MetaGenerationError,
-    SIMPLE_TYPES
+    resolveAssetMeta, SIMPLE_TYPES
 } from '../../src/document/MetaGenerator.js';
 import { CreateAssetMeta } from '../../src/tools/CreateAssetMeta.js';
 
@@ -310,6 +310,71 @@ describe('MetaGenerator', () => {
         ]);
         assert.deepStrictEqual(readImageSize(trans, '.png'),
             { width: 2, height: 3, hasAlpha: true });
+    });
+
+    // The uuid the builders REPORT is the one the agent references the asset by. Every
+    // form that would make the editor mint a different one on import must abort the build.
+    describe('resolveAssetMeta (shared by build_prefab/build_animgraph/build_terrain)', () => {
+        let dir;
+
+        before(() => {
+            dir = path.join(root, 'resolve-meta');
+            fs.mkdirSync(dir, { recursive: true });
+        });
+
+        const mint = () => ({ ver: '1.1.50', importer: 'prefab', uuid: 'fresh-uuid' });
+
+        it('mints through the caller factory when no meta exists', () => {
+            const out = resolveAssetMeta(path.join(dir, 'none.prefab.meta'), 'assets/none.prefab', mint);
+            assert.strictEqual(out.error, null);
+            assert.strictEqual(out.uuid, 'fresh-uuid');
+            assert.strictEqual(out.newMeta.importer, 'prefab');
+        });
+
+        it('reuses the uuid of an existing meta and mints nothing', () => {
+            const metaPath = path.join(dir, 'kept.prefab.meta');
+            fs.writeFileSync(metaPath, JSON.stringify({ uuid: 'kept-uuid' }));
+            const out = resolveAssetMeta(metaPath, 'assets/kept.prefab', () => {
+                throw new Error('the factory must not run when a meta exists');
+            });
+            assert.deepStrictEqual(out, { uuid: 'kept-uuid', newMeta: null, error: null });
+        });
+
+        it('refuses an unparseable meta', () => {
+            const metaPath = path.join(dir, 'broken.prefab.meta');
+            fs.writeFileSync(metaPath, '{ not json');
+            const out = resolveAssetMeta(metaPath, 'assets/broken.prefab', mint);
+            assert.strictEqual(out.uuid, null);
+            assert.strictEqual(out.newMeta, null);
+            assert.match(out.error, /^Cannot parse existing assets\/broken\.prefab\.meta: /);
+            assert.match(out.error, /Nothing was written\.$/);
+        });
+
+        // A meta that parses but has no usable uuid used to yield `uuid === undefined`,
+        // printed as "UUID: undefined" while the asset landed on disk.
+        it('refuses a parsed meta with no usable uuid', () => {
+            for (const [name, body] of [
+                ['empty', {}],
+                ['blank', { uuid: '' }],
+                ['typed', { uuid: 42 }],
+                ['nulled', { uuid: null }]
+            ]) {
+                const metaPath = path.join(dir, `${name}.prefab.meta`);
+                fs.writeFileSync(metaPath, JSON.stringify(body));
+                const out = resolveAssetMeta(metaPath, `assets/${name}.prefab`, mint);
+                assert.strictEqual(out.uuid, null, name);
+                assert.strictEqual(out.newMeta, null, name);
+                assert.match(out.error, new RegExp(`^assets/${name}\\.prefab\\.meta has no "uuid"`));
+                assert.match(out.error, /Nothing was written\.$/);
+            }
+        });
+
+        it('leaves the offending meta on disk for the user to fix', () => {
+            const metaPath = path.join(dir, 'untouched.prefab.meta');
+            fs.writeFileSync(metaPath, '{}');
+            resolveAssetMeta(metaPath, 'assets/untouched.prefab', mint);
+            assert.strictEqual(fs.readFileSync(metaPath, 'utf-8'), '{}');
+        });
     });
 
     it('should not treat sibling "assets-backup" dirs as inside assets root', () => {

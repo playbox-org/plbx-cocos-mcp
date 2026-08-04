@@ -91,7 +91,13 @@ export class PropertyExtractor {
                 // field that WAS visible on main past the prop cap (review #4).
                 (NEW_VALUE_TYPES.has(value.__type__) ? deferredNew : deferredValueTypes)
                     .push([key, extracted]);
-            } else if (this.#isComplex(extracted) && !this.#isRefArray(value)) {
+            } else if (this.#isComplex(extracted) && !this.#isRefArray(value)
+                && this.#mainStructLabel(value) === null) {
+                // A struct main rendered inline as →<ownerNode> keeps its slot:
+                // detailed mode only makes the VALUE richer (expanded fields),
+                // and deferring it would drop a main-visible field under the
+                // text prop cap — the same rule #isNewStructLabel applies in
+                // compact mode, read off the same criterion.
                 deferredNew.push([key, extracted]);
             } else if (this.#isNewStructLabel(value)) {
                 // Compact-mode struct fallback LABEL (a string) for a data struct
@@ -238,11 +244,26 @@ export class PropertyExtractor {
         if (typeof value !== 'object' || value === null) return false;
         if (!('__id__' in value) || '__uuid__' in value) return false;
         if (this.#resolveRef(value.__id__)) return false; // resolved by name → visible on main
+        return this.#mainStructLabel(value) === null; // dropped on main → newly surfaced
+    }
+
+    /**
+     * The label main's UNGUARDED back-ref heuristic produced for this {__id__}
+     * ref to a data struct — the name of its owning node — or null when main
+     * dropped the field (unnamed/absent owner). Single source for the "was this
+     * field visible on main?" decision, shared by both modes: compact defers the
+     * newly-surfaced →<type> fallback, detailed defers the newly-surfaced
+     * expanded object. Value-type/scalar arrays and non-refs are not struct refs
+     * at all → null (nothing to preserve, they defer strictly last).
+     */
+    #mainStructLabel(value) {
+        if (typeof value !== 'object' || value === null) return null;
+        if (!('__id__' in value) || '__uuid__' in value) return null;
         const target = this.#sceneParser.getObject(value.__id__);
-        if (!this.#isDataStruct(target, value.__id__)) return false;
+        if (!this.#isDataStruct(target, value.__id__)) return null;
         const ownerId = target.node?.__id__;
         const owner = ownerId !== undefined ? this.#sceneParser.getObject(ownerId) : null;
-        return !owner?._name; // no named owner → dropped on main → newly surfaced
+        return owner?._name || null;
     }
 
     /** Compact-mode label for an unexpanded data struct: →<ownerNode>, else →<type> */

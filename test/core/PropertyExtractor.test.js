@@ -851,6 +851,62 @@ describe('PropertyExtractor', () => {
             assert.strictEqual(keys[0], 'cfg'); // NOT deferred — keeps its main slot
         });
 
+        it('#1: detailed mode keeps the SLOT of a struct main showed as →owner', () => {
+            // Same shape as the compact test above, in detailed mode: the struct
+            // now expands into an object, but the field WAS visible on main
+            // (→Owner via the back-ref) — the richer value is additive, the
+            // position must not move behind the text prop cap.
+            const objects = [
+                { __type__: 'cc.Node', _name: 'Owner', _components: [{ __id__: 1 }] },
+                { __type__: 'Holder', node: { __id__: 0 }, cfg: { __id__: 2 },
+                    a: 1, b: 2, c: 3, d: 4 },
+                { __type__: 'CfgStruct', node: { __id__: 0 }, speed: 5, power: 7 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const props = new PropertyExtractor(parser, { detailed: true }).extract(objects[1]);
+
+            assert.deepStrictEqual(Object.keys(props), ['cfg', 'a', 'b', 'c', 'd']);
+            // …and the expansion (this branch's added detail) is still there
+            assert.strictEqual(props.cfg.__struct__, 'CfgStruct');
+            assert.strictEqual(props.cfg.speed, 5);
+            assert.strictEqual(props.cfg.node, '→Owner#0');
+        });
+
+        it('#1: detailed mode still defers a struct main DROPPED (no named owner)', () => {
+            // Counterpart of the above: no `node` back-ref at all, so main
+            // rendered nothing — the expansion is newly surfaced and goes
+            // strictly last, behind the four scalars main showed.
+            const objects = [
+                { __type__: 'CfgStruct', speed: 5, power: 7 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const keys = Object.keys(new PropertyExtractor(parser, { detailed: true }).extract({
+                __type__: 'Holder', cfg: { __id__: 0 }, a: 1, b: 2, c: 3, d: 4
+            }));
+            assert.deepStrictEqual(keys, ['a', 'b', 'c', 'd', 'cfg']);
+        });
+
+        it('#1: an unnamed owner does not rescue the slot either', () => {
+            // main's back-ref heuristic needed a NON-EMPTY _name; an owner with
+            // an empty name resolved to null there, so the field is still new.
+            const objects = [
+                { __type__: 'cc.Node', _name: '', _components: [] },
+                { __type__: 'CfgStruct', node: { __id__: 0 }, speed: 5 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const component = { __type__: 'Holder', cfg: { __id__: 1 }, a: 1, b: 2, c: 3, d: 4 };
+
+            assert.deepStrictEqual(
+                Object.keys(new PropertyExtractor(parser, { detailed: true }).extract(component)),
+                ['a', 'b', 'c', 'd', 'cfg']);
+            assert.deepStrictEqual(
+                Object.keys(new PropertyExtractor(parser).extract(component)),
+                ['a', 'b', 'c', 'd', 'cfg']);
+        });
+
         it('#4: cc.Mat4 is deferred behind a value-type scalar visible on main', () => {
             const extractor = new PropertyExtractor(new MockSceneParser());
             const keys = Object.keys(extractor.extract({

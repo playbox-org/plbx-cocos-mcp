@@ -31,7 +31,8 @@ import {
     setBlockLayers,
     setWeightAtTexel,
     heightAt,
-    readTerrain
+    readTerrain,
+    readTerrainInfo
 } from '../../src/utils/terrainBin.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -827,5 +828,122 @@ describe('QueryTerrain — review regressions', () => {
         const text = await ok({ terrainPath: MOCK_TERRAIN }, MOCK_PROJECT);
         assert.match(text, /^slot +detailMap +tileSize\(m\) +normalMap/m);
         assert.match(text, /tileSize is metres per texture repeat/);
+    });
+
+    // The tool used to readTerrain() the buffer and then call readTerrainInfo(), which
+    // reads and parses the very same file again. The card is now built off the first
+    // parse — with the FILE's byte counts, not the ones a write would produce.
+    it('reports the same card as readTerrainInfo from a single parse', async () => {
+        for (const [rel, root] of [
+            [GOLDEN_REL, REPO_ROOT],       // 131 072 bytes: payload + pow-2 zero padding
+            [SENTINEL_REL, REPO_ROOT],     // 2048-byte sentinel, 4-byte payload
+            [MOCK_TERRAIN, MOCK_PROJECT]
+        ]) {
+            const abs = join(root, rel);
+            const card = readTerrainInfo(abs);
+            const model = await json({ terrainPath: rel }, root);
+            assert.strictEqual(model.file.size, card.fileSize, rel);
+            assert.strictEqual(model.file.payloadLength, card.payloadLength, rel);
+            assert.strictEqual(model.file.padding, card.padding, rel);
+            assert.strictEqual(model.file.size, fs.statSync(abs).size, rel);
+            assert.strictEqual(model.terrain.heightCount, card.heightCount, rel);
+            assert.strictEqual(model.terrain.weightCount, card.weightCount, rel);
+            assert.deepStrictEqual(model.warnings.slice(0, card.warnings.length), card.warnings, rel);
+        }
+    });
+
+    // The per-block sweep is weightMapSize^2 * 4 reads per block; it used to run even
+    // when the table was suppressed, where only the row COUNT is ever read.
+    it('reports the block count without the table, in both suppressed modes', async () => {
+        const dir = fs.mkdtempSync(join(os.tmpdir(), 'qt-blocks-'));
+        try {
+            const data = materialize({
+                blockCount: [9, 9], tileSize: 1, weightMapSize: 4, lightMapSize: 4, layers: []
+            });
+            fs.writeFileSync(join(dir, 'big.terrain'), writeTerrain(data));
+
+            // over BLOCK_TABLE_AUTO_LIMIT: budget-omitted, count still exact
+            const auto = await json({ terrainPath: 'big.terrain' }, dir);
+            assert.strictEqual(auto.blocks, null);
+            assert.strictEqual(auto.blockCountTotal, 81);
+            assert.strictEqual(auto.blocksOmitted, 'budget');
+            assert.match(await ok({ terrainPath: 'big.terrain' }, dir),
+                /Table omitted for 81 blocks/);
+
+            // explicitly suppressed: same count, and the omission stays unacknowledged
+            const off = await json({ terrainPath: 'big.terrain', blocks: false }, dir);
+            assert.strictEqual(off.blocks, null);
+            assert.strictEqual(off.blockCountTotal, 81);
+            assert.strictEqual(off.blocksOmitted, 'requested');
+
+            // and the forced table still carries every row
+            const forced = await json({ terrainPath: 'big.terrain', blocks: true }, dir);
+            assert.strictEqual(forced.blockCountTotal, 81);
+            assert.strictEqual(forced.blocks.length, 81);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    // heightAt/weightAt return null for a mis-sized buffer as well as for an
+    // out-of-range point; reporting "outside the terrain" for a point the same
+    // record calls inside blamed the caller for a property of the FILE.
+    it('names the file, not the coordinates, when an in-bounds sample has no data', async () => {
+        const dir = fs.mkdtempSync(join(os.tmpdir(), 'qt-mis-sized-'));
+        try {
+            // A valid 1x1-block file whose header is then rewritten to claim 2x2 blocks:
+            // every buffer is mis-sized for the declared geometry, which is exactly the
+            // state the engine re-materializes on load. blockCount sits at bytes 12/16.
+            const bytes = Buffer.from(writeTerrain(materialize({
+                blockCount: [1, 1], tileSize: 1, weightMapSize: 4, lightMapSize: 4, layers: []
+            })));
+            bytes.writeInt32LE(2, 12);
+            bytes.writeInt32LE(2, 16);
+            fs.writeFileSync(join(dir, 'mis-sized.terrain'), bytes);
+
+            const model = await json({
+                terrainPath: 'mis-sized.terrain',
+                heightAt: [[0.5, 0.5], [-1, 0.5]],
+                weightAt: [[0.5, 0.5], [-1, 0.5]]
+            }, dir);
+
+            const [inBounds, outside] = model.heightSamples;
+            assert.strictEqual(inBounds.inside, true);
+            assert.strictEqual(inBounds.height, null);
+            assert.doesNotMatch(inBounds.reason, /outside the terrain/);
+            assert.match(inBounds.reason, /in bounds — the file has no usable height grid/);
+            assert.match(inBounds.reason, /Warnings/);
+            assert.strictEqual(outside.inside, false);
+            assert.strictEqual(outside.reason, 'outside the terrain');
+
+            const [wIn, wOut] = model.weightSamples;
+            assert.strictEqual(wIn.weights, null);
+            assert.match(wIn.reason, /in bounds — the file has no usable weight map/);
+            assert.strictEqual(wOut.reason, 'outside the terrain');
+
+            // the structural cause the reason points at
+            assert.ok(model.warnings.some((w) => /heights count 1089 != 4225 expected/.test(w)),
+                model.warnings.join('\n'));
+            assert.ok(model.warnings.some((w) => /weights count 64 != 256 expected/.test(w)),
+                model.warnings.join('\n'));
+
+            // a mis-sized layerBuffer keeps the block table empty, silently
+            assert.strictEqual(model.blockCountTotal, 0);
+            assert.strictEqual(model.blocks, null);
+            assert.strictEqual(model.blocksOmitted, null);
+            assert.doesNotMatch(await ok({ terrainPath: 'mis-sized.terrain' }, dir), /## Blocks/);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    // The sentinel has no buffers at all, and says so in its own words
+    it('keeps the sentinel wording for an in-bounds sample on an empty terrain', async () => {
+        const model = await json({
+            terrainPath: SENTINEL_REL, heightAt: [[1, 1]], weightAt: [[1, 1]]
+        }, REPO_ROOT);
+        assert.strictEqual(model.heightSamples[0].inside, true);
+        assert.match(model.heightSamples[0].reason, /empty default terrain — no height data yet/);
+        assert.match(model.weightSamples[0].reason, /empty default terrain — no weight data yet/);
     });
 });

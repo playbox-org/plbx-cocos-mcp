@@ -14,7 +14,8 @@ import { PrefabBuilder, PrefabBuildError } from '../document/PrefabBuilder.js';
 import { Validator } from '../document/Validator.js';
 import { renderSubtree } from '../document/MiniTree.js';
 import { AssetIndex } from '../core/AssetIndex.js';
-import { serializeMeta, ensureParentDirMetas } from '../document/MetaGenerator.js';
+import { serializeMeta, ensureParentDirMetas, resolveAssetMeta } from '../document/MetaGenerator.js';
+import { resolveInAssets } from '../utils/assetPaths.js';
 
 export class BuildPrefab extends BaseTool {
     get name() {
@@ -62,11 +63,13 @@ export class BuildPrefab extends BaseTool {
     }
 
     async execute(args, projectRoot) {
-        const outputPath = path.resolve(projectRoot, args.outputPath);
-        if (!outputPath.endsWith('.prefab')) {
+        // Containment is checked on RESOLVED paths (assetPaths.js): a symlink under assets/
+        // pointing outside the project must not pass it and take the write with it.
+        const { path: outputPath, requested, assetsRoot, inside } = resolveInAssets(projectRoot, args.outputPath);
+        if (!requested.endsWith('.prefab')) {
             return this.error('outputPath must end with .prefab');
         }
-        if (!outputPath.startsWith(path.resolve(projectRoot, 'assets') + path.sep)) {
+        if (!inside) {
             return this.error('outputPath must be inside the project\'s assets/ directory');
         }
         if (fs.existsSync(outputPath) && !args.overwrite) {
@@ -94,21 +97,12 @@ export class BuildPrefab extends BaseTool {
             );
         }
 
-        // Meta: reuse an existing one so overwrites keep the UUID; resolve it
-        // BEFORE writing the prefab so a corrupt .meta aborts with nothing written
+        // Meta: reuse an existing one so overwrites keep the UUID; resolved
+        // BEFORE writing the prefab so an unusable .meta aborts with nothing written
         const metaPath = `${outputPath}.meta`;
-        let uuid;
-        let newMeta = null;
-        if (fs.existsSync(metaPath)) {
-            try {
-                uuid = JSON.parse(fs.readFileSync(metaPath, 'utf-8')).uuid;
-            } catch (err) {
-                return this.error(`Cannot parse existing ${args.outputPath}.meta: ${err.message}\n\nNothing was written.`);
-            }
-        } else {
-            newMeta = PrefabBuilder.createMeta(doc.getObject(0)._name);
-            uuid = newMeta.uuid;
-        }
+        const { uuid, newMeta, error } = resolveAssetMeta(
+            metaPath, args.outputPath, () => PrefabBuilder.createMeta(doc.getObject(0)._name));
+        if (error) return this.error(error);
 
         fs.mkdirSync(path.dirname(outputPath), { recursive: true });
         doc.save(outputPath);
@@ -116,7 +110,7 @@ export class BuildPrefab extends BaseTool {
             fs.writeFileSync(metaPath, serializeMeta(newMeta), 'utf-8');
         }
         // Folders created by mkdirSync need their own metas too
-        ensureParentDirMetas(outputPath, path.resolve(projectRoot, 'assets'));
+        ensureParentDirMetas(outputPath, assetsRoot);
         AssetIndex.invalidate(projectRoot);
         const metaCreated = newMeta !== null;
 

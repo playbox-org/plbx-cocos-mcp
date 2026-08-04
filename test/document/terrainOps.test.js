@@ -44,6 +44,7 @@ import {
     weightMapDims,
     blockLayers,
     setBlockLayers,
+    validateTerrainData,
     terrainSize,
     vertexCounts,
     heightToRaw,
@@ -1046,6 +1047,18 @@ describe('terrainOps — paint_layer', () => {
             /"falloff" must be in 0\.\.Infinity metres/
         );
     });
+
+    it('reports the texel spacing when a region catches no texel', () => {
+        // weightMapSize 2 puts texels on the block's near and far edge only, 32 / (2 - 1) = 32 m
+        // apart — the same endpoint-inclusive figure query_terrain prints.
+        const data = terrain({ weightMapSize: 2, layers: 1 });
+        assert.throws(
+            () => apply(data, {
+                op: 'paint_layer', layer: 0, weight: 1, region: { x: 5, z: 5, width: 2, depth: 2 },
+            }),
+            /contains no weight texel — texels sit every 32 m \(weightMapSize 2 per block side\)/
+        );
+    });
 });
 
 describe('terrainOps — T4 review regressions', () => {
@@ -1340,6 +1353,86 @@ describe('terrainOps — set_block_layers', () => {
             /"block" must be \[x, z\] integer block coordinates or "all"/
         );
         assert.deepStrictEqual(blockLayers(data, 0, 0), [0, 1, -1, -1], 'nothing changed');
+    });
+});
+
+describe('terrainOps — a geometry the binary format cannot store', () => {
+    /**
+     * A terrain whose stored `weightMapSize` is not a power of two. The engine loads such a
+     * file (plain i16, no power-of-two check anywhere in `cocos/terrain/`), `writeTerrain`
+     * refuses it — so it has to be built by hand here, `materialize` validating the geometry.
+     */
+    function oddWeightMapTerrain(weightMapSize = 6) {
+        const data = terrain({ layers: 1 });
+        data.weightMapSize = weightMapSize;
+        data.weights = new Uint8Array(weightMapSize * weightMapSize * 4);
+        for (let i = 0; i < data.weights.length; i += 4) data.weights[i] = 255;
+        return data;
+    }
+
+    it('is refused before the first op, naming the file and not the ops', () => {
+        const data = oddWeightMapTerrain();
+        assert.throws(() => validateTerrainData(data), /weightMapSize = 6 must be a power of two/,
+            'the write path would reject this file whatever the batch does');
+        const heights = Uint16Array.from(data.heights);
+        assert.throws(
+            () => apply(data, { op: 'adjust_heights', delta: 3 }),
+            (err) => {
+                assert.ok(err instanceof TerrainOpError);
+                assert.match(err.message, /cannot be written back at all: weightMapSize = 6 must be a power of two/);
+                assert.match(err.message, /Nothing is wrong with the requested ops/);
+                assert.match(err.message, /"op": "set_info"/);
+                return true;
+            }
+        );
+        assert.deepStrictEqual([...data.heights], [...heights], 'no op ran');
+    });
+
+    it('does not take a RESTATE of the bad size as the repair', () => {
+        assert.throws(
+            () => apply(oddWeightMapTerrain(), { op: 'set_info', weightMapSize: 6 }),
+            /cannot be written back at all: weightMapSize = 6 must be a power of two/
+        );
+    });
+
+    it('runs the batch when a set_info introduces a writable size', () => {
+        const data = oddWeightMapTerrain();
+        const { results } = apply(
+            data,
+            { op: 'set_info', weightMapSize: 4 },
+            { op: 'paint_layer', layer: 0, weight: 1 },
+        );
+        assert.match(results[0].summary, /weightMapSize 6 -> 4/);
+        assert.strictEqual(data.weightMapSize, 4);
+        assert.strictEqual(data.weights.length, 4 * 4 * 4);
+        assert.doesNotThrow(() => validateTerrainData(data));
+    });
+
+    // The guard asks terrainBin about the WHOLE scalar geometry, so a field other than
+    // weightMapSize gets the same early, honest refusal instead of dying after the batch.
+    it('covers the other geometry fields the format refuses', () => {
+        const zeroTile = terrain({ layers: 1 });
+        zeroTile.tileSize = 0;
+        assert.throws(
+            () => apply(zeroTile, { op: 'adjust_heights', delta: 1 }),
+            /cannot be written back at all: tileSize must be a finite number > 0, got 0/
+        );
+        // …and a set_info that replaces it lets the batch through
+        const { results } = apply(zeroTile, { op: 'set_info', tileSize: 1 });
+        assert.match(results[0].summary, /tileSize 0 -> 1 m/);
+        assert.doesNotThrow(() => validateTerrainData(zeroTile));
+    });
+
+    it('leaves a writable size outside the editor panel editable', () => {
+        // 2 is below the panel's smallest map, so `checkWeightMapSize` refuses to INTRODUCE it
+        // — but it is a writable power of two, and a file already holding one must stay
+        // editable, restated info block and all.
+        const data = terrain({ weightMapSize: 2, layers: 1 });
+        const { results } = apply(data, { op: 'set_info', weightMapSize: 2, tileSize: 2 });
+        assert.strictEqual(data.weightMapSize, 2);
+        assert.strictEqual(data.tileSize, 2);
+        assert.match(results[0].summary, /tileSize 1 -> 2 m/);
+        assert.doesNotThrow(() => validateTerrainData(data));
     });
 });
 

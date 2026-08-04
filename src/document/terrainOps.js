@@ -31,6 +31,7 @@
 
 import {
     materialize,
+    validateTerrainGeometry,
     validateTerrainCapacity,
     expectedCounts,
     heightToRaw,
@@ -593,7 +594,10 @@ function setInfo(data, op) {
         // The weight/light map guards are AUTHORING conventions (the editor panel's four
         // sizes), so they only apply to a value this op actually introduces. Restating the
         // file's own size — as an LLM does when it passes the whole info block back — must
-        // never fail, or a terrain already outside the guard could not be edited at all.
+        // never fail, or a terrain already outside the guard could not be edited at all. A size
+        // the BINARY format cannot store is a different case and never reaches here:
+        // `applyTerrainOperations` refuses such a file up front, so this exemption only ever
+        // waves through sizes that are writable (2048, say — outside the panel, inside i16).
         weightMapSize: op.weightMapSize === undefined || op.weightMapSize === data.weightMapSize
             ? data.weightMapSize
             : shared(() => checkWeightMapSize(op.weightMapSize, 'weightMapSize')),
@@ -1207,8 +1211,7 @@ function paintLayer(data, op, ctx) {
     if (touched.size === 0) {
         throw new TerrainOpError(
             `region ${describeRegion(data, r)} contains no weight texel — texels sit every ` +
-            `${fmt((TERRAIN_BLOCK_TILE_COMPLEXITY * data.tileSize) / Math.max(1, data.weightMapSize - 1))} m ` +
-            `(weightMapSize ${data.weightMapSize} per block side)`
+            `${fmt(texelSpacing(data))} m (weightMapSize ${data.weightMapSize} per block side)`
         );
     }
 
@@ -1689,6 +1692,38 @@ function leftPackBlock(data, bx, by) {
     return true;
 }
 
+/** The geometry fields `set_info` can replace — i.e. the ones a bad file can be repaired through */
+const SIZING_FIELDS = ['blockCount', 'tileSize', 'weightMapSize', 'lightMapSize'];
+
+/**
+ * Whether the geometry a file already stores can be written back at all. The question is put to
+ * `terrainBin` — rather than re-deriving the rules here — so the answer, and the message naming
+ * the offending field, stay the format's own. Only the SCALAR half is asked: buffer sizes are
+ * `prepare()`'s business, which rebuilds them.
+ * @param {object} data - Terrain data object
+ * @returns {string|null} The message the write would fail with, or null when the geometry is fine
+ */
+function geometryWriteError(data) {
+    try {
+        validateTerrainGeometry(data);
+        return null;
+    } catch (err) {
+        return err.message.replace(/^terrain: /, '');
+    }
+}
+
+/** Whether the batch REPLACES a sizing field — a restate of the stored value is not a repair */
+function repairsGeometry(ops, data) {
+    return ops.some((op) => op?.op === 'set_info' && SIZING_FIELDS.some((field) => {
+        const value = op[field];
+        if (value === undefined) return false;
+        const stored = data[field];
+        return Array.isArray(value) || Array.isArray(stored)
+            ? JSON.stringify(value) !== JSON.stringify(stored)
+            : value !== stored;
+    }));
+}
+
 /**
  * Apply a batch of operations in order, all-or-nothing. Throws on the first failing op, at
  * which point `data` is partially modified and MUST be discarded — the caller writes only on
@@ -1703,6 +1738,23 @@ function leftPackBlock(data, bx, by) {
 export function applyTerrainOperations(data, ops, ctx = {}) {
     if (!Array.isArray(ops) || ops.length === 0) {
         throw new TerrainOpError('ops must be a non-empty array');
+    }
+    // A stored geometry the binary format cannot represent makes the file unwritable: the caller
+    // validates the whole data object before writing, so every op would run and then be discarded
+    // with "the edits produced an invalid terrain", blaming the batch for a property of the file.
+    // Refuse before the first op instead — unless the batch REPLACES the offending number, which
+    // is the only repair and must stay an explicit op: `set_info` rebuilds the buffers onto the
+    // new geometry, and that is a data change nobody may make on the caller's behalf.
+    const geometryError = geometryWriteError(data);
+    if (geometryError && !repairsGeometry(ops, data)) {
+        throw new TerrainOpError(
+            `this .terrain cannot be written back at all: ${geometryError}. Nothing is wrong with ` +
+            'the requested ops — the value is what the FILE already stores (the engine accepts it, ' +
+            'the binary format does not), so no edit can be saved while it stands. Repair it inside ' +
+            'the batch: put a {"op": "set_info", ...} replacing that value first (weightMapSize 128, ' +
+            'say, or another power of two the editor offers), which rebuilds the terrain onto the ' +
+            'new geometry'
+        );
     }
     const notes = [];
     prepare(data, notes);

@@ -181,6 +181,46 @@ export function writeMetaFile(absPath, options = {}) {
 }
 
 /**
+ * The UUID an asset write must report and keep: the one an existing `.meta` already
+ * carries, or a fresh meta's.
+ *
+ * Every builder resolves this BEFORE writing the asset bytes, so an unusable `.meta`
+ * aborts the call with nothing on disk. Both refusals exist for the same reason: a meta
+ * that does not parse, and one that parses without a `uuid`, both make the editor mint
+ * its OWN uuid on import — orphaning every reference made against the uuid this call
+ * reported.
+ *
+ * @param {string} metaPath - `<asset>.meta`, absolute
+ * @param {string} displayPath - The asset path as the caller's argument spelled it, for messages
+ * @param {() => object} mint - Fresh meta factory; called only when no meta exists
+ * @returns {{uuid: string|null, newMeta: object|null, error: string|null}}
+ *          `newMeta` non-null when it still has to be written next to the asset
+ */
+export function resolveAssetMeta(metaPath, displayPath, mint) {
+    if (!fs.existsSync(metaPath)) {
+        const newMeta = mint();
+        return { uuid: newMeta.uuid, newMeta, error: null };
+    }
+    let uuid;
+    try {
+        uuid = JSON.parse(fs.readFileSync(metaPath, 'utf-8')).uuid;
+    } catch (err) {
+        return {
+            uuid: null, newMeta: null,
+            error: `Cannot parse existing ${displayPath}.meta: ${err.message}\n\nNothing was written.`
+        };
+    }
+    if (typeof uuid !== 'string' || uuid === '') {
+        return {
+            uuid: null, newMeta: null,
+            error: `${displayPath}.meta has no "uuid" — delete it and re-run (a fresh .meta ` +
+                'will be generated), or fix it by hand.\n\nNothing was written.'
+        };
+    }
+    return { uuid, newMeta: null, error: null };
+}
+
+/**
  * Every folder under assets/ needs its own meta. Walk from `absPath`'s parent
  * up to (excluding) `assetsRoot` — the assets root itself has no meta — and
  * create the missing ones.

@@ -473,6 +473,21 @@ describe('EditTerrain — T4 review regressions', () => {
         assert.match(report, /block\(s\) assign only channel R — the shader draws that layer flat over the whole block there/);
     });
 
+    // The large-asset advice lived only in build_terrain's private copy of the card, so a
+    // set_info that grew a terrain into tens of MB said nothing about the cost.
+    it('flags a large asset in the card, like build_terrain does', async () => {
+        const { rel, abs, before } = fresh('Grown');
+        const report = await ok({
+            terrainPath: rel,
+            ops: [{ op: 'set_info', blockCount: [16, 16], weightMapSize: 128 }],
+            dryRun: true,
+        });
+        assert.match(report, /Large asset: 32\.0 MB/);
+        assert.match(report, /pow-2 padding/);
+        assert.match(report, /weightMapSize 32 would need about/);
+        assert.ok(fs.readFileSync(abs).equals(before), 'dryRun must not write');
+    });
+
     it('labels rows-sourced errors and notes as "rows", never "heightmap"', async () => {
         const { rel } = fresh('Rows');
         const err = await fails({ terrainPath: rel, ops: [{ op: 'set_heights', rows: [[0, 1, 2], [1, 2]] }] });

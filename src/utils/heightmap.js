@@ -30,6 +30,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as zlib from 'zlib';
+import { realpathOrSelf } from './assetPaths.js';
 
 /** Thrown for every bad heightmap input; builders wrap it in their own error type. */
 export class HeightmapError extends Error {}
@@ -458,10 +459,6 @@ export function resolveHeightmapPath(source, projectRoot) {
     throw new HeightmapError(
         `heightmap.source not found: "${source}" (looked relative to the project root and to assets/)`
     );
-}
-
-function realpathOrSelf(p) {
-    try { return fs.realpathSync(p); } catch { return p; }
 }
 
 /**

@@ -25,7 +25,7 @@ import { BaseTool } from './BaseTool.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 import {
     readTerrain,
-    readTerrainInfo,
+    terrainInfoFromData,
     heightAt,
     weightAt,
     exportHeights,
@@ -204,16 +204,24 @@ export class QueryTerrain extends BaseTool {
                 );
             }
 
-            const data = readTerrain(fs.readFileSync(filePath));
+            const buf = fs.readFileSync(filePath);
+            const data = readTerrain(buf);
             if (!data) {
                 return this.error(
                     `${args.terrainPath} is not a Cocos Creator .terrain binary ` +
                     '(unrecognized version magic in the first 4 bytes)'
                 );
             }
-            // Same file, second pass: readTerrainInfo() owns the card + the
-            // format-level warning list and takes a path, not a buffer.
-            const info = readTerrainInfo(filePath);
+            // The card + the format-level warning list, off the SAME parse:
+            // readTerrainInfo() is readFileSync + readTerrain + this call, so going
+            // through it here would read and parse the file a second time. The
+            // file-level numbers must come from the FILE, not from what a write
+            // would produce, hence the explicit fileSize/payloadLength.
+            const info = terrainInfoFromData(data, {
+                filePath,
+                fileSize: buf.length,
+                payloadLength: data.payloadLength
+            });
 
             const sections = parseSections(args.sections);
             const model = buildModel({ title, uuid, data, info, assetIndex, args });
@@ -296,10 +304,13 @@ function buildModel({ title, uuid, data, info, assetIndex, args }) {
         );
     }
 
-    const blockUsage = sentinel ? [] : computeBlockUsage(data);
+    // The sweep behind the table costs weightMapSize^2 * 4 reads PER BLOCK, and the
+    // budget decision below only needs the row COUNT — so decide first, sweep second.
+    const blockCountTotal = sentinel ? 0 : usableBlockCount(data);
     const showBlocks = args.blocks === undefined
-        ? blockUsage.length > 0 && blockUsage.length <= BLOCK_TABLE_AUTO_LIMIT
-        : Boolean(args.blocks) && blockUsage.length > 0;
+        ? blockCountTotal > 0 && blockCountTotal <= BLOCK_TABLE_AUTO_LIMIT
+        : Boolean(args.blocks) && blockCountTotal > 0;
+    const blockUsage = showBlocks ? computeBlockUsage(data) : [];
 
     return {
         path: title,
@@ -340,12 +351,12 @@ function buildModel({ title, uuid, data, info, assetIndex, args }) {
         blocks: showBlocks ? blockUsage.slice(0, BLOCK_TABLE_MAX_ROWS) : null,
         // `budget` is worth a line ("the table exists, it just costs too much");
         // `requested` is the caller's own argument and must stay silent.
-        blocksOmitted: showBlocks || blockUsage.length === 0
+        blocksOmitted: showBlocks || blockCountTotal === 0
             ? null
             : (args.blocks === false ? 'requested' : 'budget'),
-        blockCountTotal: blockUsage.length,
-        blocksTruncated: showBlocks && blockUsage.length > BLOCK_TABLE_MAX_ROWS
-            ? blockUsage.length - BLOCK_TABLE_MAX_ROWS
+        blockCountTotal,
+        blocksTruncated: showBlocks && blockCountTotal > BLOCK_TABLE_MAX_ROWS
+            ? blockCountTotal - BLOCK_TABLE_MAX_ROWS
             : 0,
         heightSamples: args.heightAt === undefined
             ? null
@@ -361,20 +372,30 @@ function buildModel({ title, uuid, data, info, assetIndex, args }) {
 }
 
 /**
- * Per-block, per-channel weight usage. `readTerrainInfo().layerUsage`
- * aggregates the same numbers PER PALETTE SLOT across all blocks; the terrain
- * ops work per block, so the table needs the split-out form.
+ * How many rows {@link computeBlockUsage} would produce, without running its
+ * per-texel sweep — the number the block-table budget decides on.
  *
  * Bounded by the same guard `computeLayerUsage` uses (terrainBin.js): without a
  * `layerBuffer` matching the declared geometry the `bc0 * bc1` loop would run on
  * an unbounded file-declared block count.
  */
+function usableBlockCount(data) {
+    const expected = expectedCounts(data.blockCount, data.weightMapSize);
+    if ((data.layerBuffer?.length ?? 0) !== expected.layerBuffer) return 0;
+    return data.blockCount[0] * data.blockCount[1];
+}
+
+/**
+ * Per-block, per-channel weight usage. `readTerrainInfo().layerUsage`
+ * aggregates the same numbers PER PALETTE SLOT across all blocks; the terrain
+ * ops work per block, so the table needs the split-out form.
+ */
 function computeBlockUsage(data) {
     const [bc0, bc1] = data.blockCount;
+    if (usableBlockCount(data) === 0) return [];
     const wms = data.weightMapSize;
     const [uWC] = weightMapDims(data);
     const expected = expectedCounts(data.blockCount, wms);
-    if ((data.layerBuffer?.length ?? 0) !== expected.layerBuffer) return [];
     const haveWeights = data.weights && data.weights.length === expected.weights;
     const texels = wms * wms;
     const blockSize = TERRAIN_BLOCK_TILE_COMPLEXITY * data.tileSize;
@@ -426,8 +447,15 @@ function sampleHeights(data, points, sentinel) {
         const height = sentinel ? null : heightAt(data, x, z);
         const inside = x >= 0 && z >= 0 && x <= sw && z <= sh;
         let reason = null;
-        if (height === null) {
-            reason = sentinel ? 'empty default terrain — no height data yet' : 'outside the terrain';
+        if (height === null && sentinel) {
+            reason = 'empty default terrain — no height data yet';
+        } else if (height === null && inside) {
+            // heightAt() also returns null for a height buffer that does not match the
+            // declared geometry (and for tileSize <= 0) — blaming the caller's
+            // coordinates for that while reporting inside: true is a contradiction.
+            reason = 'in bounds — the file has no usable height grid (see Warnings)';
+        } else if (height === null) {
+            reason = 'outside the terrain';
         } else if (!inside) {
             // getHeightAt tolerates up to one tile past the far edge and
             // extrapolates the last cell flat (terrain.ts:1884-1889)
@@ -439,15 +467,20 @@ function sampleHeights(data, points, sentinel) {
 
 function sampleWeights(data, points, layers, sentinel) {
     const bySlot = new Map(layers.map((l) => [l.slot, l]));
+    const [sw, sh] = terrainSize(data);
     return points.map(([x, z]) => {
         const w = sentinel ? null : weightAt(data, x, z);
         if (!w) {
-            return {
-                x,
-                z,
-                weights: null,
-                reason: sentinel ? 'empty default terrain — no weight data yet' : 'outside the terrain'
-            };
+            // Same split as sampleHeights: a mis-sized weight buffer is a property of the
+            // FILE, not of the coordinates handed in
+            const inside = x >= 0 && z >= 0 && x <= sw && z <= sh;
+            let reason = 'outside the terrain';
+            if (sentinel) {
+                reason = 'empty default terrain — no weight data yet';
+            } else if (inside) {
+                reason = 'in bounds — the file has no usable weight map (see Warnings)';
+            }
+            return { x, z, weights: null, reason };
         }
         return {
             x,

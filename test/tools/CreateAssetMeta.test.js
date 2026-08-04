@@ -99,6 +99,26 @@ describe('CreateAssetMeta tool', () => {
         assert.ok(result.isError);
     });
 
+    // The assets root is the one path that is "inside assets/" without being BELOW it:
+    // it gets no meta of its own, but everything under it does.
+    it('should accept the assets root itself as the target', async () => {
+        const result = await tool.execute({ path: 'assets' }, root);
+        assert.ok(!result.isError, result.content[0].text);
+        assert.ok(fs.existsSync(path.join(assets, 'Scripts', 'Gen', 'Spin.ts.meta')));
+        assert.ok(!fs.existsSync(`${assets}.meta`));
+    });
+
+    // A sibling directory sharing the assets/ prefix must not pass as contained.
+    it('should reject a sibling directory whose name starts with "assets"', async () => {
+        const backup = path.join(root, 'assets-backup');
+        fs.mkdirSync(backup);
+        fs.writeFileSync(path.join(backup, 'stray.ts'), 'export {}');
+        const result = await tool.execute({ path: 'assets-backup/stray.ts' }, root);
+        assert.ok(result.isError);
+        assert.match(result.content[0].text, /must be inside the project's assets\/ directory/);
+        assert.ok(!fs.existsSync(path.join(backup, 'stray.ts.meta')));
+    });
+
     // Blocker 1: the containment check runs on the RESOLVED path and the walk
     // never follows a symlink — otherwise a link under assets/ pointing outside
     // the project let .meta files be written anywhere it led.

@@ -15,7 +15,9 @@ import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 import { applyTerrainOperations } from '../document/terrainOps.js';
+import { realpathOrSelf, isInsideAssets } from '../utils/assetPaths.js';
 import { writeFileAtomic } from '../utils/fsAtomic.js';
+import { terrainCard } from './terrainCard.js';
 import {
     readTerrain,
     readTerrainInfo,
@@ -130,11 +132,12 @@ export class EditTerrain extends BaseTool {
                 'terrain assets, or build_terrain to create one.'
             );
         }
-        // realpath BOTH sides (as create_asset_meta/build_terrain do): a symlink under
-        // assets/ pointing outside the project must not pass the containment check.
+        // Containment is checked on RESOLVED paths (assetPaths.js): a symlink under assets/
+        // pointing outside the project must not pass it and take the write with it. The file
+        // exists by now, so plain realpath is enough here.
         const assetsRoot = realpathOrSelf(path.resolve(projectRoot, 'assets'));
         filePath = realpathOrSelf(filePath);
-        if (!filePath.startsWith(assetsRoot + path.sep)) {
+        if (!isInsideAssets(filePath, assetsRoot)) {
             return this.error(
                 'terrainPath must be inside the project\'s assets/ directory — a .terrain outside ' +
                 'assets/ is not an asset the editor can import.'
@@ -212,7 +215,7 @@ export class EditTerrain extends BaseTool {
             (r.notes ?? []).forEach((n) => lines.push(`   - ${n}`));
         });
 
-        lines.push('', ...this.#card(info, assetIndex));
+        lines.push('', ...terrainCard(info, assetIndex));
 
         // A slot this batch appended and left unassigned gets the actionable form of
         // terrainBin's "defined but no block uses it" warning — derived from the FINAL state,
@@ -263,63 +266,4 @@ export class EditTerrain extends BaseTool {
         }
         return lines.join('\n');
     }
-
-    /** The readTerrainInfo card — the same numbers query_terrain/get_asset_info report */
-    #card(info, assetIndex) {
-        if (!info) return ['(the written file could not be re-read as a terrain — this is a bug)'];
-        const [w, d] = info.size;
-        const [vx, vz] = info.vertexCount;
-        const [ux, uz] = info.weightMapTexels;
-        const lines = [
-            '## Terrain',
-            `Size: ${fmt(w)} x ${fmt(d)} m (${info.blockCount[0]} x ${info.blockCount[1]} blocks, ${vx} x ${vz} vertices)`,
-            `tileSize: ${fmt(info.tileSize)} m | weightMapSize: ${info.weightMapSize} (${ux} x ${uz} texels) | lightMapSize: ${info.lightMapSize}`,
-            `Height: ${fmt(info.heightMin)} .. ${fmt(info.heightMax)} m (mean ${fmt(info.heightMean)})${info.isFlat ? ' — flat' : ''}`,
-            `File: ${info.fileSize} bytes (${info.payloadLength} payload + ${info.padding} zero padding), ${info.versionLabel}`
-        ];
-        if (info.layers.length === 0) {
-            lines.push('Layers: none — every block renders the effect\'s flat grey fallback');
-        } else {
-            lines.push('Layers:');
-            for (const layer of info.layers) {
-                const usage = info.layerUsage.find((u) => u.slot === layer.slot);
-                const normal = layer.normalMapId
-                    ? `, normal ${assetIndex?.label(layer.normalMapId) ?? layer.normalMapId}`
-                    : '';
-                lines.push(
-                    `  ${layer.slot}. ${assetIndex?.label(layer.detailMapId) ?? layer.detailMapId} ` +
-                    `(tileSize ${fmt(layer.tileSize)} m, roughness ${fmt(layer.roughness)}, ` +
-                    `metallic ${fmt(layer.metallic)}${normal}) — used by ` +
-                    `${usage?.blocks.length ?? 0} block(s)` +
-                    (usage ? `, coverage ${(usage.coverage * 100).toFixed(1)}%` : '')
-                );
-            }
-        }
-        // Small terrains: the per-block slot assignment is the thing paint_layer changes and
-        // the cheapest way to see that it landed.
-        if (info.blockLayers.length > 0 && info.blockLayers.length <= 16) {
-            lines.push(`Block slots: ${info.blockLayers.map((s) => `[${s.join(',')}]`).join(' ')} (row-major, R/G/B/A per block)`);
-        }
-        // The line query_terrain prints for the same state. Without it the edit report has no way
-        // of showing that a block ended up single-layer, which is exactly how a paint spills over
-        // a whole neighbouring block unnoticed.
-        const sole = info.blockLayers.filter((s) => s[0] >= 0 && s[1] < 0 && s[2] < 0 && s[3] < 0).length;
-        if (sole) {
-            lines.push(
-                `${sole} block(s) assign only channel R — the shader draws that layer flat over the ` +
-                'whole block there and never samples the weight map.'
-            );
-        }
-        return lines;
-    }
-}
-
-/** Compact metre formatting: no trailing zeros, null-safe */
-function fmt(v, digits = 3) {
-    if (v === null || v === undefined) return 'n/a';
-    return String(Number(v.toFixed(digits)));
-}
-
-function realpathOrSelf(p) {
-    try { return fs.realpathSync(p); } catch { return p; }
 }
