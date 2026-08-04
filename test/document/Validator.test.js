@@ -100,6 +100,54 @@ describe('Validator catches corruption', () => {
         });
     }
 
+    // The shape an editor leaves when a component referencing INTO an instance is deleted: a bare
+    // cc.Node reachable only from a dead override, which must not block apply_edits
+    const addShellOverride = (doc, { shellExtras = true } = {}) => {
+        const shell = doc.addObject(shellExtras
+            ? { __type__: 'cc.Node', __editorExtras__: {} }
+            : { __type__: 'cc.Node' });
+        const targetInfo = doc.addObject({ __type__: 'cc.TargetInfo', localID: ['3aXm1DEqxKvIQ+YbwSbjE1'] });
+        const override = doc.addObject({
+            __type__: 'cc.TargetOverrideInfo',
+            source: null, // the referencing component is gone — what makes the record dead
+            sourceInfo: null,
+            propertyPath: ['animation'],
+            target: { __id__: shell },
+            targetInfo: { __id__: targetInfo }
+        });
+        const rootNode = doc.root.node;
+        const registry = doc.getObject(rootNode._prefab.__id__);
+        registry.targetOverrides = [...(registry.targetOverrides ?? []), { __id__: override }];
+        return { shell, override };
+    };
+
+    test('an id-less serialization shell behind a dead override does not error', () => {
+        const doc = load('Main.scene_V2.scene');
+        addShellOverride(doc);
+        const { errors, warnings } = new Validator(doc).validate();
+        assert.deepStrictEqual(errors, []);
+        assert.ok(warnings.some(w => /engine ignores this override.*source is null/.test(w)));
+    });
+
+    test('a real id-less scene node is still an error', () => {
+        const doc = load('Main.scene_V2.scene');
+        // Same dead record present, but the target carries scene state — a genuine defect
+        const { shell } = addShellOverride(doc);
+        doc.getObject(shell)._name = 'Ghost';
+        const { errors } = new Validator(doc).validate();
+        assert.ok(errors.some(e => /has no _id/.test(e)));
+    });
+
+    test('a shell something else also references is still an error', () => {
+        const doc = load('Main.scene_V2.scene');
+        const { shell } = addShellOverride(doc);
+        // A second, live referrer means the object is load-bearing somewhere — the exemption is
+        // only for objects nothing but a skipped record can reach
+        doc.addObject({ __type__: 'cc.ModelBakeSettings', texture: { __id__: shell } });
+        const { errors } = new Validator(doc).validate();
+        assert.ok(errors.some(e => /has no _id/.test(e)));
+    });
+
     test('unreachable objects produce a warning', () => {
         const doc = load('TableCash.prefab');
         doc.addObject({ __type__: 'cc.ModelBakeSettings', texture: null });

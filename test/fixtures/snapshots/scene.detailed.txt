@@ -1,9 +1,9 @@
 # Scene: Main.scene_V2.scene
 
 ● Main.scene_V2 [P]
-  ● Main Light
+  ● Main Light rot(-121.8,8,30.1)
     ◆ DirectionalLight {_useColorTemperature=true _colorTemperature=5500 _visibility=-325058561 _illuminanceHDR=110000}
-  ● Main Camera @(-8,12,8)
+  ● Main Camera @(-8,12,8) rot(-45,-45,0)
     ◆ Camera {_projection=1 _priority=0 _fov=50 _fovAxis=0}
     ◆ Script:b4347hmF {target=→Player#8 offsetX=-18.5 offsetY=28 offsetZ=19.6}
     ◆ Script:14deb29W {camera=→Main Camera#6 layoutController=→[SERVICES]#1879 _id=c3Fy4M7mlO6LP8sIK25LDZ}
@@ -318,7 +318,7 @@
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
       ● SM_Gate_Wood-001
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
-    ● RedZoneGate @(-12.3,0,-3)
+    ● RedZoneGate @(-12.3,0,-3) rot(0,90,0)
       ● SM_Gate_Wood
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
       ● SM_Gate_Wood-001
@@ -362,7 +362,7 @@
         ● Plane
           ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=builtin:plane.mesh _shadowCastingMode=0}
       ● lightning [P→f874611c…]
-    ● SellingStationRed @(-5,0,11.8)
+    ● SellingStationRed @(-5,0,11.8) rot(0,-90,0)
       ◆ Script:8d141ySj {crystalIcon=<asset> crystalStack=→CrystallStack#1821 carActiveAnchor=→ActiveWaypoint#1833 carPool=→Cars#1849}
       ◆ BoxCollider {_isTrigger=false _id=e9eMdU4fdKsIxtS+zs2qo1 _center=[0,1,0] _size=[2,2,5.5]}
       ● Table
@@ -385,7 +385,7 @@
             ◆ Sprite {_customMaterial=<asset> _srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset>}
       ● Waypoints
         [+15 hidden nodes, depth 1]
-    ● SellingStation @(1.2,0,11.8)
+    ● SellingStation @(1.2,0,11.8) rot(0,-90,0)
       ◆ Script:8d141ySj {crystalIcon=<asset> crystalStack=→CrystallStack#2263 carActiveAnchor=→ActiveWaypoint#2247 carPool=→Cars#1849}
       ◆ BoxCollider {_isTrigger=false _id=c8pT0IimNMc6+nYcWK5Xz3 _center=[0,1,0] _size=[2,2,5.5]}
       ● Table
@@ -449,7 +449,7 @@
       ● SM_Button
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
         [+2 hidden nodes, depth 2]
-    ● Conveyor @(11.5,0.1,10)
+    ● Conveyor @(11.5,0.1,10) rot(0,180,0)
       ◆ Script:ad425ISo {pathPoints=["→Path1#2228","→Path2#2229","→Path3#2230","→Path4#2231","→Path5#2232"] targetStorage=→CrystallStack#2234 beltMaterial=<asset> batchInterval=0.25}
       ● SM_Bort_3
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
@@ -601,27 +601,27 @@
           ◆ UITransform {_id=6daatnKlNGQYW1QN0S8djK _contentSize=[509,168] _anchorPoint=[0.5,0.5]}
           ◆ Sprite {_srcBlendFactor=2 _dstBlendFactor=4 _spriteFrame=<asset> _type=1}
           ◆ Button {_interactable=true _transition=0 _normalSprite=<asset> _hoverSprite=builtin:spriteFrame}
-  ● Dummies
-    ● BigCrystal
+  ● Dummies scale(0.01,0.01,0.01)
+    ● BigCrystal scale(0.01,0.01,0.01)
       ● Cristal_Anim [P→3405a2a2…]
-    ● BigRedCrystal @(-15.8,1.6,-6.1)
+    ● BigRedCrystal @(-15.8,1.6,-6.1) scale(0.01,0.01,0.01)
       ● Cristal_Anim
         ◆ SkeletalAnimation {playOnLoad=false _clips=["<asset>"] _defaultClip=<asset> _useBakedAnimation=true}
         ● Armature
           ● Cristal
             ◆ SkinnedMeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=1}
           [+7 hidden nodes, depth 2]
-    ● CrystalSmall @(-0.5,0,0)
+    ● CrystalSmall @(-0.5,0,0) scale(0.01,0.01,0.01)
       ● Cristal
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
-    ● truba_FX
+    ● truba_FX scale(0.01,0.01,0.01)
       ● SM_Truba
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
-    ● hit01
+    ● hit01 scale(0.001,0.001,0.001)
       ◆ ParticleSystem {_materials=["<asset>","null"] _visFlags=0 scaleSpace=1 startSize3D=false}
       ○ light-001
         ◆ ParticleSystem {_materials=["<asset>"] _visFlags=0 scaleSpace=1 startSize3D=false}
-    ● levelup
+    ● levelup scale(0.001,0.001,0.001) rot(90,0,0)
       ◆ ParticleSystem {_visFlags=0 scaleSpace=1 startSize3D=false startRotation3D=false}
       ● light
         ◆ ParticleSystem {_materials=["<asset>"] _visFlags=0 scaleSpace=1 startSize3D=false}
@@ -637,7 +637,7 @@
         ◆ ParticleSystem {_visFlags=0 scaleSpace=1 startSize3D=false startRotation3D=false}
       ● line-002
         ◆ ParticleSystem {_materials=["<asset>","null"] _visFlags=0 scaleSpace=1 startSize3D=false}
-    ● RockHit @(-167.6,103.5,0)
+    ● RockHit @(-167.6,103.5,0) scale(0.001,0.001,0.001)
       ◆ ParticleSystem {_materials=["<asset>","null"] _visFlags=0 scaleSpace=1 startSize3D=false}
       ● Explosion
         ◆ ParticleSystem {_visFlags=0 scaleSpace=1 startSize3D=false startRotation3D=false}
@@ -645,7 +645,7 @@
         ◆ ParticleSystem {_materials=["<asset>"] _visFlags=0 scaleSpace=1 startSize3D=false}
       ● smoke
         ◆ ParticleSystem {_materials=["<asset>","null"] _visFlags=0 scaleSpace=1 startSize3D=false}
-    ● ZombieBuyer @(540,1184,0)
+    ● ZombieBuyer @(540,1184,0) scale(0.01,0.01,0.01)
       ● Zombie_1gr_colander
         ◆ SkeletalAnimation {playOnLoad=false _clips=["<asset>","<asset>"] _useBakedAnimation=false _sockets=["→head.x Socket#3428"]}
         ● Zombie_1gr_colander

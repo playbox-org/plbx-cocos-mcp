@@ -69,7 +69,8 @@ describe('QueryTerrain — tool contract', () => {
         assert.ok(tool.description.includes('Args: {terrainPath'));
         assert.strictEqual(tool.inputSchema.type, 'object');
         assert.deepStrictEqual(tool.inputSchema.required, ['terrainPath']);
-        for (const key of ['terrainPath', 'heightAt', 'weightAt', 'exportHeights', 'blocks', 'format']) {
+        for (const key of ['terrainPath', 'heightAt', 'weightAt', 'exportHeights', 'contourAt',
+            'slope', 'blocks', 'format']) {
             assert.ok(tool.inputSchema.properties[key], `missing schema property ${key}`);
         }
         // every required entry is a declared property (createTools.test.js's rule)
@@ -448,7 +449,7 @@ describe('QueryTerrain — exportHeights', () => {
             [{ region: { w: 4 } }, /unknown key "w"/],
             [{ region: { width: 0 } }, /region\.width must be > 0/],
             [{ region: { x: 'a' } }, /region\.x must be a finite number/],
-            [{ format: 'png' }, /format must be "rows" or "raw16"/],
+            [{ format: 'png' }, /format must be one of "rows", "raw16", "map"/],
             [{ sampleCount: 1 }, /sampleCount must be an integer in 2\.\.513/],
             [{ sampleCount: 600 }, /sampleCount must be an integer in 2\.\.513/],
             [{ sampleCount: [513, 513] }, /exceeds 65536/],
@@ -945,5 +946,143 @@ describe('QueryTerrain — review regressions', () => {
         assert.strictEqual(model.heightSamples[0].inside, true);
         assert.match(model.heightSamples[0].reason, /empty default terrain — no height data yet/);
         assert.match(model.weightSamples[0].reason, /empty default terrain — no weight data yet/);
+    });
+});
+
+describe('QueryTerrain — contourAt / slope / land map', () => {
+    let project;
+
+    /** write a terrain whose heights come from `fn(x, z)` metres, 1 block at 1 m */
+    function ramp(name, fn) {
+        const data = materialize({
+            blockCount: [1, 1], tileSize: 1, weightMapSize: 4, lightMapSize: 4, layers: []
+        });
+        for (let j = 0; j < 33; j++) {
+            for (let i = 0; i < 33; i++) setVertexHeight(data, i, j, fn(i, j), true);
+        }
+        const rel = `assets/Maps/${name}.terrain`;
+        fs.writeFileSync(join(project, rel), writeTerrain(data));
+        return rel;
+    }
+
+    before(() => {
+        project = fs.mkdtempSync(join(os.tmpdir(), 'cocos-contour-'));
+        fs.cpSync(MOCK_PROJECT, project, { recursive: true });
+        AssetIndex.invalidate(project);
+    });
+
+    after(() => {
+        fs.rmSync(project, { recursive: true, force: true });
+    });
+
+    it('traces a diagonal contour at vertex resolution with continuity stats', async () => {
+        // The 0 contour of h = (x - 2.5 z) / 10 runs diagonally: x = 2.5 z
+        const rel = ramp('Diagonal', (i, j) => (i - 2.5 * j) / 10);
+        const model = await json({ terrainPath: rel, contourAt: 0 }, project);
+        assert.strictEqual(model.contours.length, 1);
+        const c = model.contours[0];
+        assert.strictEqual(c.threshold, 0);
+        assert.strictEqual(c.axis, 'x');
+        assert.deepStrictEqual(c.samples, [33, 33], 'the default is the vertex resolution');
+        assert.strictEqual(c.stats.monotone, true);
+        assert.ok(Math.abs(c.stats.maxJump.value - 2.5) < 0.05, 'the edge runs 2.5 m of x per m of z');
+        const first = c.lines.find((l) => l.crossings.length === 1);
+        assert.ok(Math.abs(first.crossings[0] - 2.5 * first.coord) < 0.05);
+
+        const text = await ok({ terrainPath: rel, contourAt: 0, sections: ['samples'] }, project);
+        assert.match(text, /## Contour at 0 m/);
+        assert.match(text, /Scanned along x — one line per z/);
+        assert.match(text, /Monotone: yes/);
+        assert.match(text, /largest jump between adjacent lines 2\.5/);
+        assert.match(text, /A jump much larger than the line spacing IS a step in the geometry/);
+    });
+
+    it('surfaces a step in the contour as a jump', async () => {
+        const rel = ramp('Stepped', (i, j) => (i - (j < 16 ? 8 : 13)) / 10);
+        const text = await ok({ terrainPath: rel, contourAt: 0, sections: ['samples'] }, project);
+        assert.match(text, /largest jump between adjacent lines 5/);
+    });
+
+    it('takes several thresholds, an axis, a region and a "vertex" sampleCount', async () => {
+        const rel = ramp('Multi', (i) => i / 10);
+        const model = await json({
+            terrainPath: rel,
+            contourAt: {
+                threshold: [1, 2],
+                axis: 'z',
+                region: { x: 4, z: 4, width: 20, depth: 20 },
+                sampleCount: 'vertex'
+            }
+        }, project);
+        assert.deepStrictEqual(model.contours.map((c) => c.threshold), [1, 2]);
+        assert.strictEqual(model.contours[0].axis, 'z');
+        assert.deepStrictEqual(model.contours[0].samples, [21, 21], '20 m at 1 m tiles + 1');
+        assert.deepStrictEqual(model.contours[0].region, { x: 4, z: 4, width: 20, depth: 20 });
+    });
+
+    it('says so when the threshold misses the height range', async () => {
+        const rel = ramp('Flat', () => 1);
+        const text = await ok({ terrainPath: rel, contourAt: 9, sections: ['samples'] }, project);
+        assert.match(text, /No crossing at all: the whole region is either above or below 9 m/);
+    });
+
+    it('reports slope, the crease metric and a walkability distribution', async () => {
+        const rel = ramp('Slope45', (i) => i); // h = x → 45° everywhere
+        const model = await json({ terrainPath: rel, slope: true }, project);
+        assert.ok(Math.abs(model.slope.max.degrees - 45) < 0.01);
+        assert.ok(Math.abs(model.slope.mean - 45) < 0.01);
+        assert.ok(Math.abs(model.slope.maxStep.metres - 1) < 0.01);
+
+        const text = await ok({ terrainPath: rel, slope: true, sections: ['samples'] }, project);
+        assert.match(text, /## Slope/);
+        assert.match(text, /Max 45°/);
+        assert.match(text, /Steepest adjacent-sample step: 1 m/);
+        assert.match(text, /the crease metric/);
+        assert.match(text, /Distribution: <=15° 0/);
+    });
+
+    it('renders the land map with an explicit and a derived threshold', async () => {
+        const rel = ramp('Island', (i, j) => (Math.hypot(i - 16, j - 16) < 6 ? 2 : -1));
+        const text = await ok({
+            terrainPath: rel,
+            exportHeights: { format: 'map', threshold: 0, sampleCount: 33 },
+            sections: ['samples']
+        }, project);
+        assert.match(text, /Map: "#" = height >= 0 m, "\." = below it/);
+        const rows = text.split('\n').filter((l) => /^ *\d+ \| [#.?]+$/.test(l));
+        assert.strictEqual(rows.length, 33);
+        assert.ok(/^ *0 \| \.+$/.test(rows[0]), 'the near edge is all water');
+        assert.ok(rows[16].includes('#'), 'the middle row crosses the island');
+
+        const derived = await json({
+            terrainPath: rel, exportHeights: { format: 'map', sampleCount: 9 }
+        }, project);
+        assert.strictEqual(derived.heightGrid.derivedThreshold, true);
+        assert.strictEqual(derived.heightGrid.threshold, 0.5, 'midpoint of -1..2');
+    });
+
+    it('rejects a bad contourAt / slope / map spec', async () => {
+        const rel = ramp('Bad', () => 0);
+        const cases = [
+            [{ contourAt: 'high' }, /contourAt must be a height in metres/],
+            [{ contourAt: [] }, /give at least one threshold/],
+            [{ contourAt: [1, 2, 3, 4, 5, 6, 7, 8, 9] }, /over the 8 limit/],
+            [{ contourAt: { region: { x: 0 } } }, /"threshold" is required/],
+            [{ contourAt: { threshold: 0, axis: 'y' } }, /axis must be "x" or "z"/],
+            [{ contourAt: { threshold: 0, bogus: 1 } }, /unknown key "bogus"/],
+            [{ slope: 'steep' }, /slope must be true or an object/],
+            [{ slope: { bogus: 1 } }, /slope: unknown key "bogus"/],
+            [{ exportHeights: { threshold: 1 } }, /threshold only applies to format: "map"/],
+            [{ exportHeights: { format: 'map', threshold: 'zero' } }, /threshold must be a finite height/]
+        ];
+        for (const [args, pattern] of cases) {
+            assert.match(await fails({ terrainPath: rel, ...args }, project), pattern);
+        }
+    });
+
+    it('answers the sentinel without pretending it has geometry', async () => {
+        const text = await ok({ terrainPath: SENTINEL_REL, contourAt: 0, slope: true }, REPO_ROOT);
+        assert.match(text, /no height data to trace a contour through yet/);
+        assert.match(text, /no height data to measure a slope on yet/);
     });
 });

@@ -286,6 +286,8 @@ export class SceneMinifier {
             noLimitFilter,
             {
                 detailed: true,
+                // Full unfiltered detail must not hide a transform at depth 3
+                transforms: 'all',
                 assetNameResolver: (uuid) => this.#assetName(uuid),
                 assetRefResolver: (uuid) => this.#assetLabel(uuid)
             }

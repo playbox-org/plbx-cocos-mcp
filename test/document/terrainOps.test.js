@@ -175,7 +175,7 @@ describe('terrainOps — dispatch, batching, argument hygiene', () => {
     it('rejects an unknown key per op instead of silently ignoring it', () => {
         assert.throws(
             () => apply(terrain(), { op: 'set_heights', value: 1, radius: 5 }),
-            /unknown key "radius" — set_heights takes region, value, rows, heightmap/
+            /unknown key "radius" — set_heights takes region, value, rows, heightmap, falloff, profile, clamp/
         );
         assert.throws(
             () => apply(terrain(), { op: 'adjust_heights', delta: 1, region: { x: 0, radius: 5 } }),
@@ -185,7 +185,7 @@ describe('terrainOps — dispatch, batching, argument hygiene', () => {
             () => apply(terrain({ layers: 1 }), {
                 op: 'paint_layer', layer: 0, weight: 1, region: { shape: 'circle' },
             }),
-            /region\.shape must be "rect" or "ellipse", got "circle"/
+            /region\.shape must be one of "rect", "ellipse", "band", got "circle"/
         );
     });
 
@@ -735,7 +735,7 @@ describe('terrainOps — heights', () => {
         );
         assert.throws(
             () => apply(terrain(), { op: 'adjust_heights', delta: 1, region: [0, 0, 4, 4] }),
-            /region must be an object \{x, z, width, depth\} in local metres/
+            /region must be an object \{x, z, width, depth, shape, contour, inner, outer\} in local metres/
         );
     });
 
@@ -813,6 +813,201 @@ describe('terrainOps — heights', () => {
             () => apply(terrain(), { op: 'smooth_heights', iterations: 65 }),
             /"iterations" must be an integer in 1\.\.64/
         );
+    });
+});
+
+describe('terrainOps — shaped height edits (falloff / profile / clamp / band)', () => {
+    // Closed-form expectations: the factor is `min(1, edge / falloff)`, edge = distance to border
+
+    it('tapers a delta to exactly 0 at the region border', () => {
+        const data = terrain({ blockCount: [1, 1], tileSize: 1 });
+        apply(data, {
+            op: 'adjust_heights', delta: 4, falloff: 4,
+            region: { x: 8, z: 8, width: 16, depth: 16 },
+        });
+        // edge distance: 0 at x=8, 1 m at x=9, full 4 m at x=12
+        assert.strictEqual(heightAtVertex(data, 8, 16), 0, 'the border vertex does not move');
+        assert.strictEqual(heightAtVertex(data, 9, 16), 1, '1/4 of the delta one tile in');
+        assert.strictEqual(heightAtVertex(data, 12, 16), 4, 'full delta 4 m in');
+        assert.strictEqual(heightAtVertex(data, 7, 16), 0, 'outside is untouched');
+    });
+
+    it('applies the smooth and cosine profiles to the same ramp', () => {
+        const t = 0.25; // one tile into a 4 m falloff
+        const cases = [
+            ['linear', t],
+            ['smooth', t * t * (3 - 2 * t)],
+            ['cosine', 0.5 - 0.5 * Math.cos(Math.PI * t)],
+        ];
+        for (const [profile, factor] of cases) {
+            const data = terrain();
+            apply(data, {
+                op: 'adjust_heights', delta: 8, falloff: 4, profile,
+                region: { x: 8, z: 8, width: 16, depth: 16 },
+            });
+            // compare against the 1/128 m-quantized expectation
+            const expected = Math.round((8 * factor) * 128) / 128;
+            assert.strictEqual(heightAtVertex(data, 9, 16), expected, `${profile} at t=0.25`);
+        }
+    });
+
+    it('confines an ellipse to its own footprint', () => {
+        const data = terrain();
+        const { results } = apply(data, {
+            op: 'adjust_heights', delta: 3,
+            region: { x: 8, z: 8, width: 16, depth: 16, shape: 'ellipse' },
+        });
+        assert.strictEqual(heightAtVertex(data, 16, 16), 3, 'the centre moves');
+        assert.strictEqual(heightAtVertex(data, 8, 8), 0, 'the box corner is outside the ellipse');
+        assert.match(results[0].summary, /mask covers \d+ of 289 vertices/);
+    });
+
+    it('clamps to raise-only / lower-only so an edit cannot fight the surface', () => {
+        const build = () => {
+            const data = terrain();
+            for (let j = 0; j < 33; j++) {
+                for (let i = 0; i < 33; i++) setVertexHeight(data, i, j, i < 16 ? 5 : -5, true);
+            }
+            return data;
+        };
+        const raise = build();
+        const { results } = apply(raise, {
+            op: 'set_heights', value: 0, clamp: 'raise-only',
+            region: { x: 0, z: 0, width: 32, depth: 32 },
+        });
+        assert.strictEqual(heightAtVertex(raise, 0, 0), 5, 'already higher — kept');
+        assert.strictEqual(heightAtVertex(raise, 20, 0), 0, 'lower — filled up to 0');
+        assert.match(results[0].notes.join('\n'), /clamp "raise-only" held \d+ vertices/);
+
+        const lower = build();
+        apply(lower, {
+            op: 'set_heights', value: 0, clamp: 'lower-only',
+            region: { x: 0, z: 0, width: 32, depth: 32 },
+        });
+        assert.strictEqual(heightAtVertex(lower, 0, 0), 0, 'higher — cut down to 0');
+        assert.strictEqual(heightAtVertex(lower, 20, 0), -5, 'already lower — kept');
+    });
+
+    it('reports the step a hard-edged edit leaves, and stays quiet once tapered', () => {
+        const hard = terrain();
+        const step = apply(hard, {
+            op: 'adjust_heights', delta: 3, region: { x: 10, z: 10, width: 8, depth: 8 },
+        });
+        assert.match(step.results[0].notes.join('\n'), /ends in a STEP of up to 3 m at the mask border/);
+        assert.match(step.results[0].notes.join('\n'), /Pass falloff: <metres>/);
+
+        const tapered = terrain();
+        const smooth = apply(tapered, {
+            op: 'adjust_heights', delta: 3, falloff: 4,
+            region: { x: 6, z: 6, width: 20, depth: 20 },
+        });
+        assert.doesNotMatch(smooth.results[0].notes.join('\n'), /STEP/);
+    });
+
+    it('names the peak a too-wide falloff actually reaches', () => {
+        const data = terrain();
+        const { results } = apply(data, {
+            op: 'adjust_heights', delta: 4, falloff: 30,
+            region: { x: 12, z: 12, width: 8, depth: 8 },
+        });
+        assert.match(results[0].notes.join('\n'), /falloff 30 m is wider than the region's half-extent/);
+        assert.match(results[0].notes.join('\n'), /the ramp peaks at 0\.133 of it/);
+    });
+
+    it('blends a smoothed patch through the mask instead of creasing at its border', () => {
+        const data = terrain();
+        for (let j = 0; j < 33; j++) {
+            for (let i = 0; i < 33; i++) setVertexHeight(data, i, j, i % 2 ? 2 : 0, true);
+        }
+        apply(data, {
+            op: 'smooth_heights', iterations: 4, falloff: 4,
+            region: { x: 4, z: 4, width: 24, depth: 24 },
+        });
+        // The border vertex keeps its original comb value (factor 0), the middle is flattened
+        assert.strictEqual(heightAtVertex(data, 4, 16), 0, 'vertex 4 is even, so it started at 0 m');
+        const middle = heightAtVertex(data, 16, 16);
+        assert.ok(middle > 0.5 && middle < 1.5, `middle smoothed toward the mean, got ${middle}`);
+    });
+
+    it('follows an iso-contour with a band region', () => {
+        // Ramp h = (x - 16) / 4, so the 0 m contour is the line x = 16
+        const data = terrain();
+        for (let j = 0; j < 33; j++) {
+            for (let i = 0; i < 33; i++) setVertexHeight(data, i, j, (i - 16) / 4, true);
+        }
+        const { results } = apply(data, {
+            op: 'adjust_heights', delta: 1,
+            region: { shape: 'band', contour: 0, inner: -2, outer: 3 },
+        });
+        assert.match(results[0].summary, /band -2\.\.3 m around the 0 m contour/);
+        // inner -2 = 2 m ABOVE the contour (x > 16), outer 3 = 3 m below it (x < 16)
+        assert.strictEqual(heightAtVertex(data, 18, 10), (18 - 16) / 4 + 1, 'inside the band');
+        assert.strictEqual(heightAtVertex(data, 13, 10), (13 - 16) / 4 + 1, 'the low side, within 3 m');
+        assert.strictEqual(heightAtVertex(data, 19, 10), (19 - 16) / 4, 'beyond inner — untouched');
+        assert.strictEqual(heightAtVertex(data, 12, 10), (12 - 16) / 4, 'beyond outer — untouched');
+    });
+
+    it('rejects a band that has no contour, no width, or wrong-way offsets', () => {
+        const data = terrain();
+        assert.throws(
+            () => apply(data, { op: 'adjust_heights', delta: 1, region: { shape: 'band', inner: -1, outer: 1 } }),
+            /shape "band" needs "contour"/
+        );
+        assert.throws(
+            () => apply(data, {
+                op: 'adjust_heights', delta: 1,
+                region: { shape: 'band', contour: 0, inner: 2, outer: 1 },
+            }),
+            /inner 2 must be less than outer 1 m/
+        );
+        assert.throws(
+            () => apply(data, {
+                op: 'adjust_heights', delta: 1, region: { shape: 'band', contour: 0, inner: 0, outer: 0 },
+            }),
+            /inner 0 must be less than outer 0 m/
+        );
+        assert.throws(
+            () => apply(data, {
+                op: 'adjust_heights', delta: 1, region: { shape: 'band', contour: 99, outer: 2 },
+            }),
+            /no 99 m contour runs through/
+        );
+        assert.throws(
+            () => apply(data, { op: 'adjust_heights', delta: 1, region: { x: 0, contour: 1 } }),
+            /region\.contour only applies to shape: "band"/
+        );
+    });
+
+    it('rejects an unknown profile and clamp', () => {
+        const data = terrain();
+        assert.throws(
+            () => apply(data, { op: 'adjust_heights', delta: 1, falloff: 2, profile: 'ease' }),
+            /"profile" must be "linear" \/ "smooth" \/ "cosine", got "ease"/
+        );
+        assert.throws(
+            () => apply(data, { op: 'adjust_heights', delta: 1, clamp: 'up' }),
+            /"clamp" must be "none" \/ "raise-only" \/ "lower-only", got "up"/
+        );
+    });
+
+    it('paints a band along a shoreline, tapering to 0 at both of its edges', () => {
+        const data = terrain({ layers: 2, weightMapSize: 32 });
+        for (let j = 0; j < 33; j++) {
+            for (let i = 0; i < 33; i++) setVertexHeight(data, i, j, (i - 16) / 4, true);
+        }
+        const { results } = apply(data, {
+            op: 'paint_layer', layer: 1, weight: 1, falloff: 1,
+            region: { shape: 'band', contour: 0, inner: -3, outer: 3 },
+        });
+        assert.match(results[0].summary, /band -3\.\.3 m around the 0 m contour/);
+        assert.match(results[0].summary, /1 m linear falloff/);
+        assert.strictEqual(countShort(data), 0, 'the sum-255 convention holds');
+        // Texels near the contour carry the layer; texels far from it do not
+        const wms = data.weightMapSize;
+        const spacing = 32 / (wms - 1);
+        const onContour = Math.round(16 / spacing);
+        assert.ok(texel(data, onContour, 3)[1] > 200, 'the contour texel is painted');
+        assert.strictEqual(texel(data, 0, 3)[1], 0, 'the far edge of the terrain is not');
     });
 });
 

@@ -628,10 +628,10 @@ describe('prune_dangling_overrides', () => {
         corrupt(doc, 'Desk');
 
         const { errors, warnings } = new Validator(doc).validate();
-        // The dead override itself is only a warning (engine ignores it); the
-        // orphan target node it left behind is the genuine blocking error.
+        // Neither half blocks a write: the engine ignores the record, and the shell it left is
+        // exempt from the _id rule for that same reason — prune stays opt-in cleanup
         assert.ok(warnings.some(w => /engine ignores this override.*source is null/.test(w)), warnings.join('\n'));
-        assert.ok(errors.some(e => /has no _id/.test(e)), errors.join('\n'));
+        assert.deepStrictEqual(errors, []);
 
         const dangling = findDanglingOverrides(doc);
         assert.strictEqual(dangling.length, 1);

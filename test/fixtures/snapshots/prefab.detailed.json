@@ -103,6 +103,11 @@
             0.6,
             0
           ],
+          "scale": [
+            0.015,
+            0.015,
+            0.015
+          ],
           "components": [
             {
               "type": "UITransform",

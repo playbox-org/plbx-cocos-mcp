@@ -16,7 +16,9 @@ import { isRef } from './SceneDocument.js';
 import { isBuiltin } from '../core/builtins.js';
 import { readTerrainLayout } from '../utils/terrainBin.js';
 import { loadSourcePrefabByUuid } from './instances.js';
-import { fileIdTargets, overrideDeadReasons, mountedChildNodeIdxs } from './targetOverrides.js';
+import {
+    fileIdTargets, overrideDeadReasons, mountedChildNodeIdxs, deadOverrideShellNodes
+} from './targetOverrides.js';
 import { eulerToQuat, quatApproxEquals } from '../utils/math3d.js';
 import { VISUAL_ROOT_TYPES } from './componentTypes.js';
 
@@ -183,9 +185,12 @@ export class Validator {
         });
 
         if (doc.isScene) {
+            // Shells behind a dead override are not scene nodes: erroring on their missing _id
+            // would block apply_edits on a scene that opens and runs (deadOverrideShellNodes)
+            const shells = deadOverrideShellNodes(doc);
             doc.objects.forEach((obj, idx) => {
                 if (obj.__type__ === 'cc.Node' && (!obj._id || obj._id === '') &&
-                    !doc.isInstanceStub(idx)) {
+                    !doc.isInstanceStub(idx) && !shells.has(idx)) {
                     errors.push(`scene node #${idx} "${obj._name}" has no _id`);
                 }
             });

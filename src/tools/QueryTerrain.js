@@ -40,6 +40,12 @@ import {
     TERRAIN_BLOCK_TILE_COMPLEXITY,
     TERRAIN_HEIGHT_FACTOR
 } from '../utils/terrainBin.js';
+import {
+    contourCrossings,
+    slopeStats,
+    vertexSampleCount,
+    ContourError
+} from '../utils/terrainContour.js';
 
 /** Weight-map channel names, in `layerBuffer` slot order */
 const CHANNELS = ['R', 'G', 'B', 'A'];
@@ -73,6 +79,10 @@ const GRID_MAX_CELLS = 65536;
  */
 const MAX_SAMPLE_POINTS = 256;
 
+/** Contour budget: the crossing LIST is strided down for the report, the statistics never are */
+const MAX_CONTOUR_THRESHOLDS = 8;
+const MAX_CONTOUR_LINES = 128;
+
 /** Report sections `sections` can select; the header and warnings are always rendered. */
 const SECTIONS = ['geometry', 'layers', 'blocks', 'samples', 'notes'];
 
@@ -90,14 +100,23 @@ export class QueryTerrain extends BaseTool {
                'palette with textures resolved to asset names, per-block layer/weight usage, and ' +
                'consistency warnings. Sampling: heightAt answers "is my prop on the ground?", weightAt ' +
                'answers "which layer is painted here?", exportHeights dumps the height grid for relative ' +
-               'edits and before/after diffs. All coordinates are LOCAL METRES (x = width, z = depth, ' +
+               'edits and before/after diffs (format "map" renders it as an ASCII above/below-threshold ' +
+               'map). For editing an EXISTING terrain: contourAt returns where an iso-contour of the ' +
+               'height field actually runs (a waterline, a plateau rim, a cliff foot) as per-row ' +
+               'crossings plus monotone/largest-jump stats — derive the edge you must meet instead of ' +
+               'assuming it, and re-run it afterwards to prove the blend left no step; slope returns ' +
+               'gradient degrees with the steepest spot and the steepest adjacent-vertex step (the ' +
+               'crease metric). All coordinates are LOCAL METRES (x = width, z = depth, ' +
                'height = Y); terrain geometry starts at the node origin and the shader applies node ' +
                'worldPosition only (node rotation/scale are ignored). ' +
                'Args: {terrainPath (required; .terrain path or UUID — a bare asset NAME is not ' +
                `accepted), heightAt?: [[x,z],…] (max ${MAX_SAMPLE_POINTS} points), ` +
                `weightAt?: [[x,z],…] (max ${MAX_SAMPLE_POINTS} points), ` +
                'exportHeights?: {region?: {x,z,width,depth}, ' +
-               'format?: "rows"|"raw16", sampleCount?: n|[cols,rows]}, blocks?: boolean, ' +
+               'format?: "rows"|"raw16"|"map", threshold?: metres (map), ' +
+               'sampleCount?: n|[cols,rows]|"vertex"}, ' +
+               `contourAt?: height | [heights] | {threshold, region?, axis?: "x"|"z", sampleCount?}, ` +
+               'slope?: true | {region?, sampleCount?}, blocks?: boolean, ' +
                `sections?: [${SECTIONS.map((s) => `"${s}"`).join('|')}] (text report only — pass ` +
                '["samples"] to skip the ~25-line geometry/palette/notes preamble when you are ' +
                'only sampling), format?: "text"|"json"}.';
@@ -139,12 +158,34 @@ export class QueryTerrain extends BaseTool {
                     type: 'object',
                     description: 'Dump the height grid. {} = whole terrain at the default resolution. ' +
                                  'region?: {x, z, width, depth} in local metres; ' +
-                                 'format?: "rows" (metres, default) | "raw16" (u16 as stored: metres = (raw - 32768) / 128); ' +
+                                 'format?: "rows" (metres, default) | "raw16" (u16 as stored: metres = (raw - 32768) / 128) ' +
+                                 '| "map" (ASCII: "#" where the height is at or above threshold, "." below — the ' +
+                                 'cheapest way to SEE a shape edit; threshold?: metres, default the midpoint of the ' +
+                                 'sampled range); ' +
                                  'sampleCount?: n or [cols, rows] to override the resolution ' +
-                                 `(max ${GRID_MAX_AXIS} per axis, ${GRID_MAX_CELLS} cells). ` +
+                                 `(max ${GRID_MAX_AXIS} per axis, ${GRID_MAX_CELLS} cells), or "vertex" for the ` +
+                                 'region\'s exact vertex resolution (width/tileSize + 1 — what a contour ' +
+                                 'derivation needs; the default downsamples and would blur the edge). ' +
                                  'By default the grid is the vertex resolution of the region, downsampled by a ' +
                                  `power-of-two stride so neither axis exceeds ${GRID_DEFAULT_MAX_AXIS} samples — ` +
                                  'ask for a region to get full resolution on a big terrain'
+                },
+                contourAt: {
+                    description: 'Where the iso-contour at this height runs: a number, a list of heights ' +
+                                 `(max ${MAX_CONTOUR_THRESHOLDS}), or ` +
+                                 '{threshold: n|[n], region?, axis?: "x"|"z", sampleCount?}. Per scan line ' +
+                                 '(constant z for axis "x", the default) the crossing is linearly interpolated ' +
+                                 'between the straddling vertex pair, at the region\'s VERTEX resolution unless ' +
+                                 'sampleCount says otherwise. Reported with the checks a blend edit needs: how ' +
+                                 'many lines have exactly one crossing, whether the crossing list is monotone, ' +
+                                 'and the largest jump between adjacent lines (a jump is a step in the geometry)'
+                },
+                slope: {
+                    description: 'Gradient magnitude in degrees over the region: true for the whole terrain, ' +
+                                 'or {region?, sampleCount?}. Reports max (with its location), mean, a ' +
+                                 'walkability distribution, and maxStep — the largest height difference ' +
+                                 'between adjacent samples, i.e. the crease metric to compare before/after ' +
+                                 'a shape edit'
                 },
                 blocks: {
                     type: 'boolean',
@@ -366,9 +407,72 @@ function buildModel({ title, uuid, data, info, assetIndex, args }) {
             : sampleWeights(data, parsePoints(args.weightAt, 'weightAt'), layers, sentinel),
         heightGrid: args.exportHeights === undefined
             ? null
-            : buildHeightGrid(data, parseExportHeights(args.exportHeights), sentinel),
+            : buildHeightGrid(data, parseExportHeights(args.exportHeights, data), sentinel),
+        contours: args.contourAt === undefined
+            ? null
+            : buildContours(data, parseContourAt(args.contourAt), sentinel),
+        slope: args.slope === undefined || args.slope === false
+            ? null
+            : buildSlope(data, parseSlope(args.slope), sentinel),
         warnings
     };
+}
+
+/** Iso-contour crossings per threshold; stats over every line, the printed list strided down */
+function buildContours(data, spec, sentinel) {
+    if (sentinel) {
+        return spec.thresholds.map((threshold) => ({
+            threshold,
+            note: 'empty default terrain — no height data to trace a contour through yet',
+            lines: [],
+            stats: null
+        }));
+    }
+    // Not in the parser: "vertex" needs the terrain's tileSize
+    const sampleCount = parseSampleCount(spec.sampleCountRaw, 'contourAt', data, spec.region);
+    return spec.thresholds.map((threshold) => {
+        let result;
+        try {
+            result = contourCrossings(data, threshold, {
+                region: spec.region,
+                axis: spec.axis,
+                sampleCount
+            });
+        } catch (err) {
+            if (err instanceof ContourError) throw new ArgError(`contourAt: ${err.message}`);
+            throw err;
+        }
+        const stride = Math.max(1, Math.ceil(result.lines.length / MAX_CONTOUR_LINES));
+        return {
+            threshold,
+            axis: result.axis,
+            region: result.region,
+            samples: result.samples,
+            spacing: result.spacing,
+            stats: result.stats,
+            stride,
+            lines: stride === 1 ? result.lines : result.lines.filter((_, i) => i % stride === 0),
+            note: null
+        };
+    });
+}
+
+function buildSlope(data, spec, sentinel) {
+    if (sentinel) {
+        return { note: 'empty default terrain — no height data to measure a slope on yet' };
+    }
+    try {
+        return {
+            ...slopeStats(data, {
+                region: spec.region,
+                sampleCount: parseSampleCount(spec.sampleCountRaw, 'slope', data, spec.region)
+            }),
+            note: null
+        };
+    } catch (err) {
+        if (err instanceof ContourError) throw new ArgError(`slope: ${err.message}`);
+        throw err;
+    }
 }
 
 /**
@@ -571,6 +675,23 @@ function buildHeightGrid(data, spec, sentinel) {
         ? rowsMetres.map((row) => row.map((v) => (v === null ? null : heightToRaw(v, true))))
         : rowsMetres;
 
+    // Defaulting to the sampled midpoint makes "show me the shape" a one-argument call
+    let threshold = spec.threshold;
+    let derivedThreshold = false;
+    if (spec.format === 'map' && threshold === null) {
+        let low = Infinity;
+        let high = -Infinity;
+        for (const row of rowsMetres) {
+            for (const v of row) {
+                if (v === null) continue;
+                if (v < low) low = v;
+                if (v > high) high = v;
+            }
+        }
+        threshold = Number.isFinite(low) ? (low + high) / 2 : 0;
+        derivedThreshold = true;
+    }
+
     return {
         region,
         samples: [cols, rowCount],
@@ -581,6 +702,8 @@ function buildHeightGrid(data, spec, sentinel) {
         stride,
         downsampled: spec.sampleCount === null && stride > 1,
         format: spec.format,
+        threshold: spec.format === 'map' ? threshold : null,
+        derivedThreshold,
         rows,
         note: null
     };
@@ -646,13 +769,73 @@ function parsePoints(raw, key) {
 }
 
 const REGION_KEYS = ['x', 'z', 'width', 'depth'];
-const EXPORT_KEYS = ['region', 'format', 'sampleCount'];
+const EXPORT_KEYS = ['region', 'format', 'sampleCount', 'threshold'];
+const EXPORT_FORMATS = ['rows', 'raw16', 'map'];
+const CONTOUR_KEYS = ['threshold', 'thresholds', 'region', 'axis', 'sampleCount'];
+const SLOPE_KEYS = ['region', 'sampleCount'];
 
-function parseExportHeights(raw) {
+/** A `{x, z, width, depth}` region under `what`, validated key by key */
+function parseRegionArg(raw, what) {
+    if (raw === undefined || raw === null) return null;
+    if (typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new ArgError(`${what} must be an object {x, z, width, depth} in local metres`);
+    }
+    for (const key of Object.keys(raw)) {
+        if (!REGION_KEYS.includes(key)) {
+            throw new ArgError(
+                `${what}: unknown key "${key}" — valid keys are ${REGION_KEYS.join(', ')} ` +
+                '(local metres; x/z default to 0, width/depth to the far edge)'
+            );
+        }
+    }
+    const region = {};
+    for (const key of REGION_KEYS) {
+        const v = raw[key];
+        if (v === undefined) continue;
+        if (typeof v !== 'number' || !Number.isFinite(v)) {
+            throw new ArgError(`${what}.${key} must be a finite number of metres, got ${JSON.stringify(v)}`);
+        }
+        region[key] = v;
+    }
+    for (const key of ['width', 'depth']) {
+        if (region[key] !== undefined && region[key] <= 0) {
+            throw new ArgError(`${what}.${key} must be > 0 metres, got ${region[key]}`);
+        }
+    }
+    return region;
+}
+
+/** A `sampleCount`: `n`, `[cols, rows]`, or `"vertex"` (= `width / tileSize + 1` per axis) */
+function parseSampleCount(raw, what, data, region) {
+    if (raw === undefined || raw === null) return null;
+    if (raw === 'vertex') return vertexSampleCount(data, region);
+    const pair = Array.isArray(raw) ? raw : [raw, raw];
+    if (pair.length !== 2) {
+        throw new ArgError(`${what}.sampleCount must be a number, a [cols, rows] pair, or "vertex"`);
+    }
+    for (const n of pair) {
+        if (!Number.isInteger(n) || n < 2 || n > GRID_MAX_AXIS) {
+            throw new ArgError(
+                `${what}.sampleCount must be an integer in 2..${GRID_MAX_AXIS} per axis, ` +
+                `got ${JSON.stringify(n)}`
+            );
+        }
+    }
+    if (pair[0] * pair[1] > GRID_MAX_CELLS) {
+        throw new ArgError(
+            `${what}.sampleCount ${pair[0]}x${pair[1]} = ${pair[0] * pair[1]} samples exceeds ` +
+            `${GRID_MAX_CELLS} — ask for a smaller region instead`
+        );
+    }
+    return [pair[0], pair[1]];
+}
+
+function parseExportHeights(raw, data) {
     if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
         throw new ArgError(
             'exportHeights must be an object — {} for the whole terrain, or ' +
-            '{region: {x, z, width, depth}, format: "rows"|"raw16", sampleCount: n|[cols, rows]}'
+            '{region: {x, z, width, depth}, format: "rows"|"raw16"|"map", threshold: metres (map), ' +
+            'sampleCount: n|[cols, rows]|"vertex"}'
         );
     }
     for (const key of Object.keys(raw)) {
@@ -663,66 +846,107 @@ function parseExportHeights(raw) {
         }
     }
 
-    let region = null;
-    if (raw.region !== undefined && raw.region !== null) {
-        if (typeof raw.region !== 'object' || Array.isArray(raw.region)) {
-            throw new ArgError('exportHeights.region must be an object {x, z, width, depth} in local metres');
-        }
-        for (const key of Object.keys(raw.region)) {
-            if (!REGION_KEYS.includes(key)) {
-                throw new ArgError(
-                    `exportHeights.region: unknown key "${key}" — valid keys are ${REGION_KEYS.join(', ')} ` +
-                    '(local metres; x/z default to 0, width/depth to the whole terrain)'
-                );
-            }
-        }
-        region = {};
-        for (const key of REGION_KEYS) {
-            const v = raw.region[key];
-            if (v === undefined) continue;
-            if (typeof v !== 'number' || !Number.isFinite(v)) {
-                throw new ArgError(`exportHeights.region.${key} must be a finite number of metres, got ${JSON.stringify(v)}`);
-            }
-            region[key] = v;
-        }
-        for (const key of ['width', 'depth']) {
-            if (region[key] !== undefined && region[key] <= 0) {
-                throw new ArgError(`exportHeights.region.${key} must be > 0 metres, got ${region[key]}`);
-            }
-        }
-    }
-
+    const region = parseRegionArg(raw.region, 'exportHeights.region');
     const format = raw.format ?? 'rows';
-    if (format !== 'rows' && format !== 'raw16') {
-        throw new ArgError(`exportHeights.format must be "rows" or "raw16", got ${JSON.stringify(raw.format)}`);
+    if (!EXPORT_FORMATS.includes(format)) {
+        throw new ArgError(
+            `exportHeights.format must be one of ${EXPORT_FORMATS.map((f) => `"${f}"`).join(', ')}, ` +
+            `got ${JSON.stringify(raw.format)}`
+        );
     }
-
-    let sampleCount = null;
-    if (raw.sampleCount !== undefined && raw.sampleCount !== null) {
-        const pair = Array.isArray(raw.sampleCount)
-            ? raw.sampleCount
-            : [raw.sampleCount, raw.sampleCount];
-        if (pair.length !== 2) {
-            throw new ArgError('exportHeights.sampleCount must be a number or a [cols, rows] pair');
-        }
-        for (const n of pair) {
-            if (!Number.isInteger(n) || n < 2 || n > GRID_MAX_AXIS) {
-                throw new ArgError(
-                    `exportHeights.sampleCount must be an integer in 2..${GRID_MAX_AXIS} per axis, ` +
-                    `got ${JSON.stringify(n)}`
-                );
-            }
-        }
-        if (pair[0] * pair[1] > GRID_MAX_CELLS) {
+    if (raw.threshold !== undefined) {
+        if (format !== 'map') {
             throw new ArgError(
-                `exportHeights.sampleCount ${pair[0]}x${pair[1]} = ${pair[0] * pair[1]} samples exceeds ` +
-                `${GRID_MAX_CELLS} — dump a smaller region instead`
+                'exportHeights.threshold only applies to format: "map" (it is the height the map ' +
+                'splits above/below) — for numbers, "rows" and "raw16" carry the heights themselves'
             );
         }
-        sampleCount = [pair[0], pair[1]];
+        if (typeof raw.threshold !== 'number' || !Number.isFinite(raw.threshold)) {
+            throw new ArgError(
+                `exportHeights.threshold must be a finite height in metres, got ${JSON.stringify(raw.threshold)}`
+            );
+        }
     }
 
-    return { region, format, sampleCount };
+    return {
+        region,
+        format,
+        threshold: raw.threshold ?? null,
+        sampleCount: parseSampleCount(raw.sampleCount, 'exportHeights', data, region)
+    };
+}
+
+/** `contourAt`: a height, a list of heights, or the full `{threshold, region, axis, sampleCount}` */
+function parseContourAt(raw) {
+    let thresholds;
+    let region = null;
+    let axis = 'x';
+    let sampleCountRaw;
+    if (typeof raw === 'number') {
+        thresholds = [raw];
+    } else if (Array.isArray(raw)) {
+        thresholds = raw;
+    } else if (typeof raw === 'object' && raw !== null) {
+        for (const key of Object.keys(raw)) {
+            if (!CONTOUR_KEYS.includes(key)) {
+                throw new ArgError(
+                    `contourAt: unknown key "${key}" — valid keys are ${CONTOUR_KEYS.join(', ')}`
+                );
+            }
+        }
+        const t = raw.threshold ?? raw.thresholds;
+        if (t === undefined) {
+            throw new ArgError(
+                'contourAt: "threshold" is required — the height in metres whose contour to trace ' +
+                '(a number or a list of numbers)'
+            );
+        }
+        thresholds = Array.isArray(t) ? t : [t];
+        region = parseRegionArg(raw.region, 'contourAt.region');
+        if (raw.axis !== undefined) {
+            if (raw.axis !== 'x' && raw.axis !== 'z') {
+                throw new ArgError(`contourAt.axis must be "x" or "z", got ${JSON.stringify(raw.axis)}`);
+            }
+            axis = raw.axis;
+        }
+        sampleCountRaw = raw.sampleCount;
+    } else {
+        throw new ArgError(
+            'contourAt must be a height in metres, a list of heights, or ' +
+            '{threshold: n|[n], region?, axis?: "x"|"z", sampleCount?}'
+        );
+    }
+    if (thresholds.length === 0) {
+        throw new ArgError('contourAt: give at least one threshold height in metres');
+    }
+    if (thresholds.length > MAX_CONTOUR_THRESHOLDS) {
+        throw new ArgError(
+            `contourAt: ${thresholds.length} thresholds is over the ${MAX_CONTOUR_THRESHOLDS} limit — ` +
+            'each one is a full grid scan with its own crossing table'
+        );
+    }
+    for (const t of thresholds) {
+        if (typeof t !== 'number' || !Number.isFinite(t)) {
+            throw new ArgError(
+                `contourAt: every threshold must be a finite height in metres, got ${JSON.stringify(t)}`
+            );
+        }
+    }
+    return { thresholds, region, axis, sampleCountRaw };
+}
+
+/** `slope`: `true` for the whole terrain, or `{region, sampleCount}` */
+function parseSlope(raw) {
+    if (raw === true) return { region: null, sampleCountRaw: undefined };
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+        throw new ArgError('slope must be true or an object {region?, sampleCount?}');
+    }
+    for (const key of Object.keys(raw)) {
+        if (!SLOPE_KEYS.includes(key)) {
+            throw new ArgError(`slope: unknown key "${key}" — valid keys are ${SLOPE_KEYS.join(', ')}`);
+        }
+    }
+    return { region: parseRegionArg(raw.region, 'slope.region'), sampleCountRaw: raw.sampleCount };
 }
 
 // --- Rendering ---------------------------------------------------------------
@@ -910,19 +1134,130 @@ function renderReport(m, sections = new Set(SECTIONS)) {
                     ? ` — downsampled 1:${g.stride} from the vertex grid to stay at or below ${GRID_DEFAULT_MAX_AXIS} samples per axis; pass a region or sampleCount for full resolution`
                     : '')
             );
-            lines.push(
-                g.format === 'raw16'
-                    ? 'Values: raw u16 as stored — metres = (raw - 32768) / 128.'
-                    : 'Values: metres, 3 decimals (the height quantum is 0.0078125 m).'
-            );
+            if (g.format === 'map') {
+                lines.push(
+                    `Map: "#" = height >= ${fmt(g.threshold)} m, "." = below it, "?" = no data` +
+                    (g.derivedThreshold
+                        ? ' — threshold defaulted to the midpoint of the sampled range; pass ' +
+                          'exportHeights.threshold to compare against a specific height'
+                        : '')
+                );
+            } else {
+                lines.push(
+                    g.format === 'raw16'
+                        ? 'Values: raw u16 as stored — metres = (raw - 32768) / 128.'
+                        : 'Values: metres, 3 decimals (the height quantum is 0.0078125 m).'
+                );
+            }
             lines.push('Row i is at z = region.z + i * spacingZ, column k at x = region.x + k * spacingX; row 0 is nearest the node origin.');
             const width = String(g.samples[1] - 1).length;
             g.rows.forEach((row, j) => {
+                if (g.format === 'map') {
+                    const cells = row.map((v) => (v === null ? '?' : (v >= g.threshold ? '#' : '.')));
+                    lines.push(`${String(j).padStart(width)} | ${cells.join('')}`);
+                    return;
+                }
                 const cells = row.map((v) => (v === null
                     ? 'null'
                     : (g.format === 'raw16' ? String(v) : v.toFixed(3))));
                 lines.push(`${String(j).padStart(width)} | ${cells.join(' ')}`);
             });
+        }
+    }
+
+    if (sections.has('samples') && m.contours) {
+        for (const c of m.contours) {
+            lines.push('', `## Contour at ${fmt(c.threshold)} m`);
+            if (c.note) {
+                lines.push(c.note);
+                continue;
+            }
+            const scanned = c.axis === 'x' ? 'z' : 'x';
+            lines.push(
+                `Region: x ${fmt(c.region.x)}..${fmt(c.region.x + c.region.width)} m, ` +
+                `z ${fmt(c.region.z)}..${fmt(c.region.z + c.region.depth)} m; ` +
+                `${c.samples[0]} x ${c.samples[1]} samples, spacing ${fmt(c.spacing[0], 6)} x ${fmt(c.spacing[1], 6)} m`
+            );
+            lines.push(
+                `Scanned along ${c.axis} — one line per ${scanned}, crossings are ${c.axis} coordinates ` +
+                'linearly interpolated between the straddling sample pair.'
+            );
+            const s = c.stats;
+            lines.push(
+                `Lines: ${s.lines}, with exactly one crossing ${s.singleCrossingLines}` +
+                (s.lines - s.singleCrossingLines
+                    ? ` (${s.lines - s.singleCrossingLines} with none or several — a lagoon, a ` +
+                      'peninsula, or the contour leaving the region)'
+                    : '') +
+                `; total crossings ${s.crossings}`
+            );
+            if (s.crossings === 0) {
+                lines.push(
+                    `No crossing at all: the whole region is either above or below ${fmt(c.threshold)} m. ` +
+                    'Check the Height line for the range that exists.'
+                );
+            } else {
+                lines.push(
+                    `Monotone: ${s.monotone === null ? 'n/a (needs consecutive single-crossing lines)' : (s.monotone ? 'yes' : 'no')}` +
+                    (s.maxJump
+                        ? `; largest jump between adjacent lines ${fmt(s.maxJump.value)} m ` +
+                          `(${scanned} ${fmt(s.maxJump.fromCoord)} -> ${fmt(s.maxJump.toCoord)}: ` +
+                          `${c.axis} ${fmt(s.maxJump.from)} -> ${fmt(s.maxJump.to)})`
+                        : '') +
+                    (s.min !== null ? `; extent ${c.axis} ${fmt(s.min)}..${fmt(s.max)} m` : '')
+                );
+                lines.push(
+                    'A jump much larger than the line spacing IS a step in the geometry — the check ' +
+                    'that catches a seam a point sample cannot see.'
+                );
+                lines.push(...table(
+                    [`${scanned} (m)`, `${c.axis} crossing(s)`],
+                    c.lines.map((l) => [
+                        fmt(l.coord),
+                        l.crossings.length ? l.crossings.map((v) => fmt(v)).join(', ') : '-'
+                    ])
+                ));
+                if (c.stride > 1) {
+                    lines.push(
+                        `Every ${c.stride}th line shown (${s.lines} in total); the statistics above ` +
+                        'cover all of them — ask for a smaller region for the full table.'
+                    );
+                }
+            }
+        }
+    }
+
+    if (sections.has('samples') && m.slope) {
+        const s = m.slope;
+        lines.push('', '## Slope');
+        if (s.note) {
+            lines.push(s.note);
+        } else {
+            lines.push(
+                `Region: x ${fmt(s.region.x)}..${fmt(s.region.x + s.region.width)} m, ` +
+                `z ${fmt(s.region.z)}..${fmt(s.region.z + s.region.depth)} m; ` +
+                `${s.samples[0]} x ${s.samples[1]} samples, spacing ${fmt(s.spacing[0], 6)} x ${fmt(s.spacing[1], 6)} m`
+            );
+            lines.push(
+                s.max
+                    ? `Max ${fmt(s.max.degrees, 2)}° at x ${fmt(s.max.x)}, z ${fmt(s.max.z)}; ` +
+                      `mean ${fmt(s.mean, 2)}° over ${s.sampled} samples`
+                    : 'No measurable slope (no usable height data in the region).'
+            );
+            if (s.maxStep) {
+                lines.push(
+                    `Steepest adjacent-sample step: ${fmt(s.maxStep.metres)} m at x ${fmt(s.maxStep.x)}, ` +
+                    `z ${fmt(s.maxStep.z)} (along ${s.maxStep.axis}) — the crease metric: compare it ` +
+                    'against the same measurement before an edit, not against an absolute threshold.'
+                );
+            }
+            const total = s.buckets.reduce((n, b) => n + b.count, 0);
+            if (total > 0) {
+                lines.push('Distribution: ' + s.buckets.map((b) => {
+                    const label = b.upTo === null ? '>45°' : `<=${b.upTo}°`;
+                    return `${label} ${b.count} (${((b.count / total) * 100).toFixed(1)}%)`;
+                }).join(', '));
+            }
         }
     }
 

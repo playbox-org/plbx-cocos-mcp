@@ -81,6 +81,17 @@ export class BoundsCalculator {
     }
 
     /**
+     * World position of a node — the only measurement a node with no measurable contributor has.
+     * @param {import('./SceneDocument.js').SceneDocument} doc
+     * @param {number} nodeIdx
+     * @returns {{x: number, y: number, z: number}}
+     */
+    worldPosition(doc, nodeIdx) {
+        const m = this.#worldMatrix(doc, nodeIdx);
+        return { x: m[12], y: m[13], z: m[14] };
+    }
+
+    /**
      * Walk a node: collect component boxes at `matrix` (maps the node's own
      * frame — TRS applied — to the queried node's frame), then descend.
      * When `excludeOwnTrs`, `matrix` is used as-is (query root / instance root).

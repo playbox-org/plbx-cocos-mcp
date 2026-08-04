@@ -66,17 +66,27 @@ import {
     TerrainBuildError,
 } from './TerrainBuilder.js';
 import { buildHeightGrid, HeightmapError } from '../utils/heightmap.js';
+import { ContourDistance, ContourError } from '../utils/terrainContour.js';
 
 /** Thrown by every op; `EditTerrain` turns it into "… Nothing was written." */
 export class TerrainOpError extends Error {
     name = 'TerrainOpError';
 }
 
-/** Region shapes `paint_layer` understands */
-const REGION_SHAPES = ['rect', 'ellipse'];
+/** Region shapes; `band` follows an ISO-CONTOUR of the height field instead of a coordinate box */
+const REGION_SHAPES = ['rect', 'ellipse', 'band'];
 
 /** Base keys of a `region` argument (local metres) */
 const REGION_KEYS = ['x', 'z', 'width', 'depth'];
+
+/** Extra keys of a `band` region: the contour it follows and its two signed offsets */
+const BAND_KEYS = ['contour', 'inner', 'outer'];
+
+/** How the falloff ramps from 0 at the region border to 1 `falloff` metres inside it */
+const PROFILES = ['linear', 'smooth', 'cosine'];
+
+/** Which direction a masked height write may move the ground */
+const CLAMPS = ['none', 'raise-only', 'lower-only'];
 
 /**
  * Accepted keys per op. Unknown keys are REJECTED with the supported list: a silently
@@ -87,10 +97,10 @@ const OP_KEYS = {
     set_info: ['tileSize', 'blockCount', 'weightMapSize', 'lightMapSize'],
     set_layer: ['slot', 'detailMap', 'normalMap', 'tileSize', 'roughness', 'metallic'],
     remove_layer: ['slot'],
-    set_heights: ['region', 'value', 'rows', 'heightmap'],
-    adjust_heights: ['region', 'delta'],
-    smooth_heights: ['region', 'iterations'],
-    paint_layer: ['layer', 'region', 'weight', 'falloff'],
+    set_heights: ['region', 'value', 'rows', 'heightmap', 'falloff', 'profile', 'clamp'],
+    adjust_heights: ['region', 'delta', 'falloff', 'profile', 'clamp'],
+    smooth_heights: ['region', 'iterations', 'falloff', 'profile', 'clamp'],
+    paint_layer: ['layer', 'region', 'weight', 'falloff', 'profile'],
     set_block_layers: ['block', 'layers'],
 };
 
@@ -172,17 +182,24 @@ function validateOpKeys(op) {
         if (key === 'op' || allowed.includes(key)) continue;
         throw new TerrainOpError(
             `unknown key "${key}" — ${op.op} takes ${allowed.join(', ')}`
-            // shape/falloff are the two keys an agent reaches for on a height op after
-            // seeing them on paint_layer. Naming the workaround is the difference between
-            // a retry that works and a flat-topped mesa.
-            + (key === 'falloff' || key === 'shape'
-                ? '. shape/falloff exist only on paint_layer; height ops always cover the whole '
-                  + 'rectangle uniformly. For a rounded hill either give set_heights a "rows" grid '
-                  + '(it is resampled onto the region\'s vertex grid, so a 5x5 bump is enough), or '
-                  + 'run adjust_heights and then smooth_heights over a region 2-3 tiles larger'
+            // `shape` belongs to the region, not the op — the near-miss worth naming
+            + (key === 'shape'
+                ? '. shape is a REGION key: region: {x, z, width, depth, shape: '
+                  + `${REGION_SHAPES.map((s) => `"${s}"`).join('|')}}`
                 : '')
         );
     }
+}
+
+/** One of a fixed set of strings, with the list in the error */
+function parseEnum(op, field, values, fallback) {
+    if (op[field] === undefined) return fallback;
+    if (!values.includes(op[field])) {
+        throw new TerrainOpError(
+            `"${field}" must be ${values.map((v) => `"${v}"`).join(' / ')}, got ${show(op[field])}`
+        );
+    }
+    return op[field];
 }
 
 // --- regions ----------------------------------------------------------------
@@ -193,18 +210,21 @@ function validateOpKeys(op) {
  * An omitted `width`/`depth` means "from `x`/`z` to the far edge" (the same rule
  * `query_terrain`'s `exportHeights` uses), never "the whole terrain shifted by x/z".
  *
+ * For `shape: "band"` the rectangle is only a BOUNDING BOX: the band is `contour ± inner/outer`
+ * intersected with it.
+ *
  * @param {object} op
  * @param {object} data - Terrain data object
- * @param {{shape?: boolean}} [options] - Accept a `shape` key (paint_layer)
- * @returns {{x: number, z: number, width: number, depth: number, shape: string, whole: boolean}}
+ * @returns {{x: number, z: number, width: number, depth: number, shape: string, whole: boolean,
+ *   contour?: number, inner?: number, outer?: number}}
  */
-function parseRegion(op, data, { shape = false } = {}) {
+function parseRegion(op, data) {
     const [sw, sh] = terrainSize(data);
     const raw = op.region;
     if (raw === undefined || raw === null) {
         return { x: 0, z: 0, width: sw, depth: sh, shape: 'rect', whole: true };
     }
-    const keys = shape ? [...REGION_KEYS, 'shape'] : REGION_KEYS;
+    const keys = [...REGION_KEYS, 'shape', ...BAND_KEYS];
     if (typeof raw !== 'object' || Array.isArray(raw)) {
         throw new TerrainOpError(
             `region must be an object {${keys.join(', ')}} in local metres, got ${show(raw)}`
@@ -214,12 +234,8 @@ function parseRegion(op, data, { shape = false } = {}) {
         if (!keys.includes(key)) {
             throw new TerrainOpError(
                 `region: unknown key "${key}" — valid keys are ${keys.join(', ')} ` +
-                '(local metres; x/z default to 0, width/depth to the far edge)'
-                + (key === 'shape'
-                    ? '. shape is only accepted by paint_layer; height ops always cover the '
-                      + 'rectangle. For a rounded hill pass set_heights a "rows" grid, or follow '
-                      + 'adjust_heights with smooth_heights over a slightly larger region'
-                    : '')
+                '(local metres; x/z default to 0, width/depth to the far edge; ' +
+                'contour/inner/outer belong to shape: "band")'
             );
         }
     }
@@ -244,13 +260,46 @@ function parseRegion(op, data, { shape = false } = {}) {
             );
         }
     }
-    if (shape && raw.shape !== undefined) {
+    if (raw.shape !== undefined) {
         if (!REGION_SHAPES.includes(raw.shape)) {
             throw new TerrainOpError(
-                `region.shape must be ${REGION_SHAPES.map((s) => `"${s}"`).join(' or ')}, got ${show(raw.shape)}`
+                `region.shape must be one of ${REGION_SHAPES.map((s) => `"${s}"`).join(', ')}, ` +
+                `got ${show(raw.shape)} ("band" follows an iso-contour of the height field and ` +
+                'additionally takes contour/inner/outer)'
             );
         }
         r.shape = raw.shape;
+    }
+    const bandGiven = BAND_KEYS.filter((k) => raw[k] !== undefined);
+    if (r.shape === 'band') {
+        if (raw.contour === undefined) {
+            throw new TerrainOpError(
+                'region.shape "band" needs "contour": the height in metres whose iso-contour the ' +
+                'band follows (a waterline, a plateau rim, a cliff foot). Get it from ' +
+                'query_terrain {contourAt: <height>} if you are unsure where that contour runs'
+            );
+        }
+        for (const key of BAND_KEYS) {
+            if (raw[key] !== undefined && (typeof raw[key] !== 'number' || !Number.isFinite(raw[key]))) {
+                throw new TerrainOpError(`region.${key} must be a finite number of metres, got ${show(raw[key])}`);
+            }
+        }
+        r.contour = raw.contour;
+        r.inner = raw.inner ?? 0;
+        r.outer = raw.outer ?? 0;
+        if (!(r.inner < r.outer)) {
+            throw new TerrainOpError(
+                `region: inner ${fmt(r.inner)} must be less than outer ${fmt(r.outer)} m — both are ` +
+                'SIGNED distances from the contour, negative on the HIGH side (above the contour ' +
+                'height) and positive on the low side, so {inner: -1, outer: 2} is "from 1 m above ' +
+                'the contour to 2 m below it"'
+            );
+        }
+    } else if (bandGiven.length) {
+        throw new TerrainOpError(
+            `region.${bandGiven[0]} only applies to shape: "band" (this region is a ` +
+            `${r.shape}) — pass region.shape: "band" to follow an iso-contour of the height field`
+        );
     }
     if (r.x >= sw || r.z >= sh || r.x + r.width <= 0 || r.z + r.depth <= 0) {
         throw new TerrainOpError(
@@ -298,8 +347,104 @@ function describeRegion(data, r) {
         const [sw, sh] = terrainSize(data);
         return `the whole terrain (${fmt(sw)} x ${fmt(sh)} m)`;
     }
-    const shape = r.shape === 'rect' ? '' : ` (${r.shape})`;
-    return `x ${fmt(r.x)}..${fmt(r.x + r.width)} m, z ${fmt(r.z)}..${fmt(r.z + r.depth)} m${shape}`;
+    const box = `x ${fmt(r.x)}..${fmt(r.x + r.width)} m, z ${fmt(r.z)}..${fmt(r.z + r.depth)} m`;
+    if (r.shape === 'band') {
+        return `${box}, band ${fmt(r.inner)}..${fmt(r.outer)} m around the ${fmt(r.contour)} m ` +
+            'contour (signed: negative = above it)';
+    }
+    return `${box}${r.shape === 'rect' ? '' : ` (${r.shape})`}`;
+}
+
+// --- masks ------------------------------------------------------------------
+
+/**
+ * The mask a region + falloff describe: `factorAt(x, z)` is 0..1 inside, `null` outside. The factor
+ * is 0 AT the border and 1 `falloff` metres in, so a ramp can never be centred on the edge (= step).
+ * @param {object} data - Terrain data object
+ * @param {object} r - Parsed region
+ * @param {object} op - The op (read for `falloff`/`profile`)
+ * @returns {{factorAt: (x: number, z: number, h?: number|null) => number|null, falloff: number,
+ *   profile: string}}
+ */
+function buildMask(data, r, op) {
+    const falloff = op.falloff === undefined
+        ? 0
+        : requireNumberIn(op, 'falloff', 0, Infinity, ' metres');
+    const profile = parseEnum(op, 'profile', PROFILES, 'linear');
+
+    const cx = r.x + r.width / 2;
+    const cz = r.z + r.depth / 2;
+    const rx = r.width / 2;
+    const rz = r.depth / 2;
+    const rectEdge = (x, z) => Math.min(x - r.x, r.x + r.width - x, z - r.z, r.z + r.depth - z);
+
+    let contour = null;
+    if (r.shape === 'band') {
+        // `inner < outer` is enforced by parseRegion, so at least one offset is non-zero
+        const reach = Math.max(Math.abs(r.inner), Math.abs(r.outer));
+        const [sw, sh] = terrainSize(data);
+        // Grown by the reach: a segment just outside the box still owns points inside it
+        const pad = reach + (data.tileSize > 0 ? data.tileSize : 0);
+        const x0 = Math.max(0, r.x - pad);
+        const z0 = Math.max(0, r.z - pad);
+        try {
+            contour = new ContourDistance(data, r.contour, {
+                region: {
+                    x: x0,
+                    z: z0,
+                    width: Math.min(sw, r.x + r.width + pad) - x0,
+                    depth: Math.min(sh, r.z + r.depth + pad) - z0,
+                },
+                reach,
+            });
+        } catch (err) {
+            if (err instanceof ContourError) throw new TerrainOpError(`region: ${err.message}`);
+            throw err;
+        }
+        if (contour.segmentCount === 0) {
+            throw new TerrainOpError(
+                `region: no ${fmt(r.contour)} m contour runs through x ${fmt(r.x)}..${fmt(r.x + r.width)} m, ` +
+                `z ${fmt(r.z)}..${fmt(r.z + r.depth)} m — the whole area is either above or below ` +
+                'that height, so there is no edge to follow. Check the height range with ' +
+                'query_terrain (its Height line), or pick the contour with ' +
+                'query_terrain {contourAt: <height>}'
+            );
+        }
+    }
+
+    const ramp = (edge) => {
+        if (!(falloff > 0)) return 1;
+        const t = Math.min(Math.max(edge / falloff, 0), 1);
+        if (profile === 'smooth') return t * t * (3 - 2 * t);
+        if (profile === 'cosine') return 0.5 - 0.5 * Math.cos(Math.PI * t);
+        return t;
+    };
+
+    const factorAt = (x, z, h = undefined) => {
+        if (r.shape === 'ellipse') {
+            const q = Math.sqrt(((x - cx) / rx) ** 2 + ((z - cz) / rz) ** 2);
+            if (q > 1 + EPS) return null;
+            // Approximate for a strong ellipse: the band is measured along the SHORTER radius
+            return ramp((1 - q) * Math.min(rx, rz));
+        }
+        const inBox = x >= r.x - EPS && x <= r.x + r.width + EPS
+            && z >= r.z - EPS && z <= r.z + r.depth + EPS;
+        if (!inBox) return null;
+        if (r.shape !== 'band') return ramp(rectEdge(x, z));
+        const sd = contour.signedDistanceAt(x, z, h);
+        if (!sd) return null;
+        const s = sd.signed;
+        if (s < r.inner - EPS || s > r.outer + EPS) return null;
+        return ramp(Math.min(s - r.inner, r.outer - s, rectEdge(x, z)));
+    };
+
+    return { factorAt, falloff, profile };
+}
+
+/** `, 3 m falloff (smooth)` — the mask part of an op summary */
+function describeMask(mask) {
+    if (!(mask.falloff > 0)) return '';
+    return `, ${fmt(mask.falloff)} m ${mask.profile} falloff`;
 }
 
 // --- weight helpers ---------------------------------------------------------
@@ -915,30 +1060,161 @@ function removeLayerOp(data, op, ctx) {
 
 // --- heights ----------------------------------------------------------------
 
-/** Write raw heights over a vertex range, counting clamps; returns summary numbers */
-function writeHeights(data, range, metresAt) {
+/**
+ * Mask factor per vertex of `range`: 0..1, NaN where the mask does not cover it.
+ * @returns {{factors: Float32Array, covered: number, peak: number}}
+ */
+function maskFactors(data, range, mask) {
+    const ts = data.tileSize;
     const [vx] = vertexCounts(data.blockCount);
+    const factors = new Float32Array(range.cols * range.rows);
+    let covered = 0;
+    let peak = 0;
+    for (let j = range.j0; j <= range.j1; j++) {
+        for (let i = range.i0; i <= range.i1; i++) {
+            // The stored vertex value IS the height there — no need to re-sample the kernel
+            const f = mask.factorAt(i * ts, j * ts, rawToHeight(data.heights[j * vx + i]));
+            factors[(j - range.j0) * range.cols + (i - range.i0)] = f === null ? NaN : f;
+            if (f !== null) {
+                covered++;
+                if (f > peak) peak = f;
+            }
+        }
+    }
+    return { factors, covered, peak };
+}
+
+/**
+ * Write heights over a masked vertex range: `targetAt(i, j, current)` blended by the mask factor,
+ * then held in one direction by `clamp`. `edgeStep` is the taper check (see maskNotes).
+ */
+function writeMaskedHeights(data, range, factors, targetAt, clamp = 'none') {
+    const [vx, vz] = vertexCounts(data.blockCount);
+    const deltas = new Float32Array(range.cols * range.rows);
     let clamped = 0;
     let low = Infinity;
     let high = -Infinity;
     let changed = 0;
+    let touched = 0;
     let maxDelta = 0;
+    let clampBlocked = 0;
     for (let j = range.j0; j <= range.j1; j++) {
         for (let i = range.i0; i <= range.i1; i++) {
-            const metres = metresAt(i, j);
+            const at = (j - range.j0) * range.cols + (i - range.i0);
+            const t = factors[at];
+            if (Number.isNaN(t)) { deltas[at] = NaN; continue; }
+            touched++;
+            const index = j * vx + i;
+            const current = rawToHeight(data.heights[index]);
+            const target = targetAt(i, j, current);
+            let metres = t >= 1 ? target : current + (target - current) * t;
+            if (clamp === 'raise-only' && metres < current) { metres = current; clampBlocked++; }
+            if (clamp === 'lower-only' && metres > current) { metres = current; clampBlocked++; }
             if (metres < low) low = metres;
             if (metres > high) high = metres;
             if (metres < TERRAIN_HEIGHT_FMIN || metres > TERRAIN_HEIGHT_FMAX) clamped++;
             const raw = heightToRaw(metres, true);
-            const index = j * vx + i;
+            deltas[at] = rawToHeight(raw) - current;
             if (data.heights[index] !== raw) {
-                maxDelta = Math.max(maxDelta, Math.abs(rawToHeight(raw) - rawToHeight(data.heights[index])));
+                maxDelta = Math.max(maxDelta, Math.abs(deltas[at]));
                 data.heights[index] = raw;
                 changed++;
             }
         }
     }
-    return { clamped, low, high, changed, maxDelta };
+
+    // Mask boundary = covered vertex with an IN-GRID uncovered neighbour (off-grid is the
+    // terrain ending, not the mask ending)
+    let edgeStep = null;
+    for (let j = range.j0; j <= range.j1; j++) {
+        for (let i = range.i0; i <= range.i1; i++) {
+            const at = (j - range.j0) * range.cols + (i - range.i0);
+            if (Number.isNaN(deltas[at])) continue;
+            const amplitude = Math.abs(deltas[at]);
+            if (edgeStep && amplitude <= edgeStep.metres) continue;
+            let onBorder = false;
+            for (const [ni, nj] of [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]]) {
+                if (ni < 0 || nj < 0 || ni > vx - 1 || nj > vz - 1) continue;
+                const outside = ni < range.i0 || ni > range.i1 || nj < range.j0 || nj > range.j1
+                    || Number.isNaN(deltas[(nj - range.j0) * range.cols + (ni - range.i0)]);
+                if (outside) { onBorder = true; break; }
+            }
+            if (onBorder) edgeStep = { metres: amplitude, x: i * data.tileSize, z: j * data.tileSize };
+        }
+    }
+
+    return { clamped, low, high, changed, touched, maxDelta, clampBlocked, edgeStep };
+}
+
+/**
+ * Notes every masked height op shares: a ramp short of full amplitude, a step at the mask border,
+ * vertices a `clamp` held back.
+ * @param {object} data - Terrain data object (read for `tileSize`)
+ * @param {object} mask
+ * @param {object} shaped - `maskFactors` result
+ * @param {object} res - `writeMaskedHeights` result
+ * @param {string} amount - What the amplitude is ("delta", "value", …), for the wording
+ * @param {string} clamp
+ */
+function maskNotes(data, mask, shaped, res, amount, clamp) {
+    const notes = [];
+    if (mask.falloff > 0 && shaped.peak < 1 - 1e-6) {
+        notes.push(
+            `falloff ${fmt(mask.falloff)} m is wider than the region's half-extent, so the full ` +
+            `${amount} is reached NOWHERE — the ramp peaks at ${fmt(shaped.peak)} of it. Use a ` +
+            'smaller falloff, or a larger region'
+        );
+    }
+    // A falloff over N tiles necessarily leaves ~1/N of the amplitude at the last covered vertex
+    // (the border falls BETWEEN vertices), and that residue is as steep as the ramp — not a step
+    const rampStep = mask.falloff > 0 ? (res.maxDelta * data.tileSize) / mask.falloff : 0;
+    if (res.edgeStep && res.edgeStep.metres > Math.max(TERRAIN_HEIGHT_FACTOR, 2 * rampStep)) {
+        notes.push(
+            `the edit ends in a STEP of up to ${fmt(res.edgeStep.metres)} m at the mask border ` +
+            `(x ${fmt(res.edgeStep.x)}, z ${fmt(res.edgeStep.z)}): the amplitude there is not 0, so ` +
+            'the border is a visible cliff' +
+            (mask.falloff > 0
+                ? `. The ${fmt(mask.falloff)} m falloff itself only accounts for ` +
+                  `${fmt(rampStep)} m per tile, so the rest comes from the surface BEHIND the ` +
+                  'border sitting at a different height — grow the region until the falloff has ' +
+                  'room, or use clamp so the edit cannot fight the existing surface'
+                : `. Pass falloff: <metres> to ramp the ${amount} down to 0 at the border ` +
+                  '(2-3 tiles is usually enough), or clamp: "raise-only"/"lower-only" so the ' +
+                  'edit cannot fight the existing surface')
+        );
+    }
+    if (res.clampBlocked > 0) {
+        notes.push(
+            `clamp "${clamp}" held ${plural(res.clampBlocked, 'vertex', 'vertices')} at their ` +
+            `existing height (the ${amount} would have moved them the other way) — that is what ` +
+            'makes the edit idempotent at its edges'
+        );
+    }
+    return notes;
+}
+
+/** `4096 of 4225 vertices covered` — how much of the range the mask actually touched */
+function describeCoverage(shaped, range) {
+    if (shaped.covered === range.count) return '';
+    return `, mask covers ${shaped.covered} of ${range.count} vertices`;
+}
+
+/** A shaped region that covered nothing */
+function emptyMaskError(data, r, what) {
+    if (r.shape === 'band') {
+        return new TerrainOpError(
+            `region ${describeRegion(data, r)} covers no ${what}: the contour runs through the box, ` +
+            `but no ${what} falls within ${fmt(r.inner)}..${fmt(r.outer)} m of it. ` +
+            `${what === 'vertex' ? 'Height vertices sit' : 'Weight texels sit'} ` +
+            `${what === 'vertex' ? `every ${fmt(data.tileSize)} m` : `every ${fmt(texelSpacing(data))} m`}, ` +
+            'so widen the band (inner/outer) until it spans at least that much'
+        );
+    }
+    return new TerrainOpError(
+        `region ${describeRegion(data, r)} covers no ${what} — the ${r.shape} is smaller than the ` +
+        `${what} spacing (${what === 'vertex' ? fmt(data.tileSize) : fmt(texelSpacing(data))} m). ` +
+        'Grow the region, or use shape: "rect"'
+    );
 }
 
 function clampNote(res, total) {
@@ -958,6 +1234,10 @@ function clampNote(res, total) {
 function setHeights(data, op, ctx) {
     const r = parseRegion(op, data);
     const range = vertexRange(data, r);
+    const mask = buildMask(data, r, op);
+    const clamp = parseEnum(op, 'clamp', CLAMPS, 'none');
+    const shaped = maskFactors(data, range, mask);
+    if (shaped.covered === 0) throw emptyMaskError(data, r, 'vertex');
     const sources = ['value', 'rows', 'heightmap'].filter((k) => op[k] !== undefined);
     if (sources.length !== 1) {
         throw new TerrainOpError(
@@ -973,14 +1253,17 @@ function setHeights(data, op, ctx) {
         checkHeightRange(v, 'value');
         const raw = heightToRaw(v, true);
         const stored = rawToHeight(raw);
-        const res = writeHeights(data, range, () => v);
+        const res = writeMaskedHeights(data, range, shaped.factors, () => v, clamp);
         const notes = stored !== v
             ? [`value ${v} m quantized to ${stored} m (heights are stored in 1/128 m steps)`]
             : [];
+        notes.push(...maskNotes(data, mask, shaped, res, 'value', clamp));
         return {
             op: 'set_heights',
-            summary: `Flattened ${plural(range.count, 'vertex', 'vertices')} to ${fmt(stored)} m over ${where} ` +
-                `— ${res.changed} of them changed, largest move ${fmt(res.maxDelta)} m`,
+            summary: `Flattened ${plural(res.touched, 'vertex', 'vertices')} to ${fmt(stored)} m over ` +
+                `${where}${describeMask(mask)}${describeCoverage(shaped, range)} ` +
+                `— ${res.changed} of them changed, largest move ${fmt(res.maxDelta)} m` +
+                (mask.falloff > 0 ? `, result ${fmt(res.low)}..${fmt(res.high)} m` : ''),
             notes,
         };
     }
@@ -1008,38 +1291,46 @@ function setHeights(data, op, ctx) {
         if (err instanceof HeightmapError) throw new TerrainOpError(err.message);
         throw new TerrainOpError(`${usedRows ? 'rows' : 'heightmap'}: ${err.message}`);
     }
-    const res = writeHeights(
+    const res = writeMaskedHeights(
         data,
         range,
-        (i, j) => grid.heights[(j - range.j0) * range.cols + (i - range.i0)]
+        shaped.factors,
+        (i, j) => grid.heights[(j - range.j0) * range.cols + (i - range.i0)],
+        clamp
     );
     return {
         op: 'set_heights',
-        summary: `Set ${plural(range.count, 'vertex', 'vertices')} over ${where} from ` +
+        summary: `Set ${plural(res.touched, 'vertex', 'vertices')} over ${where}` +
+            `${describeMask(mask)}${describeCoverage(shaped, range)} from ` +
             `${op.rows !== undefined ? 'inline rows' : `heightmap ${show(spec.source ?? 'inline')}`} ` +
             `— ${res.changed} changed, range ${fmt(res.low)}..${fmt(res.high)} m, largest move ${fmt(res.maxDelta)} m`,
-        notes: [...grid.notes, ...clampNote(res, range.count)],
+        notes: [...grid.notes, ...clampNote(res, res.touched), ...maskNotes(data, mask, shaped, res, 'height', clamp)],
     };
 }
 
-/** `adjust_heights` — relative raise/lower over a region */
+/** `adjust_heights` — relative raise/lower over a region, tapered by the mask */
 function adjustHeights(data, op) {
     const r = parseRegion(op, data);
     const range = vertexRange(data, r);
+    const mask = buildMask(data, r, op);
+    const clamp = parseEnum(op, 'clamp', CLAMPS, 'none');
     const delta = requireFinite(op, 'delta');
-    const [vx] = vertexCounts(data.blockCount);
-    const res = writeHeights(data, range, (i, j) => rawToHeight(data.heights[j * vx + i]) + delta);
-    const notes = clampNote(res, range.count);
+    const shaped = maskFactors(data, range, mask);
+    if (shaped.covered === 0) throw emptyMaskError(data, r, 'vertex');
+    const res = writeMaskedHeights(data, range, shaped.factors, (i, j, current) => current + delta, clamp);
+    const notes = clampNote(res, res.touched);
     if (delta !== 0 && Math.abs(delta) < TERRAIN_HEIGHT_FACTOR / 2) {
         notes.push(
             `delta ${delta} m is smaller than half a height quantum (${TERRAIN_HEIGHT_FACTOR} m), ` +
             'so it rounds away to nothing'
         );
     }
+    notes.push(...maskNotes(data, mask, shaped, res, 'delta', clamp));
     return {
         op: 'adjust_heights',
-        summary: `${delta >= 0 ? 'Raised' : 'Lowered'} ${plural(range.count, 'vertex', 'vertices')} by ` +
-            `${fmt(delta)} m over ${describeRegion(data, r)} (${describeVertices(range)}) — ` +
+        summary: `${delta >= 0 ? 'Raised' : 'Lowered'} ${plural(res.touched, 'vertex', 'vertices')} by ` +
+            `${fmt(delta)} m over ${describeRegion(data, r)} (${describeVertices(range)}` +
+            `${describeMask(mask)}${describeCoverage(shaped, range)}) — ` +
             `${res.changed} changed, result ${fmt(res.low)}..${fmt(res.high)} m before clamping`,
         notes,
     };
@@ -1060,14 +1351,18 @@ function adjustHeights(data, op) {
 function smoothHeights(data, op) {
     const r = parseRegion(op, data);
     const range = vertexRange(data, r);
+    const mask = buildMask(data, r, op);
+    const clamp = parseEnum(op, 'clamp', CLAMPS, 'none');
     const iterations = op.iterations === undefined
         ? 1
         : requireIntIn(op, 'iterations', 1, MAX_SMOOTH_ITERATIONS);
     const [vx, vz] = vertexCounts(data.blockCount);
     const clampIdx = (v, max) => (v < 0 ? 0 : (v > max ? max : v));
+    const shaped = maskFactors(data, range, mask);
+    if (shaped.covered === 0) throw emptyMaskError(data, r, 'vertex');
 
-    let changed = 0;
-    let maxDelta = 0;
+    // Blur unmasked, blend once at the end: applying the factor per iteration compounds it to
+    // t^n, a different curve
     const original = Uint16Array.from(data.heights);
     for (let it = 0; it < iterations; it++) {
         const prev = Uint16Array.from(data.heights);
@@ -1086,33 +1381,41 @@ function smoothHeights(data, op) {
             }
         }
     }
+    // Restore the pre-blur grid over the range, then re-apply it through the mask
+    const blurred = new Float32Array(range.cols * range.rows);
     for (let j = range.j0; j <= range.j1; j++) {
         for (let i = range.i0; i <= range.i1; i++) {
             const index = j * vx + i;
-            if (data.heights[index] === original[index]) continue;
-            changed++;
-            maxDelta = Math.max(maxDelta, Math.abs(rawToHeight(data.heights[index]) - rawToHeight(original[index])));
+            blurred[(j - range.j0) * range.cols + (i - range.i0)] = rawToHeight(data.heights[index]);
+            data.heights[index] = original[index];
         }
     }
+    const res = writeMaskedHeights(
+        data,
+        range,
+        shaped.factors,
+        (i, j) => blurred[(j - range.j0) * range.cols + (i - range.i0)],
+        clamp
+    );
+
     return {
         op: 'smooth_heights',
-        summary: `Smoothed ${plural(range.count, 'vertex', 'vertices')} over ${describeRegion(data, r)} ` +
-            `(${describeVertices(range)}) with ${plural(iterations, 'iteration')} of a 3x3 box blur — ` +
-            `${changed} changed, largest move ${fmt(maxDelta)} m; outside the terrain the edge vertex ` +
+        summary: `Smoothed ${plural(res.touched, 'vertex', 'vertices')} over ${describeRegion(data, r)} ` +
+            `(${describeVertices(range)}${describeMask(mask)}${describeCoverage(shaped, range)}) with ` +
+            `${plural(iterations, 'iteration')} of a 3x3 box blur — ` +
+            `${res.changed} changed, largest move ${fmt(res.maxDelta)} m; outside the terrain the edge vertex ` +
             'is reused, vertices outside the region are read but never written',
-        notes: [],
+        notes: maskNotes(data, mask, shaped, res, 'smoothing', clamp),
     };
 }
 
 // --- weights ----------------------------------------------------------------
 
 /**
- * Blocks a region touches, and for each one the texels inside the region with their falloff
- * factor. Iterates the touched blocks' texels and tests each texel's METRE position through
- * `terrainBin.texelPosition` — the exact inverse of the `weightTexelAt` mapping the read side
- * and the engine's own resampler use, so painting and sampling agree texel for texel.
+ * Blocks a region touches, and per block the texels the mask covers with their factor. Positions
+ * come from `terrainBin.texelPosition`, so painting and sampling agree texel for texel.
  */
-function regionTexels(data, r, falloff, visit) {
+function regionTexels(data, r, mask, visit) {
     const [bc0, bc1] = data.blockCount;
     const wms = data.weightMapSize;
     const blockSize = TERRAIN_BLOCK_TILE_COMPLEXITY * data.tileSize;
@@ -1122,11 +1425,6 @@ function regionTexels(data, r, falloff, visit) {
     const by0 = clampB(Math.floor(r.z / blockSize), bc1 - 1);
     const by1 = clampB(Math.floor((r.z + r.depth) / blockSize), bc1 - 1);
 
-    const cx = r.x + r.width / 2;
-    const cz = r.z + r.depth / 2;
-    const rx = r.width / 2;
-    const rz = r.depth / 2;
-
     for (let by = by0; by <= by1; by++) {
         for (let bx = bx0; bx <= bx1; bx++) {
             for (let lj = 0; lj < wms; lj++) {
@@ -1134,21 +1432,8 @@ function regionTexels(data, r, falloff, visit) {
                     const gi = bx * wms + li;
                     const gj = by * wms + lj;
                     const [x, z] = texelPosition(data, gi, gj);
-                    let inside;
-                    let edge; // distance from the region border, metres
-                    if (r.shape === 'ellipse') {
-                        const q = Math.sqrt(((x - cx) / rx) ** 2 + ((z - cz) / rz) ** 2);
-                        inside = q <= 1 + EPS;
-                        // Approximate for a strongly elliptical region: the falloff band is
-                        // measured along the SHORTER radius.
-                        edge = (1 - q) * Math.min(rx, rz);
-                    } else {
-                        inside = x >= r.x - EPS && x <= r.x + r.width + EPS
-                            && z >= r.z - EPS && z <= r.z + r.depth + EPS;
-                        edge = Math.min(x - r.x, r.x + r.width - x, z - r.z, r.z + r.depth - z);
-                    }
-                    if (!inside) continue;
-                    const t = falloff > 0 ? Math.min(Math.max(edge / falloff, 0), 1) : 1;
+                    const t = mask.factorAt(x, z);
+                    if (t === null) continue;
                     visit(bx, by, gi, gj, t);
                 }
             }
@@ -1202,23 +1487,24 @@ function paintLayer(data, op, ctx) {
         );
     }
     const weight = requireNumberIn(op, 'weight', 0, 1);
-    const falloff = op.falloff === undefined ? 0 : requireNumberIn(op, 'falloff', 0, Infinity, ' metres');
-    const r = parseRegion(op, data, { shape: true });
+    const r = parseRegion(op, data);
+    const mask = buildMask(data, r, op);
+    const falloff = mask.falloff;
 
-    // The falloff ramp is `min(1, edge / falloff)` where `edge` is the distance to the region
-    // border, so its peak is `min(1, halfExtent / falloff)` — a falloff wider than the region's
-    // half-extent silently caps the achievable weight far below the requested one.
+    // Peak of `min(1, edge / falloff)` is `min(1, halfExtent / falloff)`; a band has no
+    // meaningful half-extent, so its peak is MEASURED below instead
     const halfExtent = Math.min(r.width, r.depth) / 2;
-    const peakFactor = falloff > 0 ? Math.min(1, halfExtent / falloff) : 1;
+    const peakFactor = falloff > 0 && r.shape !== 'band' ? Math.min(1, halfExtent / falloff) : 1;
 
     // Pass 1: which blocks are touched, and can each host the layer? All-or-nothing, so the
     // whole plan is checked before a single byte moves.
     const touched = new Map(); // blockIndex -> texel count
-    regionTexels(data, r, falloff, (bx, by) => {
+    regionTexels(data, r, mask, (bx, by) => {
         const b = blockIndex(bx, by, data.blockCount);
         touched.set(b, (touched.get(b) ?? 0) + 1);
     });
     if (touched.size === 0) {
+        if (r.shape !== 'rect') throw emptyMaskError(data, r, 'texel');
         throw new TerrainOpError(
             `region ${describeRegion(data, r)} contains no weight texel — texels sit every ` +
             `${fmt(texelSpacing(data))} m (weightMapSize ${data.weightMapSize} per block side)`
@@ -1280,7 +1566,9 @@ function paintLayer(data, op, ctx) {
     let ti1 = -Infinity;
     let tj0 = Infinity;
     let tj1 = -Infinity;
-    regionTexels(data, r, falloff, (bx, by, gi, gj, t) => {
+    let peak = 0;
+    regionTexels(data, r, mask, (bx, by, gi, gj, t) => {
+        if (t > peak) peak = t;
         const b = blockIndex(bx, by, data.blockCount);
         const k = channelOf.get(b);
         const slots = slotsByBlock.get(b);
@@ -1307,6 +1595,13 @@ function paintLayer(data, op, ctx) {
             `so the requested weight ${fmt(weight)} is reached NOWHERE — the ramp peaks at ` +
             `${fmt(peakFactor)} of it and the strongest texel got ${fmt((vHigh < 0 ? 0 : vHigh) / 255)}. ` +
             `Use a falloff of at most ${fmt(halfExtent)} m, or a larger region`
+        );
+    } else if (falloff > 0 && peak < 1 - 1e-6) {
+        notes.push(
+            `falloff ${fmt(falloff)} m is wider than the band is thick, so the requested weight ` +
+            `${fmt(weight)} is reached NOWHERE — the ramp peaks at ${fmt(peak)} of it and the ` +
+            `strongest texel got ${fmt((vHigh < 0 ? 0 : vHigh) / 255)}. Use a smaller falloff, or ` +
+            'a wider band (inner/outer)'
         );
     }
     if (assigned.length) {
@@ -1369,7 +1664,7 @@ function paintLayer(data, op, ctx) {
         op: 'paint_layer',
         summary: `Painted layer ${slot} (${label(ctx, data.layers[slot]?.detailMapId)}) at weight ` +
             `${fmt(weight)} over ${plural(texels, 'texel')} in ${plural(touched.size, 'block')} ` +
-            `(${describeRegion(data, r)}${falloff > 0 ? `, ${fmt(falloff)} m falloff` : ''}` +
+            `(${describeRegion(data, r)}${describeMask(mask)}` +
             `; global texels ${ti0}..${ti1} x ${tj0}..${tj1}` +
             (ranged ? `, weights written ${fmt(vLow / 255)}..${fmt(vHigh / 255)}` : '') +
             `${zeroed ? `, ${zeroed} of them at weight 0` : ''})` +

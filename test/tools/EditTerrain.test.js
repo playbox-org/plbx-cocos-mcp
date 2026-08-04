@@ -502,22 +502,30 @@ describe('EditTerrain — T4 review regressions', () => {
         assert.doesNotMatch(report, /heightmap \d+x\d+ resampled/);
     });
 
-    it('points a rejected shape/falloff on a height op at the rounded-hill workaround', async () => {
+    it('shapes a height op with shape + falloff instead of pointing at a workaround', async () => {
         const { rel } = fresh('Hill');
-        const shaped = await fails({
+        const report = await ok({
             terrainPath: rel,
-            ops: [{ op: 'adjust_heights', region: { x: 7, z: 7, width: 6, depth: 6, shape: 'ellipse' }, delta: 4 }],
+            ops: [{
+                op: 'adjust_heights',
+                region: { x: 7, z: 7, width: 6, depth: 6, shape: 'ellipse' },
+                delta: 4,
+                falloff: 2,
+                profile: 'smooth',
+            }],
         });
-        assert.match(shaped, /shape is only accepted by paint_layer/);
-        assert.match(shaped, /pass set_heights a "rows" grid, or follow adjust_heights with smooth_heights/);
+        assert.match(report, /ellipse/);
+        assert.match(report, /2 m smooth falloff/);
+        assert.match(report, /mask covers \d+ of \d+ vertices/);
+        // A tapered edit leaves no step, so the step note must NOT fire
+        assert.doesNotMatch(report, /ends in a STEP/);
 
-        const ramped = await fails({
+        // `shape` on the OP (rather than inside region) is the one near-miss worth naming
+        const misplaced = await fails({
             terrainPath: rel,
-            ops: [{ op: 'adjust_heights', region: { x: 7, z: 7, width: 6, depth: 6 }, delta: 4, falloff: 3 }],
+            ops: [{ op: 'adjust_heights', region: { x: 7, z: 7, width: 6, depth: 6 }, delta: 4, shape: 'ellipse' }],
         });
-        assert.match(ramped, /shape\/falloff exist only on paint_layer/);
-        assert.match(ramped, /give set_heights a "rows" grid/);
-        assert.match(ramped, /smooth_heights over a region 2-3 tiles larger/);
+        assert.match(misplaced, /shape is a REGION key/);
     });
 
     it('documents the paint-weight-0 erase and the height clamp/reject split', () => {

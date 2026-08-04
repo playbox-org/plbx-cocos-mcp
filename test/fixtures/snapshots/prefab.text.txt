@@ -7,7 +7,7 @@
   ● CarIndicatorView @(0,3,0.8) [P]
     ◆ Script:c72b8Bj6 {progressFill=→Fill countLabel=→Count iconSprite=→Icon bounceTarget=→CarIndicatorView}
     ◆ Script:84bf09ol {lockYAxis=false eulerOffset=[0,0,0]}
-    ● Root @(0,0.6,0) [P]
+    ● Root @(0,0.6,0) scale(0.015,0.015,0.015) [P]
       ◆ UITransform
       ◆ RenderRoot2D
       ● Bg [P]
