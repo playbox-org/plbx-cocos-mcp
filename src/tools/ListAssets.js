@@ -7,8 +7,16 @@
 
 import { BaseTool } from './BaseTool.js';
 import { AssetIndex } from '../core/AssetIndex.js';
+import { compressUuid } from '../utils/uuid.js';
 
 const MAX_RESULTS = 300;
+
+// a full uuid is 25 o200k tokens, its compressed form 16, the path it sits next to 5
+function uuidSuffix(entry, form) {
+    if (form === 'full') return ` ${entry.uuid}`;
+    if (form === 'compressed') return ` ${compressUuid(entry.uuid)}`;
+    return '';
+}
 
 export class ListAssets extends BaseTool {
     get name() {
@@ -17,11 +25,12 @@ export class ListAssets extends BaseTool {
 
     get description() {
         return 'List assets of a Cocos Creator project with optional filters. ' +
-               'Returns path, name and UUID for each asset. ' +
+               'Paths are accepted wherever a UUID is, so uuid is off by default — ask for it with uuid:"compressed"/"full". ' +
+               'Use format:"summary" for "what is in this project" (counts per type and folder, no enumeration). ' +
                'Types: sprite, image, model, prefab, scene, material, script, audio, font, animation, ' +
                'effect, terrain, directory (or a raw importer name like fbx, gltf, typescript). ' +
                'Note: sprite frames are sub-assets of images — type "sprite" lists images that carry one. ' +
-               'Args: {type?, folder?, pattern?, format?} — these are the only filter keys.';
+               'Args: {type?, folder?, pattern?, format?, uuid?} — these are the only keys.';
     }
 
     get aliases() {
@@ -46,9 +55,15 @@ export class ListAssets extends BaseTool {
                 },
                 format: {
                     type: 'string',
-                    enum: ['text', 'json'],
-                    description: 'Output format',
-                    default: 'text'
+                    enum: ['grouped', 'summary', 'flat', 'text', 'json'],
+                    description: "Output format: 'grouped' (default, folder headers + leaf names), 'summary' (counts per type/folder only), 'flat'/'text' (one full path per line), 'json'",
+                    default: 'grouped'
+                },
+                uuid: {
+                    type: 'string',
+                    enum: ['none', 'compressed', 'full'],
+                    description: "Include the asset UUID per row: 'none' (default — paths resolve everywhere a uuid does), 'compressed' (the form scene files store), 'full'",
+                    default: 'none'
                 }
             }
         };
@@ -77,31 +92,117 @@ export class ListAssets extends BaseTool {
                 return this.success(this.#explainEmpty(index, args));
             }
 
-            const shown = matches.slice(0, MAX_RESULTS);
-            const truncated = matches.length - shown.length;
+            const format = args?.format ?? 'grouped';
 
-            if (args?.format === 'json') {
+            if (format === 'json') {
+                const shown = matches.slice(0, MAX_RESULTS);
                 const items = shown.map(e => ({
                     path: e.path,
                     name: e.name,
                     uuid: e.uuid,
                     importer: e.importer
                 }));
-                return this.success(JSON.stringify({ total: matches.length, truncated, items }, null, 2));
+                return this.success(JSON.stringify({
+                    total: matches.length,
+                    truncated: matches.length - shown.length,
+                    items
+                }, null, 2));
             }
 
-            const lines = [`# Assets (${matches.length})`, ''];
-            for (const e of shown) {
-                lines.push(`- ${e.path} [${e.importer}] ${e.uuid}`);
-            }
-            if (truncated > 0) {
-                lines.push('');
-                lines.push(`... ${truncated} more. Narrow with type/folder/pattern filters.`);
+            if (format === 'summary') {
+                return this.success(this.#renderSummary(matches, args));
             }
 
-            return this.success(lines.join('\n'));
+            // an explicit flat call keeps the pre-grouped contract, uuid included
+            const uuidForm = args?.uuid ?? (format === 'grouped' ? 'none' : 'full');
+            return this.success(format === 'grouped'
+                ? this.#renderGrouped(matches, uuidForm)
+                : this.#renderFlat(matches, uuidForm));
         } catch (err) {
             return this.error(err.message);
+        }
+    }
+
+    /**
+     * Folder hoisted out of every row and the type hoisted when it is uniform:
+     * on a real listing the repeated prefix and tag are ~35% of the tokens, and
+     * the uuid — off unless asked for — is another 60%.
+     */
+    #renderGrouped(matches, uuidForm) {
+        const shown = matches.slice(0, MAX_RESULTS);
+        const types = new Set(shown.map(e => e.importer));
+        const uniform = types.size === 1 ? [...types][0] : null;
+
+        const lines = [`# Assets (${matches.length})${uniform ? ` — all [${uniform}]` : ''}`];
+        let dir = null;
+        for (const e of shown) {
+            const cut = e.path.lastIndexOf('/');
+            const folder = cut < 0 ? '.' : e.path.slice(0, cut);
+            if (folder !== dir) {
+                lines.push('', `${folder}/`);
+                dir = folder;
+            }
+            const tag = uniform ? '' : ` [${e.importer}]`;
+            lines.push(`  ${e.path.slice(cut + 1)}${tag}${uuidSuffix(e, uuidForm)}`);
+        }
+        this.#appendTail(lines, matches, shown, uuidForm);
+        return lines.join('\n');
+    }
+
+    #renderFlat(matches, uuidForm) {
+        const shown = matches.slice(0, MAX_RESULTS);
+        const lines = [`# Assets (${matches.length})`, ''];
+        for (const e of shown) {
+            lines.push(`- ${e.path} [${e.importer}]${uuidSuffix(e, uuidForm)}`);
+        }
+        this.#appendTail(lines, matches, shown, uuidForm);
+        return lines.join('\n');
+    }
+
+    /**
+     * Counts instead of rows: the "what is in this project" question used to force
+     * an enumeration of every asset, which costs ~75x this on a real project.
+     */
+    #renderSummary(matches, args) {
+        const byType = new Map();
+        const byFolder = new Map();
+        for (const e of matches) {
+            byType.set(e.importer, (byType.get(e.importer) ?? 0) + 1);
+            // bucket by DIRECTORY, never by path segments — a root-level asset would
+            // otherwise contribute its own file name as a folder
+            const cut = e.path.lastIndexOf('/');
+            const dir = cut < 0 ? '.' : e.path.slice(0, cut);
+            const bucket = dir.split('/').slice(0, 3).join('/');
+            byFolder.set(bucket, (byFolder.get(bucket) ?? 0) + 1);
+        }
+        const rank = (m, limit) => [...m]
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+            .slice(0, limit)
+            .map(([k, n]) => `${k} ${n}`)
+            .join(', ');
+
+        const filters = ['type', 'folder', 'pattern']
+            .filter(k => args?.[k])
+            .map(k => `${k}="${args[k]}"`)
+            .join(' ');
+
+        return [
+            `# Assets (${matches.length})${filters ? ` — filters: ${filters}` : ''}`,
+            '',
+            `by type: ${rank(byType, 24)}`,
+            `by folder: ${rank(byFolder, 16)}`,
+            '',
+            'Enumerate a slice with type/folder/pattern; add uuid:"compressed" when you need ids.'
+        ].join('\n');
+    }
+
+    #appendTail(lines, matches, shown, uuidForm) {
+        const truncated = matches.length - shown.length;
+        if (truncated > 0) {
+            lines.push('', `... ${truncated} more. Narrow with type/folder/pattern, or format:"summary" for counts only.`);
+        }
+        if (uuidForm === 'none') {
+            lines.push('', 'uuid omitted — paths resolve wherever a uuid does; add uuid:"compressed" if you need ids.');
         }
     }
 

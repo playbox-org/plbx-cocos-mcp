@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { ListAssets } from '../../src/tools/ListAssets.js';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
+import { compressUuid } from '../../src/utils/uuid.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = join(__dirname, '../fixtures/mock-project');
@@ -22,7 +23,19 @@ describe('ListAssets tool', () => {
         const text = result.content[0].text;
         assert.ok(text.includes('Gold.prefab'));
         assert.ok(text.includes('Coin.fbx'));
-        assert.ok(text.includes('836478c3-ffde-4110-8347-cfda26288652'));
+        // uuid is opt-in now: paths resolve wherever a uuid does
+        assert.ok(!text.includes('836478c3-ffde-4110-8347-cfda26288652'));
+        assert.ok(text.includes('uuid omitted'));
+    });
+
+    it('should include the uuid in the requested form', async () => {
+        const full = await tool.execute({ pattern: 'Gold*', uuid: 'full' }, PROJECT);
+        assert.ok(full.content[0].text.includes('836478c3-ffde-4110-8347-cfda26288652'));
+
+        const compressed = await tool.execute({ pattern: 'Gold*', uuid: 'compressed' }, PROJECT);
+        const text = compressed.content[0].text;
+        assert.ok(!text.includes('836478c3-ffde-4110-8347-cfda26288652'));
+        assert.ok(text.includes(compressUuid('836478c3-ffde-4110-8347-cfda26288652')));
     });
 
     it('should filter by type and folder', async () => {
@@ -104,6 +117,48 @@ describe('ListAssets tool', () => {
     it('should list terrain assets under the type that query_terrain points at', async () => {
         const result = await tool.execute({ type: 'terrain' }, PROJECT);
         assert.ok(!result.isError);
-        assert.match(result.content[0].text, /assets\/Maps\/Terrain\.terrain \[terrain\]/);
+        const text = result.content[0].text;
+        // grouped: folder hoisted into a header, type hoisted because it is uniform
+        assert.match(text, /— all \[terrain\]/);
+        assert.match(text, /^assets\/Maps\/$/m);
+        assert.match(text, /^ {2}Terrain\.terrain$/m);
+    });
+
+    it('should keep the flat contract when the caller asks for it', async () => {
+        const result = await tool.execute({ type: 'terrain', format: 'flat' }, PROJECT);
+        // explicit flat implies the pre-grouped shape, uuid included
+        assert.match(result.content[0].text, /- assets\/Maps\/Terrain\.terrain \[terrain\] [0-9a-f-]{36}/);
+    });
+
+    it('should answer the overview question with counts instead of rows', async () => {
+        const all = await tool.execute({}, PROJECT);
+        const summary = await tool.execute({ format: 'summary' }, PROJECT);
+        assert.ok(!summary.isError);
+        const text = summary.content[0].text;
+
+        assert.match(text, /^by type: /m);
+        assert.match(text, /^by folder: /m);
+        // the whole point: no enumeration, so no asset name appears
+        assert.ok(!text.includes('Gold.prefab'));
+        assert.ok(text.length < all.content[0].text.length);
+
+        // counts must agree with the enumerated listing
+        const total = Number(text.match(/# Assets \((\d+)\)/)[1]);
+        const perType = [...text.matchAll(/(?:^by type: |, )([\w-]+) (\d+)/gm)]
+            .reduce((sum, m) => sum + Number(m[2]), 0);
+        assert.strictEqual(perType, total);
+    });
+
+    it('should report the active filters in a summary', async () => {
+        const result = await tool.execute({ type: 'prefab', format: 'summary' }, PROJECT);
+        assert.match(result.content[0].text, /filters: type="prefab"/);
+    });
+
+    it('should group rows under one header per folder', async () => {
+        const result = await tool.execute({}, PROJECT);
+        const text = result.content[0].text;
+        const headers = text.match(/^\S.*\/$/gm) ?? [];
+        assert.ok(headers.length > 1, 'expected several folder headers');
+        assert.strictEqual(new Set(headers).size, headers.length, 'a folder header repeats');
     });
 });
