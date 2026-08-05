@@ -22,6 +22,8 @@ import { fileURLToPath } from 'url';
 import {
     readTerrain,
     readTerrainInfo,
+    terrainInfoFromData,
+    weightUsage,
     readTerrainLayout,
     writeTerrain,
     heightAt,
@@ -41,6 +43,7 @@ import {
     rawToHeight,
     snapTileSize,
     isTileSizeStable,
+    vertexIndex,
     getVertexHeight,
     setVertexHeight,
     weightAtTexel,
@@ -471,6 +474,92 @@ describe('terrainBin — readTerrainInfo', () => {
     });
 });
 
+// One sweep of the weight buffer feeds both shapes: query_terrain's per-block table used to
+// re-derive it with a second, independently written loop (~55 ms on an 8x8 / 512 terrain).
+describe('terrainBin — weightUsage', () => {
+    /** the per-slot aggregate, recomputed from the per-block rows alone */
+    function foldRows(blocks, texelsPerChannel) {
+        const usage = new Map();
+        for (const row of blocks) {
+            row.channels.forEach((c, k) => {
+                if (c.slot < 0) return;
+                let u = usage.get(c.slot);
+                if (!u) {
+                    u = { slot: c.slot, blocks: [], channels: [], texels: 0, nonZero: 0, sum: 0 };
+                    usage.set(c.slot, u);
+                }
+                if (!u.blocks.includes(row.index)) u.blocks.push(row.index);
+                if (!u.channels.includes(k)) u.channels.push(k);
+                if (c.coverage === null) return;
+                u.texels += texelsPerChannel;
+                u.nonZero += c.coverage * texelsPerChannel;
+                u.sum += c.meanWeight * 255 * texelsPerChannel;
+            });
+        }
+        return [...usage.values()].sort((a, b) => a.slot - b.slot);
+    }
+
+    it('sums its per-block rows into exactly the per-slot layerUsage', () => {
+        const data = readTerrain(fs.readFileSync(GOLDEN_TERRAIN));
+        const { blocks, layerUsage } = weightUsage(data);
+        assert.strictEqual(blocks.length, 1);
+        const folded = foldRows(blocks, data.weightMapSize ** 2);
+        assert.strictEqual(folded.length, layerUsage.length);
+        folded.forEach((f, i) => {
+            const u = layerUsage[i];
+            assert.strictEqual(u.slot, f.slot);
+            assert.deepStrictEqual(u.blocks, f.blocks);
+            assert.deepStrictEqual(u.channels, f.channels);
+            assert.strictEqual(u.texels, f.texels);
+            assert.strictEqual(u.nonZeroTexels, f.nonZero);
+            assert.strictEqual(u.coverage, f.nonZero / f.texels);
+            assert.strictEqual(u.meanWeight, f.sum / (255 * f.texels));
+        });
+    });
+
+    it('counts a slot once per (block, channel) it occupies', () => {
+        // the same slot on two channels doubles its denominator — the number the block
+        // rows and the aggregate have to agree on
+        const data = synthetic({ weightMapSize: 4 });
+        setBlockLayers(data, 0, 0, [3, 3, -1, -1]);
+        for (let j = 0; j < 4; j++) {
+            for (let i = 0; i < 4; i++) setWeightAtTexel(data, i, j, [i === 0 ? 1 : 0, 0.5, 0, 0]);
+        }
+        const { blocks, layerUsage } = weightUsage(data);
+        assert.strictEqual(layerUsage.length, 1);
+        const u = layerUsage[0];
+        assert.deepStrictEqual(u.channels, [0, 1]);
+        assert.strictEqual(u.texels, 2 * 16);
+        assert.strictEqual(u.nonZeroTexels, 4 + 16);
+        assert.strictEqual(blocks[0].channels[0].coverage, 4 / 16);
+        assert.strictEqual(blocks[0].channels[1].coverage, 1);
+        assert.deepStrictEqual(foldRows(blocks, 16)[0].texels, u.texels);
+    });
+
+    it('produces neither shape for a layerBuffer that does not match the geometry', () => {
+        const data = synthetic({ weightMapSize: 4 });
+        data.blockCount = [10000, 10000];
+        assert.deepStrictEqual(weightUsage(data), { blocks: [], layerUsage: [] });
+    });
+
+    it('puts the per-block rows on the card only when asked', () => {
+        const data = readTerrain(fs.readFileSync(GOLDEN_TERRAIN));
+        const plain = terrainInfoFromData(data);
+        const withRows = terrainInfoFromData(data, { blockUsage: true });
+        assert.strictEqual(plain.blockUsage, null);
+        assert.strictEqual(withRows.blockUsage.length, 1);
+        assert.deepStrictEqual(withRows.blockUsage[0].slots, [0, 1, -1, -1]);
+        assert.strictEqual(withRows.blockUsage[0].ignoresWeights, false);
+        // and the summed shape is unaffected by the option
+        assert.deepStrictEqual(withRows.layerUsage, plain.layerUsage);
+    });
+
+    it('leaves the sentinel with no rows at all', () => {
+        const data = readTerrain(fs.readFileSync(GOLDEN_SENTINEL));
+        assert.deepStrictEqual(terrainInfoFromData(data, { blockUsage: true }).blockUsage, []);
+    });
+});
+
 // The layer palette sits BEHIND the payload arrays, so it cannot be reached without walking them
 // — walking without copying is the point (~70 MB and the statistics sweep skipped).
 describe('terrainBin — readTerrainLayout', () => {
@@ -594,6 +683,15 @@ describe('terrainBin — height encoding', () => {
         assert.strictEqual(data.heights[2 * 65 + 3], TERRAIN_HEIGHT_BASE + 192);
         assert.strictEqual(getVertexHeight(data, 3, 2), 1.5);
         assert.strictEqual(getVertexHeight(data, 0, 0), 0);
+    });
+
+    it('exposes the raw vertex index, so nothing above re-derives the layout', () => {
+        const data = synthetic({ blockCount: [2, 1], weightMapSize: 4 });
+        assert.strictEqual(vertexIndex(data, 0, 0), 0);
+        assert.strictEqual(vertexIndex(data, 3, 2), 2 * 65 + 3, 'row-major, X fastest');
+        assert.strictEqual(vertexIndex(data, 64, 32), 65 * 33 - 1, 'the far corner is the last element');
+        setVertexHeight(data, 3, 2, 1.5);
+        assert.strictEqual(data.heights[vertexIndex(data, 3, 2)], heightToRaw(1.5));
     });
 
     it('snaps tileSize the way the loader does', () => {

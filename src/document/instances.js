@@ -770,6 +770,27 @@ export function mountedChildrenEntries(doc, instance) {
         }));
 }
 
+/**
+ * Mounted-child node index → the instance it hangs on, over the whole document. A mounted child is
+ * serialized with `_parent: null`, so every ancestor walk (world matrix, the screen-space test) has
+ * to hop through this map or the chain ends at the document root.
+ * @returns {Map<number, {stubIdx: number, localID: string[]|null}>}
+ */
+export function mountOwners(doc) {
+    const map = new Map();
+    doc.objects.forEach((obj, idx) => {
+        if (!doc.isNode(obj) || !doc.isInstanceStub(idx)) return;
+        const instance = doc.instanceOf(idx);
+        if (!instance) return;
+        for (const entry of mountedChildrenEntries(doc, instance)) {
+            for (const nodeIdx of entry.nodeIndices) {
+                if (!map.has(nodeIdx)) map.set(nodeIdx, { stubIdx: idx, localID: entry.localID });
+            }
+        }
+    });
+    return map;
+}
+
 function targetInfoLocalID(doc, ref) {
     const info = isRef(ref) ? doc.getObject(ref.__id__) : null;
     return info?.__type__ === 'cc.TargetInfo' && Array.isArray(info.localID)

@@ -22,7 +22,7 @@ import {
 } from './instances.js';
 import {
     dropTargetOverrides, upsertTargetOverride, transformValueTracked, pruneDanglingOverrides,
-    remapTargetOverridesForSplice
+    remapTargetOverridesForSplice, listTargetOverrides, overrideDeadReasons, mountedChildNodeIdxs
 } from './targetOverrides.js';
 import { VALUE_TYPE_FIELDS } from '../core/valueTypes.js';
 import { collectComponentIndices, INTERNAL_STRUCT_TYPES } from '../core/componentIndices.js';
@@ -404,7 +404,7 @@ const PROPERTY_ALIASES = {
  */
 export function aliasTopSegment(component, seg) {
     const alias = PROPERTY_ALIASES[component?.__type__]?.[seg];
-    return alias !== undefined && alias in component ? alias : undefined;
+    return alias !== undefined && Object.hasOwn(component, alias) ? alias : undefined;
 }
 
 function locateProperty(doc, component, path, { allowCreate = false } = {}) {
@@ -414,7 +414,10 @@ function locateProperty(doc, component, path, { allowCreate = false } = {}) {
     for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         const last = i === segments.length - 1;
-        if (typeof seg === 'string' && !Array.isArray(container) && !(seg in container)) {
+        // `Object.hasOwn`, not `in`: `toString`/`constructor`/… resolve through
+        // Object.prototype, so `in` accepted them as existing fields and wrote
+        // them to disk as new own keys (same hardening as the HANDLERS guard).
+        if (typeof seg === 'string' && !Array.isArray(container) && !Object.hasOwn(container, seg)) {
             // Component-level alias first (i === 0 — the map is keyed by the
             // component type), and only when the aliased key really exists, so
             // a stale template never gets a manufactured field. Like the retry
@@ -425,7 +428,7 @@ function locateProperty(doc, component, path, { allowCreate = false } = {}) {
             const underscored = `_${seg}`;
             if (alias !== undefined) {
                 segments[i] = alias;
-            } else if (underscored in container) {
+            } else if (Object.hasOwn(container, underscored)) {
                 segments[i] = underscored;
             } else if (!(allowCreate && last)) {
                 const owner = i === 0
@@ -1510,6 +1513,43 @@ function cloneOwnedElement(doc, srcIdx, components = componentIdxSet(doc)) {
 }
 
 /**
+ * Live target-overrides wired to fields of `arrayPath[index]`. The clone copies
+ * the neighbor's serialized `null` but not the record behind it, so without a
+ * duplicate the new element's reference is dead. Fields `value` merges over are
+ * skipped (their own value wins); dead records are not carried along.
+ * @returns {Array<{tail: string[], stubIdx: number, localID: string[]}>}
+ */
+function elementTargetOverrides(doc, compIdx, arrayPath, index, value) {
+    const prefix = [...arrayPath, String(index)];
+    let merged = null;
+    if (value !== undefined) {
+        // Anything mergeTyped substitutes wholesale (scalar, array, own __type__)
+        // leaves no cloned field behind; otherwise its top-level keys win, and a
+        // bare name there resolves to the underscored twin — cover both.
+        const plain = value !== null && typeof value === 'object' &&
+            !Array.isArray(value) && !value.__type__;
+        if (!plain) return [];
+        merged = new Set(Object.keys(value).flatMap(k => [k, `_${k}`]));
+    }
+    const mounted = mountedChildNodeIdxs(doc);
+    const out = [];
+    for (const { obj } of listTargetOverrides(doc)) {
+        const p = obj.propertyPath;
+        if (!isRef(obj.source) || obj.source.__id__ !== compIdx || obj.sourceInfo !== null) continue;
+        if (!isRef(obj.target) || !Array.isArray(p) || p.length <= prefix.length) continue;
+        if (!prefix.every((seg, i) => p[i] === seg)) continue;
+        if (merged?.has(p[prefix.length])) continue;
+        if (overrideDeadReasons(doc, obj, mounted).length > 0) continue;
+        out.push({
+            tail: p.slice(prefix.length),
+            stubIdx: obj.target.__id__,
+            localID: doc.getObject(obj.targetInfo.__id__).localID
+        });
+    }
+    return out;
+}
+
+/**
  * Owned subtree of a standalone element: itself plus the transitive closure of
  * OWNED references (stopping at nodes/components — those are external links).
  * Mirrors SceneDocument.subtreeObjectIds for the CCClass[]-element case, so the
@@ -1589,6 +1629,7 @@ function insertArrayElement(doc, op, ctx) {
 
     let inserted;
     let note;
+    let clonedOverrides = [];
     const components = componentIdxSet(doc);
     const neighborObj = isRef(neighbor) ? doc.getObject(neighbor.__id__) : null;
     const neighborIsOwned = isRef(neighbor) &&
@@ -1615,6 +1656,7 @@ function insertArrayElement(doc, op, ctx) {
         }
         inserted = { __id__: newIdx };
         const fromN = op.from ?? arr.indexOf(neighbor);
+        clonedOverrides = elementTargetOverrides(doc, compIdx, pathStrings, fromN, value);
         note = ` (${type}, cloned from ${property}[${fromN}])`;
     } else if (isRef(neighbor)) {
         // Array of references to EXISTING nodes/components (pipeControllers:
@@ -1710,6 +1752,21 @@ function insertArrayElement(doc, op, ctx) {
     // their propertyPath index segment along with the splice (review #3).
     const remapped = remapTargetOverridesForSplice(doc, compIdx, pathStrings, { inserted: at });
     if (remapped.shifted) note += ` (shifted ${remapped.shifted} target-override path(s))`;
+
+    // The clone copied the neighbor's serialized nulls — give the new index its
+    // own records, after the remap has moved the originals out of the way.
+    for (const o of clonedOverrides) {
+        upsertTargetOverride(doc, ctx, {
+            sourceIdx: compIdx,
+            propertyPath: [...pathStrings, String(at), ...o.tail],
+            stubIdx: o.stubIdx,
+            localID: o.localID
+        });
+    }
+    if (clonedOverrides.length) {
+        note += ` (cloned ${clonedOverrides.length} target-override` +
+            `${clonedOverrides.length > 1 ? 's' : ''})`;
+    }
 
     // $node/$component values resolving inside a collapsed instance serialized
     // as null above — register the cc.TargetOverrideInfo(s) so the engine

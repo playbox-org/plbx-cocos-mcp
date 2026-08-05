@@ -13,6 +13,7 @@ import { BaseTool } from './BaseTool.js';
 import { SceneMinifier } from '../core/SceneMinifier.js';
 import { SceneDocument, isRef } from '../document/SceneDocument.js';
 import { BoundsCalculator } from '../document/Bounds.js';
+import { mountOwners } from '../document/instances.js';
 import { buildBoundsContext, fmt } from './measure.js';
 
 /** Region key sets: an axis-aligned rectangle or a circle, both in WORLD XZ metres */
@@ -109,6 +110,7 @@ export class FindSceneNodes extends BaseTool {
                 const doc = SceneDocument.load(scenePath);
                 const calculator = new BoundsCalculator(buildBoundsContext(projectRoot));
                 const uiCache = new Map();
+                const owners = mountOwners(doc);
                 placed = new Map();
                 matches = matches.filter((m) => {
                     const node = doc.getObject(m.id);
@@ -116,7 +118,7 @@ export class FindSceneNodes extends BaseTool {
                     // A Canvas subtree is laid out in PIXELS, not placed on the ground: its rects
                     // and positions answer no question about world XZ occupancy, and their numbers
                     // are large enough to overlap any region asked about
-                    if (isScreenSpace(doc, m.id, uiCache)) { uiExcluded++; return false; }
+                    if (isScreenSpace(doc, m.id, uiCache, owners)) { uiExcluded++; return false; }
                     // …and a 3D node's own box must not inherit pixels from a UI descendant either
                     const world = calculator.computeSubtree(doc, m.id, { skipUI: true }).world;
                     const footprint = world
@@ -237,8 +239,10 @@ function describeRegion(region) {
  * @param {import('../document/SceneDocument.js').SceneDocument} doc
  * @param {number} nodeIdx
  * @param {Map<number, boolean>} cache - Shared across one call: a Canvas subtree re-walks one chain
+ * @param {Map<number, {stubIdx: number}>} owners - instances.js' mount-owner map: a mounted child
+ *   has no `_parent`, so the walk hops to the instance it hangs on instead of stopping there
  */
-function isScreenSpace(doc, nodeIdx, cache) {
+function isScreenSpace(doc, nodeIdx, cache, owners) {
     const chain = [];
     let idx = nodeIdx;
     let answer = false;
@@ -252,7 +256,9 @@ function isScreenSpace(doc, nodeIdx, cache) {
             break;
         }
         const parent = doc.getObject(idx)._parent;
-        idx = isRef(parent) ? parent.__id__ : undefined;
+        // A mounted child is serialized with `_parent: null`; its layout frame is the instance it
+        // hangs on, so the walk continues there — same hop BoundsCalculator makes to place it
+        idx = isRef(parent) ? parent.__id__ : owners.get(idx)?.stubIdx;
     }
     for (const i of chain) cache.set(i, answer);
     return answer;

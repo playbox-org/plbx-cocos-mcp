@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import * as fs from 'fs';
+import * as os from 'os';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { ListAssets } from '../../src/tools/ListAssets.js';
@@ -8,6 +10,20 @@ import { compressUuid } from '../../src/utils/uuid.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = join(__dirname, '../fixtures/mock-project');
+
+/** Throwaway project: {relative asset path → importer}, one .meta per file */
+function makeProject(assets) {
+    const root = fs.mkdtempSync(join(os.tmpdir(), 'cocos-list-assets-'));
+    let n = 0;
+    for (const [rel, importer] of Object.entries(assets)) {
+        const file = join(root, rel);
+        fs.mkdirSync(dirname(file), { recursive: true });
+        fs.writeFileSync(file, '{}');
+        const uuid = `aaaaaaaa-0000-4000-8000-${String(++n).padStart(12, '0')}`;
+        fs.writeFileSync(`${file}.meta`, JSON.stringify({ ver: '1.1.50', importer, uuid }));
+    }
+    return root;
+}
 
 describe('ListAssets tool', () => {
     const tool = new ListAssets();
@@ -160,5 +176,61 @@ describe('ListAssets tool', () => {
         const headers = text.match(/^\S.*\/$/gm) ?? [];
         assert.ok(headers.length > 1, 'expected several folder headers');
         assert.strictEqual(new Set(headers).size, headers.length, 'a folder header repeats');
+    });
+
+    // AssetIndex scans depth-first without sorting, so a folder holding files both
+    // before and after a subdirectory used to open two identical headers
+    it('should keep a folder split by a subdirectory under one header', async () => {
+        const root = makeProject({
+            'assets/Art/alpha.prefab': 'prefab',
+            'assets/Art/mid/inner.prefab': 'prefab',
+            'assets/Art/mid.prefab': 'prefab',
+            'assets/Art/zeta.prefab': 'prefab'
+        });
+        try {
+            const text = (await tool.execute({}, root)).content[0].text;
+            const headers = text.match(/^\S.*\/$/gm) ?? [];
+            assert.deepStrictEqual(headers, ['assets/Art/', 'assets/Art/mid/']);
+            const rows = (text.match(/^ {2}\S+$/gm) ?? []).map(r => r.trim());
+            assert.deepStrictEqual(rows, ['alpha.prefab', 'mid.prefab', 'zeta.prefab', 'inner.prefab']);
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it('should order the flat and json shapes the same way', async () => {
+        const root = makeProject({
+            'assets/Art/zeta.prefab': 'prefab',
+            'assets/Art/mid/inner.prefab': 'prefab',
+            'assets/Art/alpha.prefab': 'prefab'
+        });
+        try {
+            const expected = ['assets/Art/alpha.prefab', 'assets/Art/zeta.prefab', 'assets/Art/mid/inner.prefab'];
+            const flat = (await tool.execute({ format: 'flat' }, root)).content[0].text;
+            assert.deepStrictEqual([...flat.matchAll(/^- (\S+)/gm)].map(m => m[1]), expected);
+            const json = JSON.parse((await tool.execute({ format: 'json' }, root)).content[0].text);
+            assert.deepStrictEqual(json.items.map(i => i.path), expected);
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    // the summary is sold as the complete inventory, so a capped rank must say how
+    // many buckets it left out instead of quietly summing to less than the header
+    it('should report the buckets a summary omits', async () => {
+        const assets = {};
+        for (let i = 1; i <= 26; i++) {
+            const folder = `F${String(Math.min(i, 20)).padStart(2, '0')}`;
+            assets[`assets/${folder}/a${i}.asset`] = `imp${String(i).padStart(2, '0')}`;
+        }
+        const root = makeProject(assets);
+        try {
+            const text = (await tool.execute({ format: 'summary' }, root)).content[0].text;
+            assert.match(text, /# Assets \(26\)/);
+            assert.match(text, /^by type: .*, \.\.\. 2 more$/m);   // 26 types, 24 shown
+            assert.match(text, /^by folder: .*, \.\.\. 4 more$/m); // 20 buckets, 16 shown
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
     });
 });

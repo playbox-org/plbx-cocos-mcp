@@ -59,6 +59,36 @@ function terrainScene(ctx, parent = 'Holder', { wireAsset = true } = {}) {
     return doc;
 }
 
+/**
+ * Mount a UITransform-carrying node on `stubIdx`, at `mountPath` inside the source prefab —
+ * the golden MountedChildrenInfo shape (node with `_parent: null`), which no MCP op can create.
+ */
+function mountNode(doc, ctx, stubIdx, mountPath, pos, size) {
+    const info = doc.getObject(doc.getObject(stubIdx)._prefab.__id__);
+    const src = loadSourcePrefabByUuid(ctx, info.asset.__uuid__).doc;
+    const mountIdx = src.resolveNode(mountPath);
+    const fileId = src.getObject(src.getObject(mountIdx)._prefab.__id__).fileId;
+
+    const nodeIdx = doc.addObject({
+        __type__: 'cc.Node', _name: 'tag', _parent: null, _children: [], _components: [],
+        _prefab: null, _lpos: { __type__: 'cc.Vec3', ...pos }
+    });
+    const compIdx = doc.addObject({
+        __type__: 'cc.UITransform', node: { __id__: nodeIdx }, __prefab: null,
+        _contentSize: { __type__: 'cc.Size', ...size },
+        _anchorPoint: { __type__: 'cc.Vec2', x: 0.5, y: 0.5 }
+    });
+    doc.getObject(nodeIdx)._components.push({ __id__: compIdx });
+    const targetIdx = doc.addObject({ __type__: 'cc.TargetInfo', localID: [fileId] });
+    const recordIdx = doc.addObject({
+        __type__: 'cc.MountedChildrenInfo',
+        targetInfo: { __id__: targetIdx }, nodes: [{ __id__: nodeIdx }]
+    });
+    const instance = doc.instanceOf(stubIdx);
+    (instance.mountedChildren ??= []).push({ __id__: recordIdx });
+    return nodeIdx;
+}
+
 describe('BoundsCalculator', () => {
     test('prefab root: child transforms applied, own frame kept', () => {
         const doc = SceneDocument.load(MOCK('assets/Prefabs/Crate.prefab'));
@@ -136,6 +166,72 @@ describe('BoundsCalculator', () => {
         near(world.size.x, MESH_X * 2 * 3); // world frame: source root scale applied
         near(world.center.x, 10);
         near(world.center.y, 0.5 * 3);
+    });
+
+    test('mounted children contribute to the stub\'s and its ancestors\' bounds', () => {
+        // The golden [WORLD]/Zones/GoldStackZone carries one mounted child ("icon", a 187x165
+        // UITransform at the instance origin) in no `_children` list — and its source prefab is
+        // not in the mock project, which must cost the prefab half only
+        const ctx = makeCtx();
+        const doc = SceneDocument.load(GOLDEN('Main.scene_V2.scene'));
+        const calc = new BoundsCalculator(ctx);
+        const stubIdx = doc.resolveNode('[WORLD]/Zones/GoldStackZone');
+
+        const stub = calc.computeSubtree(doc, stubIdx);
+        assert.deepStrictEqual(
+            stub.contributors.map(c => [c.path, c.source]),
+            [['[WORLD]/Zones/GoldStackZone/icon', '187x165']]
+        );
+        near(stub.world.center.x, -2, 1e-9); // the instance origin, reached through the mount hop
+        near(stub.world.center.z, 7.7, 1e-9);
+
+        const zones = calc.computeSubtree(doc, doc.resolveNode('[WORLD]/Zones'));
+        assert.strictEqual(
+            zones.contributors.filter(c => c.path.endsWith('/icon')).length, 1,
+            `exactly one contribution per mounted node: ${JSON.stringify(zones.contributors)}`
+        );
+        near(zones.world.min.x, -2, 1e-9); // without the icon the group starts at x 1.25
+
+        // perChild: a real node of THIS document, so not `inPrefab`
+        const rows = calc.computeChildren(doc, stubIdx);
+        assert.strictEqual(rows.length, 1);
+        assert.strictEqual(rows[0].mounted, true);
+        assert.strictEqual(rows[0].inPrefab, false);
+        assert.match(rows[0].name, /^icon \(mounted\)$/);
+    });
+
+    test('a mounted child rides the source-prefab TRS chain down to its mount node', () => {
+        const ctx = makeCtx();
+        const doc = SceneDocument.load(GOLDEN('Main.scene_V2.scene'));
+        applyOperations(doc, [{
+            op: 'instantiate_prefab', parent: '/', prefab: 'Prefabs/Crate.prefab',
+            name: 'Box', position: { x: 10 }
+        }], ctx);
+        const stubIdx = doc.resolveNode('Box');
+        // Mount a 4x2 node at local (1,0,0) onto the prefab's Visual (pos y+0.5, scale 2). MCP
+        // cannot create mounted records, so build the golden shape by hand.
+        mountNode(doc, ctx, stubIdx, 'Visual', { x: 1, y: 0, z: 0 }, { width: 4, height: 2 });
+
+        const calc = new BoundsCalculator(ctx);
+        const { world } = calc.computeSubtree(doc, stubIdx);
+        // 10 + 2*1 along X, y 0.5 up, the rect scaled by 2 → 8x4 (it swallows the tiny crate mesh)
+        near(world.center.x, 12, 1e-9);
+        near(world.center.y, 0.5, 1e-9);
+        near(world.size.x, 8, 1e-9);
+        near(world.size.y, 4, 1e-9);
+        // The perChild walk resolves the same chain through its own mount hop
+        const row = calc.computeChildren(doc, stubIdx).find(r => r.mounted);
+        near(row.world.center.x, 12, 1e-9);
+        near(row.world.center.y, 0.5, 1e-9);
+        near(row.world.size.x, 8, 1e-9);
+    });
+
+    test('mounted children are dropped by skipUI like any other UITransform', () => {
+        const ctx = makeCtx();
+        const doc = SceneDocument.load(GOLDEN('Main.scene_V2.scene'));
+        const { world } = new BoundsCalculator(ctx)
+            .computeSubtree(doc, doc.resolveNode('[WORLD]/Zones/GoldStackZone'), { skipUI: true });
+        assert.strictEqual(world, null);
     });
 
     test('cyclic _children graph is skipped, not a stack overflow', () => {

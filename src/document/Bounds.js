@@ -22,7 +22,9 @@
  */
 
 import { isRef } from './SceneDocument.js';
-import { loadSourcePrefabByUuid, instanceOverrideValue, mountedChildrenEntries } from './instances.js';
+import {
+    loadSourcePrefabByUuid, instanceOverrideValue, mountedChildrenEntries, mountOwners
+} from './instances.js';
 import {
     mat4Identity, trsToMat4, mat4Multiply, transformAabb, mergeAabb, eulerToQuat
 } from '../utils/math3d.js';
@@ -91,55 +93,71 @@ export class BoundsCalculator {
      * A collapsed instance stub has no `_children` of its own: its children live in the source
      * prefab, and enumerating the document would report zero children right next to a Contributors
      * list naming all of them. Those are marked `inPrefab` — their paths are relative to the prefab
-     * root, not scene addresses.
+     * root, not scene addresses. Mounted children are the other half: real nodes of THIS document
+     * added on top of the instance, marked `mounted` (and named so, since the row prints its name).
      * @param {import('./SceneDocument.js').SceneDocument} doc
      * @param {number} nodeIdx
      * @param {{skipUI?: boolean}} [options]
-     * @returns {Array<{name: string, path: string|null, inPrefab: boolean, active: boolean,
-     *   world: object|null, position: object|null}>}
+     * @returns {Array<{name: string, path: string|null, inPrefab: boolean, mounted: boolean,
+     *   active: boolean, world: object|null, position: object|null}>}
      */
     computeChildren(doc, nodeIdx, options = {}) {
         if (!doc.isInstanceStub(nodeIdx)) {
-            return doc.childIndices(nodeIdx).map((childIdx) => {
-                const own = this.computeSubtree(doc, childIdx, options);
-                return {
-                    name: doc.nodeName(childIdx) ?? '<unnamed>',
-                    path: doc.nodePath(childIdx),
-                    inPrefab: false,
-                    active: doc.getObject(childIdx)._active !== false,
-                    world: own.world,
-                    position: own.world ? null : this.worldPosition(doc, childIdx)
-                };
-            });
+            return doc.childIndices(nodeIdx).map(childIdx => this.#childRow(doc, childIdx, options));
         }
 
         const info = doc.getObject(doc.getObject(nodeIdx)._prefab.__id__);
-        let source;
+        let source = null;
         try {
             source = loadSourcePrefabByUuid(this.#ctx, info.asset?.__uuid__);
         } catch {
-            return [];
+            // Source unreadable — the mounted children below are still knowable
         }
-        const stubWorld = this.#worldMatrix(doc, nodeIdx);
-        return source.doc.childIndices(source.doc.root.idx).map((childIdx) => {
-            const name = source.doc.nodeName(childIdx) ?? '<unnamed>';
-            const out = { contributors: [], skipped: [], boxes: [], skipUI: options.skipUI === true };
-            this.#enter(source.doc, childIdx, mat4Identity(), name, out, 1, false, new Map());
-            let world = null;
-            for (const box of out.boxes) {
-                const m = mat4Multiply(stubWorld, box.matrix);
-                world = mergeAabb(world, transformAabb(box.aabb, effectiveMat(m, box)));
+        const rows = [];
+        if (source) {
+            const stubWorld = this.#worldMatrix(doc, nodeIdx);
+            for (const childIdx of source.doc.childIndices(source.doc.root.idx)) {
+                const name = source.doc.nodeName(childIdx) ?? '<unnamed>';
+                const out = { contributors: [], skipped: [], boxes: [], skipUI: options.skipUI === true };
+                this.#enter(source.doc, childIdx, mat4Identity(), name, out, 1, false, new Map());
+                let world = null;
+                for (const box of out.boxes) {
+                    const m = mat4Multiply(stubWorld, box.matrix);
+                    world = mergeAabb(world, transformAabb(box.aabb, effectiveMat(m, box)));
+                }
+                const own = mat4Multiply(stubWorld, nodeTrsMat(source.doc.getObject(childIdx)));
+                rows.push({
+                    name,
+                    path: name,
+                    inPrefab: true,
+                    mounted: false,
+                    active: source.doc.getObject(childIdx)._active !== false,
+                    world: withDerived(world),
+                    position: world ? null : { x: own[12], y: own[13], z: own[14] }
+                });
             }
-            const own = mat4Multiply(stubWorld, nodeTrsMat(source.doc.getObject(childIdx)));
-            return {
-                name,
-                path: name,
-                inPrefab: true,
-                active: source.doc.getObject(childIdx)._active !== false,
-                world: withDerived(world),
-                position: world ? null : { x: own[12], y: own[13], z: own[14] }
-            };
-        });
+        }
+        for (const entry of this.#mountedEntries(doc, nodeIdx, null)) {
+            for (const childIdx of entry.nodeIndices) {
+                rows.push(this.#childRow(doc, childIdx, options, true));
+            }
+        }
+        return rows;
+    }
+
+    /** One computeChildren row for a node of THIS document (`#worldMatrix` does the mount hop) */
+    #childRow(doc, childIdx, options, mounted = false) {
+        const own = this.computeSubtree(doc, childIdx, options);
+        const name = doc.nodeName(childIdx) ?? '<unnamed>';
+        return {
+            name: mounted ? `${name} (mounted)` : name,
+            path: doc.nodePath(childIdx),
+            inPrefab: false,
+            mounted,
+            active: doc.getObject(childIdx)._active !== false,
+            world: own.world,
+            position: own.world ? null : this.worldPosition(doc, childIdx)
+        };
     }
 
     /**
@@ -187,7 +205,11 @@ export class BoundsCalculator {
         }
     }
 
-    /** Collapsed instance: recurse into the source prefab with overrides applied */
+    /**
+     * Collapsed instance: recurse into the source prefab with overrides applied, then into the
+     * nodes MOUNTED on the instance. An unreadable source only costs the prefab half — the mounted
+     * children are real nodes of this document and stay measurable at the instance origin.
+     */
     #enterStub(doc, stubIdx, matrix, label, out, depth, excludeOwnTrs, visiting) {
         if (depth >= MAX_INSTANCE_DEPTH) {
             out.skipped.push({ path: label, reason: 'prefab nesting too deep' });
@@ -195,37 +217,60 @@ export class BoundsCalculator {
         }
         const info = doc.getObject(doc.getObject(stubIdx)._prefab.__id__);
         const assetUuid = info.asset?.__uuid__;
+        let source = null;
         if (typeof assetUuid !== 'string') {
             out.skipped.push({ path: label, reason: 'instance has no asset uuid' });
-            return;
+        } else {
+            try {
+                source = loadSourcePrefabByUuid(this.#ctx, assetUuid);
+            } catch (err) {
+                out.skipped.push({ path: label, reason: `source prefab unavailable: ${err.message}` });
+            }
         }
-        let source;
-        try {
-            source = loadSourcePrefabByUuid(this.#ctx, assetUuid);
-        } catch (err) {
-            out.skipped.push({ path: label, reason: `source prefab unavailable: ${err.message}` });
-            return;
-        }
-        const rootIdx = source.doc.root.idx;
-        const rootNode = source.doc.getObject(rootIdx);
+        const rootNode = source ? source.doc.getObject(source.doc.root.idx) : null;
 
         // The stub's transform = source root TRS overridden per propertyOverrides
         const instance = doc.instanceOf(stubIdx);
         const rot = instanceOverrideValue(doc, instance, info.fileId, '_lrot') ??
-            rootNode._lrot ??
-            (rootNode._euler ? { __type__: 'cc.Quat', ...eulerToQuat(rootNode._euler) } : IDENTITY_TRS.rot);
+            rootNode?._lrot ??
+            (rootNode?._euler ? { __type__: 'cc.Quat', ...eulerToQuat(rootNode._euler) } : IDENTITY_TRS.rot);
         const trs = {
-            pos: instanceOverrideValue(doc, instance, info.fileId, '_lpos') ?? rootNode._lpos ?? IDENTITY_TRS.pos,
+            pos: instanceOverrideValue(doc, instance, info.fileId, '_lpos') ?? rootNode?._lpos ?? IDENTITY_TRS.pos,
             rot,
-            scale: instanceOverrideValue(doc, instance, info.fileId, '_lscale') ?? rootNode._lscale ?? IDENTITY_TRS.scale
+            scale: instanceOverrideValue(doc, instance, info.fileId, '_lscale') ?? rootNode?._lscale ?? IDENTITY_TRS.scale
         };
         const m = excludeOwnTrs ? matrix : mat4Multiply(matrix, trsToMat4(trs.pos, trs.rot, trs.scale));
 
-        this.#collectComponents(source.doc, rootIdx, m, label, out);
-        for (const childIdx of source.doc.childIndices(rootIdx)) {
-            const childLabel = `${label}→${source.doc.nodeName(childIdx) ?? '<unnamed>'}`;
-            this.#enter(source.doc, childIdx, m, childLabel, out, depth + 1, false, visiting);
+        if (source) {
+            const rootIdx = source.doc.root.idx;
+            this.#collectComponents(source.doc, rootIdx, m, label, out);
+            for (const childIdx of source.doc.childIndices(rootIdx)) {
+                const childLabel = `${label}→${source.doc.nodeName(childIdx) ?? '<unnamed>'}`;
+                this.#enter(source.doc, childIdx, m, childLabel, out, depth + 1, false, visiting);
+            }
         }
+        for (const entry of this.#mountedEntries(doc, stubIdx, source)) {
+            const base = entry.inner ? mat4Multiply(m, entry.inner) : m;
+            for (const childIdx of entry.nodeIndices) {
+                const childLabel = `${label}/${doc.nodeName(childIdx) ?? '<unnamed>'}`;
+                this.#enter(doc, childIdx, base, childLabel, out, depth + 1, false, visiting);
+            }
+        }
+    }
+
+    /**
+     * Mounted children of a stub, each entry carrying the source-prefab TRS chain from the root
+     * down to its mount node (null when the source is unreadable — then the instance origin is it).
+     * A mounted node with a real `_parent` is walked as that parent's child, never here: exactly one
+     * contribution per node.
+     */
+    #mountedEntries(doc, stubIdx, source) {
+        const instance = doc.instanceOf(stubIdx);
+        if (!instance) return [];
+        return mountedChildrenEntries(doc, instance).map(e => ({
+            inner: source && e.localID?.length === 1 ? mountNodeMatrix(source.doc, e.localID[0]) : null,
+            nodeIndices: e.nodeIndices.filter(i => !isRef(doc.getObject(i)?._parent))
+        }));
     }
 
     #collectComponents(doc, nodeIdx, matrix, label, out) {
@@ -395,25 +440,10 @@ export class BoundsCalculator {
         return m;
     }
 
-    /**
-     * Mounted-child ROOT node index → the instance it hangs on, built once per document.
-     * @returns {Map<number, {stubIdx: number, localID: string[]|null}>}
-     */
+    /** instances.js' mount-owner map, built once per document */
     #mountOwners(doc) {
         let map = this.#mountCache.get(doc);
-        if (map) return map;
-        map = new Map();
-        doc.objects.forEach((obj, idx) => {
-            if (!doc.isNode(obj) || !doc.isInstanceStub(idx)) return;
-            const instance = doc.instanceOf(idx);
-            if (!instance) return;
-            for (const entry of mountedChildrenEntries(doc, instance)) {
-                for (const nodeIdx of entry.nodeIndices) {
-                    if (!map.has(nodeIdx)) map.set(nodeIdx, { stubIdx: idx, localID: entry.localID });
-                }
-            }
-        });
-        this.#mountCache.set(doc, map);
+        if (!map) this.#mountCache.set(doc, map = mountOwners(doc));
         return map;
     }
 

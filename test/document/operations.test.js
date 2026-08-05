@@ -493,6 +493,21 @@ describe('set_component_property / set_asset_ref', () => {
             }]), /Available: .*_materials/);
     });
 
+    test('a prototype-named property is rejected, not written as an own key', () => {
+        // `seg in container` walked Object.prototype, so "toString" passed the
+        // "this field exists" guard and serialized into the .prefab as own key.
+        const doc = loadPrefab();
+        const compIdx = doc.componentIndices(doc.resolveNode('Table/CashRegister'))
+            .find(i => doc.getObject(i).__type__ === 'cc.MeshRenderer');
+        for (const name of ['toString', 'constructor', 'valueOf', 'hasOwnProperty']) {
+            assert.throws(() => applyOperations(doc, [{
+                op: 'set_component_property', node: 'Table/CashRegister',
+                component: 'MeshRenderer', property: name, value: 42
+            }]), /has no property/, name);
+            assert.ok(!Object.hasOwn(doc.getObject(compIdx), name), name);
+        }
+    });
+
     test('set_asset_ref resolves path → sprite-frame sub-asset', () => {
         const doc = loadScene();
         applyOperations(doc, [

@@ -37,6 +37,7 @@ import {
     heightToRaw,
     rawToHeight,
     vertexCounts,
+    vertexIndex,
     terrainSize,
     blockIndex,
     blockLayers,
@@ -106,6 +107,9 @@ const OP_KEYS = {
 
 /** Iteration cap for `smooth_heights` — each pass is a full grid copy */
 const MAX_SMOOTH_ITERATIONS = 64;
+
+/** How far past the terrain's own vertex grid a `set_heights` source may be resampled */
+const MAX_ASKED_VERTEX_FACTOR = 4;
 
 /**
  * Tolerance for "a vertex/texel sits exactly on the region border". Region bounds come from
@@ -317,17 +321,30 @@ function parseRegion(op, data) {
 /**
  * Vertex index range covered by a region: every vertex whose position `i * tileSize` lies
  * inside `[x, x + width]` (border inclusive, {@link EPS} tolerance), clamped to the grid.
+ *
+ * `asked` is the same span BEFORE that clamp, and `clipped` says whether the two differ: a
+ * region overhanging the terrain edge still asks for the whole span, and a source resampled
+ * onto the clipped one would be squeezed into the surviving part (see {@link setHeights}).
  * @param {object} data
  * @param {object} r - Parsed region
- * @returns {{i0: number, i1: number, j0: number, j1: number, cols: number, rows: number, count: number}}
+ * @returns {{i0: number, i1: number, j0: number, j1: number, cols: number, rows: number,
+ *   count: number, asked: object, clipped: boolean}}
  */
 function vertexRange(data, r) {
     const [vx, vz] = vertexCounts(data.blockCount);
     const ts = data.tileSize;
-    const i0 = Math.max(0, Math.ceil(r.x / ts - EPS));
-    const i1 = Math.min(vx - 1, Math.floor((r.x + r.width) / ts + EPS));
-    const j0 = Math.max(0, Math.ceil(r.z / ts - EPS));
-    const j1 = Math.min(vz - 1, Math.floor((r.z + r.depth) / ts + EPS));
+    const asked = {
+        i0: Math.ceil(r.x / ts - EPS),
+        i1: Math.floor((r.x + r.width) / ts + EPS),
+        j0: Math.ceil(r.z / ts - EPS),
+        j1: Math.floor((r.z + r.depth) / ts + EPS),
+    };
+    asked.cols = asked.i1 - asked.i0 + 1;
+    asked.rows = asked.j1 - asked.j0 + 1;
+    const i0 = Math.max(0, asked.i0);
+    const i1 = Math.min(vx - 1, asked.i1);
+    const j0 = Math.max(0, asked.j0);
+    const j1 = Math.min(vz - 1, asked.j1);
     if (i1 < i0 || j1 < j0) {
         throw new TerrainOpError(
             `region x ${fmt(r.x)}..${fmt(r.x + r.width)} m, z ${fmt(r.z)}..${fmt(r.z + r.depth)} m ` +
@@ -335,7 +352,14 @@ function vertexRange(data, r) {
             'must reach at least one of them'
         );
     }
-    return { i0, i1, j0, j1, cols: i1 - i0 + 1, rows: j1 - j0 + 1, count: (i1 - i0 + 1) * (j1 - j0 + 1) };
+    return {
+        i0, i1, j0, j1,
+        cols: i1 - i0 + 1,
+        rows: j1 - j0 + 1,
+        count: (i1 - i0 + 1) * (j1 - j0 + 1),
+        asked,
+        clipped: i0 !== asked.i0 || i1 !== asked.i1 || j0 !== asked.j0 || j1 !== asked.j1,
+    };
 }
 
 /** `vertices 4..12 x 4..12` — which grid cells a region actually snapped to */
@@ -380,6 +404,7 @@ function buildMask(data, r, op) {
     const cz = r.z + r.depth / 2;
     const rx = r.width / 2;
     const rz = r.depth / 2;
+    const inradius = Math.min(rx, rz);
     const rectEdge = (x, z) => Math.min(x - r.x, r.x + r.width - x, z - r.z, r.z + r.depth - z);
 
     let contour = null;
@@ -428,8 +453,11 @@ function buildMask(data, r, op) {
         if (r.shape === 'ellipse') {
             const q = Math.sqrt(((x - cx) / rx) ** 2 + ((z - cz) / rz) ** 2);
             if (q > 1 + EPS) return null;
-            // Approximate for a strong ellipse: the band is measured along the SHORTER radius
-            return ramp((1 - q) * Math.min(rx, rz));
+            // Distance to the boundary as `(1 - q) / |grad q|` — EXACT on both axes (so the ramp
+            // spans `falloff` metres along each), `(1 - q) * r` for a circle. Capped at the
+            // inradius, which is the true maximum inner distance and kills the 0/0 at the centre.
+            const g = Math.hypot((x - cx) / rx ** 2, (z - cz) / rz ** 2);
+            return ramp(g > 0 ? Math.min(((1 - q) * q) / g, inradius) : inradius);
         }
         const inBox = x >= r.x - EPS && x <= r.x + r.width + EPS
             && z >= r.z - EPS && z <= r.z + r.depth + EPS;
@@ -595,6 +623,7 @@ function rebuildHeights(data, info) {
     const heights = new Uint16Array(newVX * newVZ).fill(TERRAIN_HEIGHT_BASE);
     const w = Math.min(oldVX, newVX);
     const h = Math.min(oldVZ, newVZ);
+    // Hand-indexed on purpose: this spans TWO grids, so neither side is `vertexIndex(data, …)`
     for (let j = 0; j < h; j++) {
         for (let i = 0; i < w; i++) heights[j * newVX + i] = data.heights[j * oldVX + i];
     }
@@ -1073,14 +1102,13 @@ function removeLayerOp(data, op, ctx) {
  */
 function maskFactors(data, range, mask) {
     const ts = data.tileSize;
-    const [vx] = vertexCounts(data.blockCount);
     const factors = new Float32Array(range.cols * range.rows);
     let covered = 0;
     let peak = 0;
     for (let j = range.j0; j <= range.j1; j++) {
         for (let i = range.i0; i <= range.i1; i++) {
             // The stored vertex value IS the height there — no need to re-sample the kernel
-            const f = mask.factorAt(i * ts, j * ts, rawToHeight(data.heights[j * vx + i]));
+            const f = mask.factorAt(i * ts, j * ts, rawToHeight(data.heights[vertexIndex(data, i, j)]));
             factors[(j - range.j0) * range.cols + (i - range.i0)] = f === null ? NaN : f;
             if (f !== null) {
                 covered++;
@@ -1111,7 +1139,7 @@ function writeMaskedHeights(data, range, factors, targetAt, clamp = 'none') {
             const t = factors[at];
             if (Number.isNaN(t)) { deltas[at] = NaN; continue; }
             touched++;
-            const index = j * vx + i;
+            const index = vertexIndex(data, i, j);
             const current = rawToHeight(data.heights[index]);
             const target = targetAt(i, j, current);
             let metres = t >= 1 ? target : current + (target - current) * t;
@@ -1279,11 +1307,24 @@ function setHeights(data, op, ctx) {
         };
     }
 
-    if (range.cols < 2 || range.rows < 2) {
+    // The source is resampled onto the span the REGION asks for, not onto what survives the grid
+    // clamp — otherwise an overhanging region squeezes the whole source into the surviving part
+    const asked = range.asked;
+    if (asked.cols < 2 || asked.rows < 2) {
         throw new TerrainOpError(
             `a rows/heightmap source needs at least 2 vertices per axis; ${where} covers ` +
-            `${range.cols}x${range.rows} (vertices sit every ${fmt(data.tileSize)} m) — ` +
+            `${asked.cols}x${asked.rows} (vertices sit every ${fmt(data.tileSize)} m) — ` +
             'use "value" to set a single row/column'
+        );
+    }
+    const [gvx, gvz] = vertexCounts(data.blockCount);
+    if (asked.cols * asked.rows > MAX_ASKED_VERTEX_FACTOR * gvx * gvz) {
+        throw new TerrainOpError(
+            `region ${describeRegion(data, r)} asks for a ${asked.cols}x${asked.rows} vertex span, ` +
+            `more than ${MAX_ASKED_VERTEX_FACTOR}x the terrain's own ${gvx}x${gvz} grid — a ` +
+            'rows/heightmap source is resampled onto the span the region asks for (so the part that ' +
+            'lands on the terrain keeps the source\'s scale), and that grid would be enormous. ' +
+            'Shrink the region to something near the terrain'
         );
     }
     const usedRows = op.rows !== undefined;
@@ -1291,8 +1332,8 @@ function setHeights(data, op, ctx) {
     let grid;
     try {
         grid = buildHeightGrid(spec, {
-            vertexCount: [range.cols, range.rows],
-            tileCount: [range.cols - 1, range.rows - 1],
+            vertexCount: [asked.cols, asked.rows],
+            tileCount: [asked.cols - 1, asked.rows - 1],
             projectRoot: ctx.projectRoot ?? null,
             // Name the argument the caller actually passed: `rows` values wrapped into a
             // heightmap-shaped spec must not be reported as "heightmap.rows[1] …".
@@ -1306,16 +1347,23 @@ function setHeights(data, op, ctx) {
         data,
         range,
         shaped.factors,
-        (i, j) => grid.heights[(j - range.j0) * range.cols + (i - range.i0)],
+        (i, j) => grid.heights[(j - asked.j0) * asked.cols + (i - asked.i0)],
         clamp
     );
+    const clipNote = range.clipped
+        ? [`the region overhangs the terrain: the source was resampled onto the full ` +
+           `${asked.cols}x${asked.rows} vertex span it asks for (vertices ${asked.i0}..${asked.i1} x ` +
+           `${asked.j0}..${asked.j1}), and only the part on the grid (${describeVertices(range)}) was ` +
+           'written — the source keeps its scale and is cropped, it is not squeezed into the terrain']
+        : [];
     return {
         op: 'set_heights',
         summary: `Set ${plural(res.touched, 'vertex', 'vertices')} over ${where}` +
+            `${range.clipped ? `, clipped from the ${asked.cols}x${asked.rows} vertices it asks for` : ''}` +
             `${describeMask(mask)}${describeCoverage(shaped, range)} from ` +
             `${op.rows !== undefined ? 'inline rows' : `heightmap ${show(spec.source ?? 'inline')}`} ` +
             `— ${res.changed} changed, range ${fmt(res.low)}..${fmt(res.high)} m, largest move ${fmt(res.maxDelta)} m`,
-        notes: [...grid.notes, ...clampNote(res, res.touched), ...maskNotes(data, mask, shaped, res, 'height', clamp)],
+        notes: [...grid.notes, ...clipNote, ...clampNote(res, res.touched), ...maskNotes(data, mask, shaped, res, 'height', clamp)],
     };
 }
 
@@ -1381,14 +1429,14 @@ function smoothHeights(data, op) {
             for (let i = range.i0; i <= range.i1; i++) {
                 let sum = 0;
                 for (let dj = -1; dj <= 1; dj++) {
-                    const sj = clampIdx(j + dj, vz - 1) * vx;
+                    const sj = clampIdx(j + dj, vz - 1);
                     for (let di = -1; di <= 1; di++) {
-                        sum += prev[sj + clampIdx(i + di, vx - 1)];
+                        sum += prev[vertexIndex(data, clampIdx(i + di, vx - 1), sj)];
                     }
                 }
                 // Raw units are an affine image of metres, so averaging raw == averaging
                 // metres; rounding here IS the 1/128 m quantization.
-                data.heights[j * vx + i] = Math.round(sum / 9);
+                data.heights[vertexIndex(data, i, j)] = Math.round(sum / 9);
             }
         }
     }
@@ -1396,7 +1444,7 @@ function smoothHeights(data, op) {
     const blurred = new Float32Array(range.cols * range.rows);
     for (let j = range.j0; j <= range.j1; j++) {
         for (let i = range.i0; i <= range.i1; i++) {
-            const index = j * vx + i;
+            const index = vertexIndex(data, i, j);
             blurred[(j - range.j0) * range.cols + (i - range.i0)] = rawToHeight(data.heights[index]);
             data.heights[index] = original[index];
         }

@@ -19,7 +19,7 @@ import { resolveBuiltin, builtinLabel, isBuiltin } from '../../src/core/builtins
 import { AssetIndex } from '../../src/core/AssetIndex.js';
 import { Validator } from '../../src/document/Validator.js';
 import { SceneDocument } from '../../src/document/SceneDocument.js';
-import { readTerrain, writeTerrain } from '../../src/utils/terrainBin.js';
+import { readTerrain, writeTerrain, materialize } from '../../src/utils/terrainBin.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MOCK_PROJECT = path.join(__dirname, '..', 'fixtures', 'mock-project');
@@ -199,6 +199,45 @@ describe('find_asset_references', () => {
         assert.match(text, /## assets\/Maps\/Terrain\.terrain \(1\)/);
         assert.match(text, /- terrain layer 0 \.detailMap \[sub-asset @6c48a\]/);
         assert.ok(!/No references/.test(text), text);
+    });
+
+    test('the terrain pass parses the layer palette only, never the payload', async (t) => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-refs-payload-'));
+        t.after(() => {
+            AssetIndex.invalidate(root);
+            fs.rmSync(root, { recursive: true, force: true });
+        });
+        fs.mkdirSync(path.join(root, 'assets'));
+        const uuid = 'deadbeef-1111-4222-8333-444455556666';
+        const data = materialize({
+            blockCount: [1, 1], tileSize: 1, weightMapSize: 128, lightMapSize: 128,
+            layers: [{ slot: 0, tileSize: 1, detailMapId: `${uuid}@6c48a`, normalMapId: '', roughness: 1, metallic: 0 }],
+        });
+        fs.writeFileSync(path.join(root, 'assets', 'Big.terrain'), writeTerrain(data));
+
+        // The heights/weights copies are the only big typed arrays a full parse makes.
+        const real = [Uint8Array, Uint16Array, Int16Array, Float32Array];
+        let biggest = 0;
+        for (const T of real) {
+            globalThis[T.name] = new Proxy(T, {
+                construct: (target, args) => {
+                    if (typeof args[0] === 'number') biggest = Math.max(biggest, args[0]);
+                    return Reflect.construct(target, args);
+                }
+            });
+        }
+        let text;
+        try {
+            text = (await tool.execute({ asset: uuid }, root)).content[0].text;
+        } finally {
+            for (const T of real) globalThis[T.name] = T;
+        }
+
+        // attribution is unchanged by reading the layout only
+        assert.match(text, /## assets\/Big\.terrain \(1\)/);
+        assert.match(text, /- terrain layer 0 \.detailMap \[sub-asset @6c48a\]/);
+        assert.ok(biggest < 1024, `allocated a ${biggest}-element array — the ` +
+            `${data.weights.length}-byte payload is being decoded`);
     });
 
     test('folder filter narrows the scan', async (t) => {

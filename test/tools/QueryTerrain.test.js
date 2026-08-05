@@ -32,7 +32,8 @@ import {
     setWeightAtTexel,
     heightAt,
     readTerrain,
-    readTerrainInfo
+    readTerrainInfo,
+    vertexCounts
 } from '../../src/utils/terrainBin.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -906,6 +907,51 @@ describe('QueryTerrain — review regressions', () => {
         }
     });
 
+    // Both sections come off terrainBin's single `weightUsage` sweep (the slot row IS the
+    // block rows summed); this pins the numbers that sweep must keep printing.
+    it('prints a per-slot coverage that is exactly its block rows summed', async () => {
+        const dir = fs.mkdtempSync(join(os.tmpdir(), 'qt-usage-'));
+        try {
+            const data = materialize({
+                blockCount: [2, 1], tileSize: 1, weightMapSize: 4, lightMapSize: 4, layers: []
+            });
+            setBlockLayers(data, 0, 0, [0, -1, -1, -1]);
+            setBlockLayers(data, 1, 0, [0, 1, -1, -1]);
+            data.layers = [0, 1].map((slot) => ({
+                slot, tileSize: 1, detailMapId: `${slot}@6c48a`, normalMapId: '',
+                roughness: 1, metallic: 0
+            }));
+            for (let j = 0; j < 4; j++) {
+                for (let i = 0; i < 4; i++) {
+                    setWeightAtTexel(data, i, j, [1, 0, 0, 0]);                 // block 0: full
+                    setWeightAtTexel(data, 4 + i, j, [j < 2 ? 128 / 255 : 0, 1, 0, 0]);
+                }
+            }
+            fs.writeFileSync(join(dir, 'two.terrain'), writeTerrain(data));
+
+            const model = await json({ terrainPath: 'two.terrain', blocks: true }, dir);
+            const rows = model.blocks.flatMap((b) => b.channels.filter((c) => c.slot === 0));
+            assert.strictEqual(rows.length, 2);
+            assert.deepStrictEqual(rows.map((c) => c.coverage), [1, 0.5]);
+            // slot row = block rows summed, denominator counted per (block, channel)
+            assert.strictEqual(model.layers[0].blocks, 2);
+            assert.strictEqual(model.layers[0].coverage,
+                rows.reduce((s, c) => s + c.coverage, 0) / rows.length);
+            assert.strictEqual(model.layers[0].meanWeight,
+                rows.reduce((s, c) => s + c.meanWeight, 0) / rows.length);
+            assert.strictEqual(model.layers[0].coverage, 0.75);
+            assert.strictEqual(model.layers[1].blocks, 1);
+            assert.strictEqual(model.layers[1].coverage, 1);
+
+            const text = await ok({ terrainPath: 'two.terrain', blocks: true }, dir);
+            assert.match(text, /^0 +0@6c48a +1 +- +1 +0 +2 +75\.0% +0\.625$/m);
+            assert.match(text, /^\[0,0\] +0,0 +0 \/ 100\.0% +- +- +-$/m);
+            assert.match(text, /^\[1,0\] +32,0 +0 \/ 50\.0% +1 \/ 100\.0% +- +-$/m);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     // heightAt/weightAt return null for a mis-sized buffer as well as for an
     // out-of-range point; reporting "outside the terrain" for a point the same
     // record calls inside blamed the caller for a property of the FILE.
@@ -948,11 +994,46 @@ describe('QueryTerrain — review regressions', () => {
             assert.ok(model.warnings.some((w) => /weights count 64 != 256 expected/.test(w)),
                 model.warnings.join('\n'));
 
-            // a mis-sized layerBuffer keeps the block table empty, silently
+            // a mis-sized layerBuffer cannot produce the table — and says so (below)
             assert.strictEqual(model.blockCountTotal, 0);
             assert.strictEqual(model.blocks, null);
-            assert.strictEqual(model.blocksOmitted, null);
-            assert.doesNotMatch(await ok({ terrainPath: 'mis-sized.terrain' }, dir), /## Blocks/);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    // `blocks: true` used to be answered with silence inside the very section it asked for:
+    // usableBlockCount() is 0 for a mis-sized layerBuffer, which collapsed blockCountTotal to 0,
+    // which made blocksOmitted null, which rendered neither a table nor a reason.
+    it('says the block table is unavailable instead of rendering nothing', async () => {
+        const dir = fs.mkdtempSync(join(os.tmpdir(), 'qt-unusable-blocks-'));
+        try {
+            const bytes = Buffer.from(writeTerrain(materialize({
+                blockCount: [1, 1], tileSize: 1, weightMapSize: 4, lightMapSize: 4, layers: []
+            })));
+            bytes.writeInt32LE(2, 12);   // header claims 2x2 blocks over a 1x1 layerBuffer
+            bytes.writeInt32LE(2, 16);
+            fs.writeFileSync(join(dir, 'mis-sized.terrain'), bytes);
+
+            const model = await json({ terrainPath: 'mis-sized.terrain', blocks: true }, dir);
+            assert.strictEqual(model.blocks, null);
+            assert.strictEqual(model.blockCountTotal, 0);
+            assert.strictEqual(model.blockCountDeclared, 4);
+            assert.strictEqual(model.blocksOmitted, 'unusable');
+
+            const text = await ok({ terrainPath: 'mis-sized.terrain', blocks: true }, dir);
+            assert.match(text, /## Blocks \(4\)/);
+            assert.match(text, /Table unavailable: the stored layerBuffer does not match blockCount/);
+            assert.match(text, /see Warnings/);
+            assert.match(text, /edit_terrain batch rebuilds exactly these buffers/);
+            // the default call reports it too, but blocks: false is still not acknowledged
+            assert.match(await ok({ terrainPath: 'mis-sized.terrain' }, dir), /Table unavailable/);
+            const off = await ok({ terrainPath: 'mis-sized.terrain', blocks: false }, dir);
+            assert.doesNotMatch(off, /## Blocks/);
+            assert.strictEqual(
+                (await json({ terrainPath: 'mis-sized.terrain', blocks: false }, dir)).blocksOmitted,
+                'requested'
+            );
         } finally {
             fs.rmSync(dir, { recursive: true, force: true });
         }
@@ -1141,5 +1222,122 @@ describe('QueryTerrain — contourAt / slope / land map', () => {
         const text = await ok({ terrainPath: SENTINEL_REL, contourAt: 0, slope: true }, REPO_ROOT);
         assert.match(text, /no height data to trace a contour through yet/);
         assert.match(text, /no height data to measure a slope on yet/);
+    });
+});
+
+describe('QueryTerrain — contourAt / slope budgets', () => {
+    let dir;
+
+    /** a `blockCount`-block terrain at 1 m tiles whose heights come from `fn(x, z)` */
+    function put(name, blockCount, fn) {
+        const data = materialize({
+            blockCount, tileSize: 1, weightMapSize: 4, lightMapSize: 4, layers: []
+        });
+        const [vx, vz] = vertexCounts(blockCount);
+        for (let j = 0; j < vz; j++) {
+            for (let i = 0; i < vx; i++) setVertexHeight(data, i, j, fn(i, j), true);
+        }
+        fs.writeFileSync(join(dir, `${name}.terrain`), writeTerrain(data));
+        return `${name}.terrain`;
+    }
+
+    before(() => {
+        dir = fs.mkdtempSync(join(os.tmpdir(), 'qt-budget-'));
+    });
+
+    after(() => {
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    // The default resolution used to fall through to terrainContour's own 1e6-cell cap, 15x
+    // looser than the budget the SAME grid is held to when the caller names it: an 8x8-block
+    // terrain sampled 257x257 per threshold while the explicit 257 was rejected.
+    it('holds the default resolution to the same budget as an explicit sampleCount', async () => {
+        const rel = put('Big', [8, 8], (i) => i / 10);   // 257x257 vertices
+
+        const c = (await json({ terrainPath: rel, contourAt: 0.5 }, dir)).contours[0];
+        assert.deepStrictEqual(c.samples, [129, 129], 'the vertex grid, halved to fit the budget');
+        assert.strictEqual(c.sampleStride, 2);
+        assert.deepStrictEqual(c.vertexSamples, [257, 257]);
+        // the number it stands for is refused, so the default must not buy it
+        assert.match(
+            await fails({ terrainPath: rel, contourAt: { threshold: 0.5, sampleCount: 257 } }, dir),
+            /257x257 = 66049 samples exceeds 65536/
+        );
+        assert.match(
+            await fails({ terrainPath: rel, contourAt: { threshold: 0.5, sampleCount: 'vertex' } }, dir),
+            /exceeds 65536/
+        );
+
+        const s = (await json({ terrainPath: rel, slope: true }, dir)).slope;
+        assert.deepStrictEqual(s.samples, [129, 129]);
+        assert.strictEqual(s.sampleStride, 2);
+
+        // and the reduction is stated where it is read, for both
+        const text = await ok({ terrainPath: rel, contourAt: 0.5, slope: true, sections: ['samples'] }, dir);
+        assert.strictEqual(text.split('DOWNSAMPLED 1:2').length - 1, 2);
+        assert.match(text, /from the region's 257 x 257 vertex grid to stay inside the 65536-sample budget/);
+        assert.match(text, /a feature narrower than the spacing above is not in these numbers/);
+        assert.ok(text.length < 20000, `report is ${text.length} chars`);
+
+        // a region around the edit still measures at vertex resolution, with no note
+        const zoom = await json({
+            terrainPath: rel, contourAt: { threshold: 0.5, region: { x: 0, z: 0, width: 32, depth: 32 } }
+        }, dir);
+        assert.deepStrictEqual(zoom.contours[0].samples, [33, 33]);
+        assert.strictEqual(zoom.contours[0].sampleStride, 1);
+        assert.doesNotMatch(
+            await ok({
+                terrainPath: rel, sections: ['samples'],
+                contourAt: { threshold: 0.5, region: { x: 0, z: 0, width: 32, depth: 32 } }
+            }, dir),
+            /DOWNSAMPLED/
+        );
+    });
+
+    // MAX_CONTOUR_LINES strides the LINES; the crossings printed per line were unbounded, which
+    // is what a dune-like field has dozens of.
+    it('caps the crossings printed per line and counts what it dropped', async () => {
+        const rel = put('Corrugated', [1, 1], (i) => (i % 2 ? 1 : -1)); // 32 crossings per line
+
+        const c = (await json({ terrainPath: rel, contourAt: 0 }, dir)).contours[0];
+        assert.strictEqual(c.stats.crossings, 33 * 32, 'the statistics count every crossing');
+        assert.strictEqual(c.crossingsElided, 33 * 24);
+        assert.strictEqual(c.lines[0].crossings.length, 8);
+        assert.strictEqual(c.lines[0].elided, 24);
+
+        const text = await ok({ terrainPath: rel, contourAt: 0, sections: ['samples'] }, dir);
+        assert.match(text, /0\.5, 1\.5, 2\.5, 3\.5, 4\.5, 5\.5, 6\.5, 7\.5 … \+24 more/);
+        assert.match(text, /792 crossing\(s\) past the first 8 of a line are not shown/);
+        assert.match(text, /the totals above count every one of them/);
+        assert.ok(text.length < 10000, `report is ${text.length} chars`);
+    });
+
+    // tileSize 0 made every default resolution NaN, and the failure surfaced from exportHeights
+    // as "sampleCount cols must be an integer in 1..8192, got NaN" — an argument nobody passed.
+    it('blames the file, not the caller, for a non-positive stored tileSize', async () => {
+        const bytes = Buffer.from(writeTerrain(materialize({
+            blockCount: [1, 1], tileSize: 1, weightMapSize: 4, lightMapSize: 4, layers: []
+        })));
+        bytes.writeDoubleLE(0, 4);   // tileSize is the f64 right after the version
+        fs.writeFileSync(join(dir, 'zero-tile.terrain'), bytes);
+        const rel = 'zero-tile.terrain';
+        const region = { x: 0, z: 0, width: 10, depth: 10 };
+
+        for (const [args, what] of [
+            [{ exportHeights: { region } }, 'exportHeights'],
+            [{ exportHeights: { region, sampleCount: 'vertex' } }, 'exportHeights'],
+            [{ contourAt: 0 }, 'contourAt'],
+            [{ slope: { region } }, 'slope']
+        ]) {
+            const err = await fails({ terrainPath: rel, ...args }, dir);
+            assert.match(err, new RegExp(`^Error: ${what}: this terrain stores tileSize 0 m`));
+            assert.match(err, /edit_terrain set_info \{tileSize\}/);
+            assert.doesNotMatch(err, /got NaN/);
+        }
+
+        // an explicit resolution still reads what there is
+        const model = await json({ terrainPath: rel, exportHeights: { region, sampleCount: 3 } }, dir);
+        assert.deepStrictEqual(model.heightGrid.samples, [3, 3]);
     });
 });

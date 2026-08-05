@@ -18,6 +18,17 @@ function uuidSuffix(entry, form) {
     return '';
 }
 
+function folderOf(assetPath) {
+    const cut = assetPath.lastIndexOf('/');
+    return cut < 0 ? '.' : assetPath.slice(0, cut);
+}
+
+// (folder, name), never the full path: "Mesh/sub/a.png" sorts between "Mesh/a.png"
+// and "Mesh/z.png" as a string, which splits the folder into two headers
+function byFolderThenName(a, b) {
+    return folderOf(a.path).localeCompare(folderOf(b.path)) || a.name.localeCompare(b.name);
+}
+
 export class ListAssets extends BaseTool {
     get name() {
         return 'list_assets';
@@ -82,11 +93,15 @@ export class ListAssets extends BaseTool {
                 );
             }
 
+            // AssetIndex scans depth-first and never sorts; ordering here (before the
+            // MAX_RESULTS slice, so truncation is deterministic too) keeps a folder's
+            // rows under ONE grouped header and every shape reproducible (slice: the
+            // filtered list may still be the index's own array)
             const matches = index.list({
                 type: args?.type,
                 folder: args?.folder,
                 pattern: args?.pattern
-            });
+            }).slice().sort(byFolderThenName);
 
             if (matches.length === 0) {
                 return this.success(this.#explainEmpty(index, args));
@@ -136,14 +151,13 @@ export class ListAssets extends BaseTool {
         const lines = [`# Assets (${matches.length})${uniform ? ` — all [${uniform}]` : ''}`];
         let dir = null;
         for (const e of shown) {
-            const cut = e.path.lastIndexOf('/');
-            const folder = cut < 0 ? '.' : e.path.slice(0, cut);
+            const folder = folderOf(e.path);
             if (folder !== dir) {
                 lines.push('', `${folder}/`);
                 dir = folder;
             }
             const tag = uniform ? '' : ` [${e.importer}]`;
-            lines.push(`  ${e.path.slice(cut + 1)}${tag}${uuidSuffix(e, uuidForm)}`);
+            lines.push(`  ${e.name}${tag}${uuidSuffix(e, uuidForm)}`);
         }
         this.#appendTail(lines, matches, shown, uuidForm);
         return lines.join('\n');
@@ -170,16 +184,17 @@ export class ListAssets extends BaseTool {
             byType.set(e.importer, (byType.get(e.importer) ?? 0) + 1);
             // bucket by DIRECTORY, never by path segments — a root-level asset would
             // otherwise contribute its own file name as a folder
-            const cut = e.path.lastIndexOf('/');
-            const dir = cut < 0 ? '.' : e.path.slice(0, cut);
-            const bucket = dir.split('/').slice(0, 3).join('/');
+            const bucket = folderOf(e.path).split('/').slice(0, 3).join('/');
             byFolder.set(bucket, (byFolder.get(bucket) ?? 0) + 1);
         }
-        const rank = (m, limit) => [...m]
-            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-            .slice(0, limit)
-            .map(([k, n]) => `${k} ${n}`)
-            .join(', ');
+        // an inventory that reads as complete must not drop buckets silently — the
+        // count of the omitted ones, never a second enumeration
+        const rank = (m, limit) => {
+            const ranked = [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+            const row = ranked.slice(0, limit).map(([k, n]) => `${k} ${n}`).join(', ');
+            const dropped = ranked.length - limit;
+            return dropped > 0 ? `${row}, ... ${dropped} more` : row;
+        };
 
         const filters = ['type', 'folder', 'pattern']
             .filter(k => args?.[k])

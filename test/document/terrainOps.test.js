@@ -764,6 +764,38 @@ describe('terrainOps — heights', () => {
         assert.match(results[0].notes.join('\n'), /resampled onto the 33x33 vertex grid/);
     });
 
+    it('crops an overhanging source instead of squeezing it into the terrain', () => {
+        // The region asks for x 16..48 m on a 32 m terrain, so half of it hangs off the edge.
+        // The source must keep its scale over the half that lands — it used to be resampled onto
+        // the CLIPPED span, which compressed the whole 0..10 m ramp into x 16..32.
+        const rows = Array.from({ length: 5 }, () => [0, 2.5, 5, 7.5, 10]);
+        const region = { x: 16, z: 0, width: 32, depth: 32 };
+        const clipped = terrain();
+        const { results } = apply(clipped, { op: 'set_heights', region, rows });
+        // Same op on a terrain wide enough to hold the whole region: the overlap must match
+        const roomy = terrain({ blockCount: [2, 1] });
+        apply(roomy, { op: 'set_heights', region, rows });
+        for (let i = 16; i <= 32; i++) {
+            assert.strictEqual(heightAtVertex(clipped, i, 0), heightAtVertex(roomy, i, 0), `vertex ${i}`);
+        }
+        assert.ok(heightAtVertex(clipped, 32, 0) < 7,
+            `the far end of the ramp is off the terrain, got ${heightAtVertex(clipped, 32, 0)} m at the edge`);
+        const notes = results[0].notes.join('\n');
+        assert.match(notes, /resampled onto the 33x33 vertex grid/);
+        assert.match(notes, /overhangs the terrain: .*\(vertices 16\.\.48 x 0\.\.32\)/s);
+        assert.match(notes, /only the part on the grid \(vertices 16\.\.32 x 0\.\.32\) was written/);
+        assert.match(results[0].summary, /clipped from the 33x33 vertices it asks for/);
+    });
+
+    it('refuses a source resample far larger than the terrain itself', () => {
+        assert.throws(
+            () => apply(terrain(), {
+                op: 'set_heights', region: { x: 0, z: 0, width: 4000, depth: 4000 }, rows: [[0, 1], [2, 3]],
+            }),
+            /asks for a 4001x4001 vertex span, more than 4x the terrain's own 33x33 grid/
+        );
+    });
+
     it('rejects a rows/heightmap source on a one-vertex-wide region', () => {
         assert.throws(
             () => apply(terrain(), {
@@ -860,6 +892,46 @@ describe('terrainOps — shaped height edits (falloff / profile / clamp / band)'
         assert.strictEqual(heightAtVertex(data, 16, 16), 3, 'the centre moves');
         assert.strictEqual(heightAtVertex(data, 8, 8), 0, 'the box corner is outside the ellipse');
         assert.match(results[0].summary, /mask covers \d+ of 289 vertices/);
+    });
+
+    it('measures an ellipse falloff on the axis it runs along, not on the short radius', () => {
+        // A 60 x 10 m ellipse: 2 m of falloff must be 2 m on BOTH axes. It used to be measured
+        // along min(rx, rz), spreading the long-axis ramp over falloff * rx/rz = 12 m.
+        const data = terrain({ blockCount: [2, 2] });
+        const { results } = apply(data, {
+            op: 'adjust_heights', delta: 5, falloff: 2,
+            region: { x: 2, z: 27, width: 60, depth: 10, shape: 'ellipse' },
+        });
+        assert.strictEqual(heightAtVertex(data, 3, 32), 2.5, 'long axis: half way up the ramp 1 m in');
+        assert.strictEqual(heightAtVertex(data, 4, 32), 5, 'long axis: full delta exactly 2 m in');
+        assert.strictEqual(heightAtVertex(data, 60, 32), 5, 'and the same at the far end');
+        assert.strictEqual(heightAtVertex(data, 32, 28), 2.5, 'short axis: half way up 1 m in');
+        assert.strictEqual(heightAtVertex(data, 32, 29), 5, 'short axis: full delta exactly 2 m in');
+        assert.deepStrictEqual(results[0].notes, [], 'a ramp that fits leaves nothing to report');
+
+        // A circle is unchanged: the taper was already the plain radial distance
+        const circle = terrain();
+        apply(circle, {
+            op: 'adjust_heights', delta: 4, falloff: 4,
+            region: { x: 8, z: 8, width: 16, depth: 16, shape: 'ellipse' },
+        });
+        assert.strictEqual(heightAtVertex(circle, 10, 16), 2);
+        assert.strictEqual(heightAtVertex(circle, 12, 16), 4);
+    });
+
+    it('caps an ellipse taper at the inradius, so a too-wide falloff has one flat peak', () => {
+        // The taper cannot exceed min(rx, rz) anywhere inside an ellipse (that IS the largest
+        // inner distance), so the middle is a plateau at 5/8 — not a dimple around the centre
+        const data = terrain({ blockCount: [2, 2] });
+        const { results } = apply(data, {
+            op: 'adjust_heights', delta: 5, falloff: 8,
+            region: { x: 2, z: 27, width: 60, depth: 10, shape: 'ellipse' },
+        });
+        assert.match(results[0].notes.join('\n'), /falloff 8 m is wider than the region's half-extent/);
+        assert.match(results[0].notes.join('\n'), /the ramp peaks at 0\.625 of it/);
+        for (const i of [20, 31, 32, 33, 44]) {
+            assert.strictEqual(heightAtVertex(data, i, 32), 5 * 0.625, `vertex (${i},32)`);
+        }
     });
 
     it('clamps to raise-only / lower-only so an edit cannot fight the surface', () => {
@@ -1060,6 +1132,10 @@ describe('terrainOps — set_heights from heightmap files', () => {
         const samples = new Uint8Array(9);
         samples[4] = 255;
         fs.writeFileSync(path.join(root, 'spike.png'), grayPng(3, 3, samples));
+        // 5x5 8-bit grayscale PNG: a ramp along x, constant along z
+        const ramp = new Uint8Array(25);
+        for (let y = 0; y < 5; y++) ramp.set([0, 64, 128, 191, 255], y * 5);
+        fs.writeFileSync(path.join(root, 'ramp.png'), grayPng(5, 5, ramp));
     });
 
     after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -1088,6 +1164,23 @@ describe('terrainOps — set_heights from heightmap files', () => {
         assert.strictEqual(heightAtVertex(data, 1, 1), 4);
         assert.strictEqual(heightAtVertex(data, 0, 0), 0);
         assert.match(results[0].summary, /from heightmap "spike\.png"/);
+    });
+
+    it('crops an overhanging image the same way inline rows are cropped', () => {
+        // Half of x 16..48 m hangs off a 32 m terrain, so only the left half of the ramp lands —
+        // the image used to be squeezed into the surviving span and reached its full 10 m there
+        const region = { x: 16, z: 0, width: 32, depth: 32 };
+        const heightmap = { source: 'ramp.png', min: 0, max: 10 };
+        const data = terrain();
+        const { results } = applyTerrainOperations(data, [{ op: 'set_heights', region, heightmap }], ctx());
+        const roomy = terrain({ blockCount: [2, 1] });
+        applyTerrainOperations(roomy, [{ op: 'set_heights', region, heightmap }], ctx());
+        for (let i = 16; i <= 32; i++) {
+            assert.strictEqual(heightAtVertex(data, i, 4), heightAtVertex(roomy, i, 4), `vertex ${i}`);
+        }
+        assert.ok(heightAtVertex(data, 32, 4) < 7,
+            `the white end of the ramp is off the terrain, got ${heightAtVertex(data, 32, 4)} m at the edge`);
+        assert.match(results[0].notes.join('\n'), /overhangs the terrain/);
     });
 
     it('turns heightmap failures into op errors', () => {

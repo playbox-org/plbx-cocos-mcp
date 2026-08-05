@@ -25,6 +25,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const GOLDEN = (f) => path.join(__dirname, '..', 'fixtures', 'golden', f);
 const MOCK_PROJECT = path.join(__dirname, '..', 'fixtures', 'mock-project');
 const SCENE_REL = 'assets/Scenes/Spatial.scene';
+// Same scene with the one mounted-child instance of the golden corpus moved under the [UI] Canvas
+const UI_SCENE_REL = 'assets/Scenes/SpatialUI.scene';
+const MOUNT_STUB = '[WORLD]/Zones/GoldStackZone';
 
 const text = async (tool, args, root) => {
     const result = await tool.run(args, root);
@@ -76,6 +79,10 @@ describe('spatial scene queries', () => {
         ], ctx);
         fs.mkdirSync(path.join(project, 'assets/Scenes'), { recursive: true });
         doc.save(path.join(project, SCENE_REL));
+
+        const ui = SceneDocument.load(path.join(project, SCENE_REL));
+        applyOperations(ui, [{ op: 'reparent', node: MOUNT_STUB, newParent: '[UI]' }], ctx);
+        ui.save(path.join(project, UI_SCENE_REL));
     });
 
     after(() => {
@@ -155,6 +162,16 @@ describe('spatial scene queries', () => {
             assert.match(origin, /Found: 0/);
         });
 
+        it('excludes a mounted child of an instance under a cc.Canvas', async () => {
+            // `_parent: null` also ends the SCREEN-SPACE walk, so without the mount hop this node
+            // escapes the Canvas exclusion and its pixel position is compared against metres
+            const out = await text(tool, {
+                scenePath: UI_SCENE_REL, pattern: '^icon$', region: { center: [538, 7.7], radius: 30 }
+            }, project);
+            assert.match(out, /Found: 0/);
+            assert.match(out, /1 node\(s\) under a cc\.Canvas matched the other criteria/);
+        });
+
         it('rejects a malformed region and an empty filter set', async () => {
             assert.match(
                 await fails(tool, { scenePath: SCENE_REL }, project),
@@ -199,6 +216,16 @@ describe('spatial scene queries', () => {
             assert.match(out, /## Per child \(1\)/);
             assert.match(out, /● Visual: x 1\.9\d+\.\.2\.0\d+, z 2\.9\d+\.\.3\.0\d+/);
             assert.match(out, /collapsed prefab instance, so these are the SOURCE PREFAB's children/);
+        });
+
+        it('lists the MOUNTED children of a stub too, marked as such', async () => {
+            // Mounted nodes are in no `_children` list at all; the golden stub's source prefab is
+            // not in this project either, and they are knowable without it
+            const out = await text(tool, {
+                filePath: SCENE_REL, node: MOUNT_STUB, perChild: true
+            }, project);
+            assert.match(out, /## Per child \(1\)/);
+            assert.match(out, /● icon \(mounted\): x -2\.\.-2, z -85\.8\.\.101\.2/);
         });
     });
 

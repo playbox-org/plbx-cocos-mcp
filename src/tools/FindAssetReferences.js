@@ -18,7 +18,7 @@ import { AssetIndex } from '../core/AssetIndex.js';
 import { resolveBuiltin } from '../core/builtins.js';
 import { SceneDocument, isRef } from '../document/SceneDocument.js';
 import { splitSubAssetRef, isFullUuid, isCompressedUuid, decompressUuid, compressUuid } from '../utils/uuid.js';
-import { readTerrain } from '../utils/terrainBin.js';
+import { readTerrainLayout } from '../utils/terrainBin.js';
 
 /** Files that may hold __uuid__ references */
 const DEEP_EXTENSIONS = ['.scene', '.prefab'];
@@ -207,9 +207,10 @@ function matchesTarget(uuid, target) {
 function terrainHits(file, target) {
     let data;
     try {
-        data = readTerrain(fs.readFileSync(file));
+        // layout only: the palette sits behind the payload, but nothing here decodes it
+        data = readTerrainLayout(file);
     } catch {
-        return []; // corrupt/truncated binary — query_terrain reports the details
+        return []; // unreadable/corrupt binary — query_terrain reports the details
     }
     if (!data) return []; // not a terrain (unrecognized version magic)
 

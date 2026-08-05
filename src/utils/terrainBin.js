@@ -309,6 +309,21 @@ export function isTileSizeStable(tileSize) {
 }
 
 /**
+ * Element offset of vertex `(i, j)` in `data.heights`: `j * (blockCount[0] * 32 + 1) + i`,
+ * row-major with X fastest (terrain.ts:1845-1859).
+ *
+ * Exists so that code walking the grid in RAW units — masked height writes, the smooth kernel —
+ * does not re-derive the layout. No bounds check, exactly like the engine.
+ * @param {object} data
+ * @param {number} i - Vertex X index
+ * @param {number} j - Vertex Z index
+ * @returns {number} element offset
+ */
+export function vertexIndex(data, i, j) {
+    return j * (data.blockCount[0] * TERRAIN_BLOCK_TILE_COMPLEXITY + 1) + i;
+}
+
+/**
  * Height of vertex `(i, j)` in metres — `Terrain.getHeight` (terrain.ts:1857-1859).
  * Row-major, X fastest. No bounds check, exactly like the engine.
  * @param {object} data
@@ -317,8 +332,7 @@ export function isTileSizeStable(tileSize) {
  * @returns {number} metres
  */
 export function getVertexHeight(data, i, j) {
-    const [vx] = vertexCounts(data.blockCount);
-    return rawToHeight(data.heights[j * vx + i]);
+    return rawToHeight(data.heights[vertexIndex(data, i, j)]);
 }
 
 /**
@@ -331,8 +345,7 @@ export function getVertexHeight(data, i, j) {
  * @param {boolean} [round=false]
  */
 export function setVertexHeight(data, i, j, metres, round = false) {
-    const [vx] = vertexCounts(data.blockCount);
-    data.heights[j * vx + i] = heightToRaw(metres, round);
+    data.heights[vertexIndex(data, i, j)] = heightToRaw(metres, round);
 }
 
 /**
@@ -1671,34 +1684,67 @@ export function heightStats(data) {
 }
 
 /**
- * Per-palette-slot weight coverage, aggregated over every block that assigns the slot to
- * one of its four channels. `slot` is a PALETTE index (see the module header), not an index
- * into `data.layers`.
+ * Weight coverage in both shapes an agent asks for, off ONE sweep of the weight buffer:
+ * `blocks` — per block, per channel, row-major — and `layerUsage`, the same numbers summed
+ * per PALETTE slot (see the module header; not an index into `data.layers`). A slot's
+ * denominator is `weightMapSize^2` per (block, channel) it occupies, so the two agree by
+ * construction; sweeping twice for them cost ~80 ms on an 8x8-block / 512 terrain.
  *
- * Returns `[]` when `layerBuffer` does not match the declared geometry — the same guard the
- * per-block table in {@link readTerrainInfo} uses. Without it the `bc0 * bc1` loop would run
- * on a file-declared block count that nothing bounds: a 2 KB file claiming
- * `blockCount [10000,10000]` costs 0.6 s, and the i32 field allows 4.6e18 iterations.
+ * Both are `[]` when `layerBuffer` does not match the declared geometry. Without that guard
+ * the `bc0 * bc1` loop would run on a file-declared block count that nothing bounds: a 2 KB
+ * file claiming `blockCount [10000,10000]` costs 0.6 s, and the i32 field allows 4.6e18
+ * iterations.
  *
  * @param {object} data - Terrain data object
- * @returns {Array<{slot: number, blocks: number[], channels: number[], texels: number,
- *   nonZeroTexels: number, coverage: number, meanWeight: number}>}
+ * @returns {{blocks: Array<{block: number[], index: number, origin: number[], slots: number[],
+ *   channels: Array<{channel: number, slot: number, coverage: number|null,
+ *   meanWeight: number|null}>, ignoresWeights: boolean}>,
+ *   layerUsage: Array<{slot: number, blocks: number[], channels: number[], texels: number,
+ *   nonZeroTexels: number, coverage: number, meanWeight: number}>}}
  */
-function computeLayerUsage(data) {
+export function weightUsage(data) {
     const [bc0, bc1] = data.blockCount;
     const wms = data.weightMapSize;
-    const [uWC, vWC] = weightMapDims(data);
+    const [uWC] = weightMapDims(data);
     const expected = expectedCounts(data.blockCount, wms);
-    if ((data.layerBuffer?.length ?? 0) !== expected.layerBuffer) return [];
-    const haveWeights = data.weights && data.weights.length === uWC * vWC * 4;
+    if ((data.layerBuffer?.length ?? 0) !== expected.layerBuffer) return { blocks: [], layerUsage: [] };
+    const haveWeights = Boolean(data.weights) && data.weights.length === expected.weights;
+    const perChannel = wms * wms;
+    const blockSize = TERRAIN_BLOCK_TILE_COMPLEXITY * data.tileSize;
     const usage = new Map();
+    const blocks = [];
 
     for (let by = 0; by < bc1; by++) {
         for (let bx = 0; bx < bc0; bx++) {
             const b = blockIndex(bx, by, data.blockCount);
+            const slots = blockLayers(data, bx, by);
+            const channels = [];
             for (let k = 0; k < TERRAIN_MAX_BLEND_LAYERS; k++) {
-                const slot = data.layerBuffer[b * 4 + k];
-                if (slot === undefined || slot < 0) continue;
+                const slot = slots[k];
+                if (!(slot >= 0)) {
+                    channels.push({ channel: k, slot: -1, coverage: null, meanWeight: null });
+                    continue;
+                }
+                let nonZero = 0;
+                let sum = 0;
+                if (haveWeights) {
+                    for (let j = 0; j < wms; j++) {
+                        const row = (by * wms + j) * uWC + bx * wms;
+                        for (let i = 0; i < wms; i++) {
+                            const w = data.weights[(row + i) * 4 + k];
+                            if (w !== 0) {
+                                nonZero++;
+                                sum += w;
+                            }
+                        }
+                    }
+                }
+                channels.push({
+                    channel: k,
+                    slot,
+                    coverage: haveWeights ? nonZero / perChannel : null,
+                    meanWeight: haveWeights ? sum / (255 * perChannel) : null,
+                });
                 let u = usage.get(slot);
                 if (!u) {
                     u = {
@@ -1716,28 +1762,28 @@ function computeLayerUsage(data) {
                 if (!u.blocks.includes(b)) u.blocks.push(b);
                 if (!u.channels.includes(k)) u.channels.push(k);
                 if (!haveWeights) continue;
-                for (let j = 0; j < wms; j++) {
-                    const row = (by * wms + j) * uWC;
-                    for (let i = 0; i < wms; i++) {
-                        const w = data.weights[(row + bx * wms + i) * 4 + k];
-                        u.texels++;
-                        if (w !== 0) {
-                            u.nonZeroTexels++;
-                            u._sum += w;
-                        }
-                    }
-                }
+                u.texels += perChannel;
+                u.nonZeroTexels += nonZero;
+                u._sum += sum;
             }
+            blocks.push({
+                block: [bx, by],
+                index: b,
+                origin: [bx * blockSize, by * blockSize],
+                slots,
+                channels,
+                ignoresWeights: maxLayerIndex(slots) === 0,
+            });
         }
     }
 
-    const out = [...usage.values()].sort((a, b) => a.slot - b.slot);
-    for (const u of out) {
+    const layerUsage = [...usage.values()].sort((a, b) => a.slot - b.slot);
+    for (const u of layerUsage) {
         u.coverage = u.texels ? u.nonZeroTexels / u.texels : 0;
         u.meanWeight = u.texels ? u._sum / (255 * u.texels) : 0;
         delete u._sum;
     }
-    return out;
+    return { blocks, layerUsage };
 }
 
 /**
@@ -1754,7 +1800,8 @@ function computeLayerUsage(data) {
  *   weightMapTexels,
  *   heightCount, weightCount, normalCount, payloadLength, padding,
  *   heightMin, heightMax, heightMean, heightMinRaw, heightMaxRaw, isFlat,
- *   layers, blockLayers, layerUsage, warnings}`, or null when the file is not a terrain
+ *   layers, blockLayers, layerUsage, blockUsage, warnings}`, or null when the file is not
+ *   a terrain
  * @throws {Error} on unreadable files (fs errors) or structural corruption
  */
 export function readTerrainInfo(filePath) {
@@ -1777,7 +1824,9 @@ export function readTerrainInfo(filePath) {
  * built from edited data reports the file the write WOULD create.
  *
  * @param {object} data - Terrain data object (e.g. from {@link readTerrain})
- * @param {{filePath?: string|null, fileSize?: number|null, payloadLength?: number|null}} [opts]
+ * @param {{filePath?: string|null, fileSize?: number|null, payloadLength?: number|null,
+ *   blockUsage?: boolean}} [opts] - `blockUsage` keeps {@link weightUsage}'s per-block rows
+ *   on the card instead of only their per-slot sum
  * @returns {object} same shape as {@link readTerrainInfo}
  */
 export function terrainInfoFromData(data, opts = {}) {
@@ -1890,7 +1939,8 @@ export function terrainInfoFromData(data, opts = {}) {
         }
     });
 
-    const layerUsage = data.isDefaultSentinel ? [] : computeLayerUsage(data);
+    const usage = data.isDefaultSentinel ? { blocks: [], layerUsage: [] } : weightUsage(data);
+    const layerUsage = usage.layerUsage;
     for (const u of layerUsage) {
         if (u.texels === 0 || u.nonZeroTexels !== 0) continue;
         // Zero weight everywhere is only harmless where the engine IGNORES the weight map, and
@@ -1939,6 +1989,9 @@ export function terrainInfoFromData(data, opts = {}) {
         layers: data.layers.map((l) => ({ ...l })),
         blockLayers: blocks,
         layerUsage,
+        // Opt-in: the rows exist either way (layerUsage is their sum), but a caller that
+        // does not print a block table should not retain bc0*bc1 of them in a cached card.
+        blockUsage: opts.blockUsage ? usage.blocks : null,
         warnings,
     };
 }

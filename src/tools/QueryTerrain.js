@@ -15,8 +15,8 @@
  * (local X in [0, width], Z in [0, depth]) and the terrain shader applies the
  * node's worldPosition only — node rotation and scale are ignored.
  *
- * Format knowledge lives entirely in `src/utils/terrainBin.js`; this file only
- * samples, aggregates per block and renders.
+ * Format knowledge lives entirely in `src/utils/terrainBin.js` — including the
+ * per-block weight aggregation; this file only samples, budgets and renders.
  */
 
 import * as fs from 'fs';
@@ -30,13 +30,8 @@ import {
     weightAt,
     exportHeights,
     heightToRaw,
-    blockLayers,
-    blockIndex,
-    maxLayerIndex,
-    weightMapDims,
     expectedCounts,
     terrainSize,
-    TERRAIN_MAX_BLEND_LAYERS,
     TERRAIN_BLOCK_TILE_COMPLEXITY,
     TERRAIN_HEIGHT_FACTOR
 } from '../utils/terrainBin.js';
@@ -79,9 +74,14 @@ const GRID_MAX_CELLS = 65536;
  */
 const MAX_SAMPLE_POINTS = 256;
 
-/** Contour budget: the crossing LIST is strided down for the report, the statistics never are */
+/**
+ * Contour budget. The statistics cover every sampled line; only the PRINTED table is bounded —
+ * lines are strided down, and a line's crossing list is cut off (a dune field crosses a scan line
+ * dozens of times, which is what turned one `contourAt` into a 148 KB response).
+ */
 const MAX_CONTOUR_THRESHOLDS = 8;
 const MAX_CONTOUR_LINES = 128;
+const MAX_CONTOUR_CROSSINGS_PER_LINE = 8;
 
 /** Report sections `sections` can select; the header and warnings are always rendered. */
 const SECTIONS = ['geometry', 'layers', 'blocks', 'samples', 'notes'];
@@ -178,7 +178,9 @@ export class QueryTerrain extends BaseTool {
                                  '{threshold: n|[n], region?, axis?: "x"|"z", sampleCount?}. Per scan line ' +
                                  '(constant z for axis "x", the default) the crossing is linearly interpolated ' +
                                  'between the straddling vertex pair, at the region\'s VERTEX resolution unless ' +
-                                 'sampleCount says otherwise. Reported with the checks a blend edit needs: how ' +
+                                 'sampleCount says otherwise — downsampled by a power-of-two stride when that ' +
+                                 `would exceed ${GRID_MAX_CELLS} samples, which the report states (pass a region ` +
+                                 'around the edit to keep full resolution). Reported with the checks a blend edit needs: how ' +
                                  'many lines have exactly one crossing, how many have none and how many ' +
                                  'several, whether the crossing list is monotone, and the largest jump ' +
                                  'between adjacent lines (a jump is a step in the geometry). A sample sitting ' +
@@ -188,7 +190,8 @@ export class QueryTerrain extends BaseTool {
                 },
                 slope: {
                     description: 'Gradient magnitude in degrees over the region: true for the whole terrain, ' +
-                                 'or {region?, sampleCount?}. Reports max (with its location), mean, the ' +
+                                 'or {region?, sampleCount?} (same vertex-resolution default and ' +
+                                 `${GRID_MAX_CELLS}-sample budget as contourAt). Reports max (with its location), mean, the ` +
                                  'distribution over DISJOINT bands (0-15°, 15-30°, 30-45°, >45°) plus a ' +
                                  'separate cumulative row for the "how much of this is walkable" reading, ' +
                                  'and maxStep — the largest height difference between adjacent samples, ' +
@@ -268,7 +271,8 @@ export class QueryTerrain extends BaseTool {
             const info = terrainInfoFromData(data, {
                 filePath,
                 fileSize: buf.length,
-                payloadLength: data.payloadLength
+                payloadLength: data.payloadLength,
+                blockUsage: true
             });
 
             const sections = parseSections(args.sections);
@@ -352,13 +356,16 @@ function buildModel({ title, uuid, data, info, assetIndex, args }) {
         );
     }
 
-    // The sweep behind the table costs weightMapSize^2 * 4 reads PER BLOCK, and the
-    // budget decision below only needs the row COUNT — so decide first, sweep second.
+    // The rows come off the card's single weight sweep (terrainBin's `weightUsage`, the
+    // same one `layerUsage` is summed from); the budget below only decides what to print.
     const blockCountTotal = sentinel ? 0 : usableBlockCount(data);
+    // What the header CLAIMS: a mis-sized layerBuffer makes the count above 0 while the
+    // blocks themselves exist, which is a different answer from "no blocks".
+    const blockCountDeclared = sentinel ? 0 : data.blockCount[0] * data.blockCount[1];
     const showBlocks = args.blocks === undefined
         ? blockCountTotal > 0 && blockCountTotal <= BLOCK_TABLE_AUTO_LIMIT
         : Boolean(args.blocks) && blockCountTotal > 0;
-    const blockUsage = showBlocks ? computeBlockUsage(data) : [];
+    const blockUsage = showBlocks ? (info.blockUsage ?? []) : [];
 
     return {
         path: title,
@@ -397,12 +404,16 @@ function buildModel({ title, uuid, data, info, assetIndex, args }) {
         },
         layers,
         blocks: showBlocks ? blockUsage.slice(0, BLOCK_TABLE_MAX_ROWS) : null,
-        // `budget` is worth a line ("the table exists, it just costs too much");
-        // `requested` is the caller's own argument and must stay silent.
-        blocksOmitted: showBlocks || blockCountTotal === 0
+        // `budget` and `unusable` are each worth a line ("the table exists, it just costs too
+        // much" / "the file cannot produce one"); `requested` is the caller's own argument and
+        // must stay silent — including over an unusable file, which the Warnings already name.
+        blocksOmitted: showBlocks || blockCountDeclared === 0
             ? null
-            : (args.blocks === false ? 'requested' : 'budget'),
+            : args.blocks === false
+                ? 'requested'
+                : (blockCountTotal === 0 ? 'unusable' : 'budget'),
         blockCountTotal,
+        blockCountDeclared,
         blocksTruncated: showBlocks && blockCountTotal > BLOCK_TABLE_MAX_ROWS
             ? blockCountTotal - BLOCK_TABLE_MAX_ROWS
             : 0,
@@ -435,30 +446,45 @@ function buildContours(data, spec, sentinel) {
             stats: null
         }));
     }
-    // Not in the parser: "vertex" needs the terrain's tileSize
-    const sampleCount = parseSampleCount(spec.sampleCountRaw, 'contourAt', data, spec.region);
+    // Not in the parser: the default and "vertex" both need the terrain's tileSize
+    const grid = resolveGridSampleCount(spec.sampleCountRaw, 'contourAt', data, spec.region);
     return spec.thresholds.map((threshold) => {
         let result;
         try {
             result = contourCrossings(data, threshold, {
                 region: spec.region,
                 axis: spec.axis,
-                sampleCount
+                sampleCount: grid.sampleCount
             });
         } catch (err) {
             if (err instanceof ContourError) throw new ArgError(`contourAt: ${err.message}`);
             throw err;
         }
         const stride = Math.max(1, Math.ceil(result.lines.length / MAX_CONTOUR_LINES));
+        const shown = stride === 1 ? result.lines : result.lines.filter((_, i) => i % stride === 0);
+        let crossingsElided = 0;
+        const lines = shown.map((l) => {
+            const over = l.crossings.length - MAX_CONTOUR_CROSSINGS_PER_LINE;
+            if (over <= 0) return l;
+            crossingsElided += over;
+            return {
+                coord: l.coord,
+                crossings: l.crossings.slice(0, MAX_CONTOUR_CROSSINGS_PER_LINE),
+                elided: over
+            };
+        });
         return {
             threshold,
             axis: result.axis,
             region: result.region,
             samples: result.samples,
             spacing: result.spacing,
+            sampleStride: grid.stride,
+            vertexSamples: grid.vertex,
             stats: result.stats,
             stride,
-            lines: stride === 1 ? result.lines : result.lines.filter((_, i) => i % stride === 0),
+            lines,
+            crossingsElided,
             note: null
         };
     });
@@ -468,12 +494,12 @@ function buildSlope(data, spec, sentinel) {
     if (sentinel) {
         return { note: 'empty default terrain — no height data to measure a slope on yet' };
     }
+    const grid = resolveGridSampleCount(spec.sampleCountRaw, 'slope', data, spec.region);
     try {
         return {
-            ...slopeStats(data, {
-                region: spec.region,
-                sampleCount: parseSampleCount(spec.sampleCountRaw, 'slope', data, spec.region)
-            }),
+            ...slopeStats(data, { region: spec.region, sampleCount: grid.sampleCount }),
+            sampleStride: grid.stride,
+            vertexSamples: grid.vertex,
             note: null
         };
     } catch (err) {
@@ -483,73 +509,17 @@ function buildSlope(data, spec, sentinel) {
 }
 
 /**
- * How many rows {@link computeBlockUsage} would produce, without running its
- * per-texel sweep — the number the block-table budget decides on.
+ * How many block rows `weightUsage` produces — the number the block-table budget
+ * decides on, without touching the rows themselves.
  *
- * Bounded by the same guard `computeLayerUsage` uses (terrainBin.js): without a
- * `layerBuffer` matching the declared geometry the `bc0 * bc1` loop would run on
- * an unbounded file-declared block count.
+ * Bounded by the same guard terrainBin uses: without a `layerBuffer` matching the
+ * declared geometry the `bc0 * bc1` loop would run on an unbounded file-declared
+ * block count.
  */
 function usableBlockCount(data) {
     const expected = expectedCounts(data.blockCount, data.weightMapSize);
     if ((data.layerBuffer?.length ?? 0) !== expected.layerBuffer) return 0;
     return data.blockCount[0] * data.blockCount[1];
-}
-
-/**
- * Per-block, per-channel weight usage. `readTerrainInfo().layerUsage`
- * aggregates the same numbers PER PALETTE SLOT across all blocks; the terrain
- * ops work per block, so the table needs the split-out form.
- */
-function computeBlockUsage(data) {
-    const [bc0, bc1] = data.blockCount;
-    if (usableBlockCount(data) === 0) return [];
-    const wms = data.weightMapSize;
-    const [uWC] = weightMapDims(data);
-    const expected = expectedCounts(data.blockCount, wms);
-    const haveWeights = data.weights && data.weights.length === expected.weights;
-    const texels = wms * wms;
-    const blockSize = TERRAIN_BLOCK_TILE_COMPLEXITY * data.tileSize;
-
-    const out = [];
-    for (let by = 0; by < bc1; by++) {
-        for (let bx = 0; bx < bc0; bx++) {
-            const slots = blockLayers(data, bx, by);
-            const channels = [];
-            for (let k = 0; k < TERRAIN_MAX_BLEND_LAYERS; k++) {
-                if (slots[k] < 0) {
-                    channels.push({ channel: k, slot: -1, coverage: null, meanWeight: null });
-                    continue;
-                }
-                let nonZero = 0;
-                let sum = 0;
-                if (haveWeights) {
-                    for (let j = 0; j < wms; j++) {
-                        const row = (by * wms + j) * uWC + bx * wms;
-                        for (let i = 0; i < wms; i++) {
-                            const w = data.weights[(row + i) * 4 + k];
-                            if (w !== 0) { nonZero++; sum += w; }
-                        }
-                    }
-                }
-                channels.push({
-                    channel: k,
-                    slot: slots[k],
-                    coverage: haveWeights ? nonZero / texels : null,
-                    meanWeight: haveWeights ? sum / (255 * texels) : null
-                });
-            }
-            out.push({
-                block: [bx, by],
-                index: blockIndex(bx, by, data.blockCount),
-                origin: [bx * blockSize, by * blockSize],
-                slots,
-                channels,
-                ignoresWeights: maxLayerIndex(slots) === 0
-            });
-        }
-    }
-    return out;
 }
 
 function sampleHeights(data, points, sentinel) {
@@ -661,6 +631,7 @@ function buildHeightGrid(data, spec, sentinel) {
     let rowCount;
     let stride = 1;
     if (spec.sampleCount === null) {
+        requireTileSize(data, 'exportHeights');
         const fullX = Math.max(2, Math.round(region.width / data.tileSize) + 1);
         const fullZ = Math.max(2, Math.round(region.depth / data.tileSize) + 1);
         const need = Math.max(1, Math.ceil(Math.max(fullX - 1, fullZ - 1) / (GRID_DEFAULT_MAX_AXIS - 1)));
@@ -812,12 +783,28 @@ function parseRegionArg(raw, what) {
     return region;
 }
 
+/**
+ * Every DEFAULT resolution here is the region's vertex grid, i.e. a division by the tile size;
+ * a stored 0 makes that grid NaN-sized and the failure surfaces as an argument the caller never
+ * passed. Blame the file instead.
+ */
+function requireTileSize(data, what) {
+    if (data.tileSize > 0) return;
+    throw new ArgError(
+        `${what}: this terrain stores tileSize ${data.tileSize} m, so its vertex grid — the ` +
+        'default sampling resolution — has no size. The FILE is broken (edit_terrain ' +
+        'set_info {tileSize} rewrites the header); pass an explicit sampleCount [cols, rows] ' +
+        'to sample it meanwhile.'
+    );
+}
+
 /** A `sampleCount`: `n`, `[cols, rows]`, or `"vertex"` (= `width / tileSize + 1` per axis) */
 function parseSampleCount(raw, what, data, region) {
     if (raw === undefined || raw === null) return null;
     // "vertex" is a resolved pair like any other, and goes through the same budget: it is the
     // resolution a contour derivation needs, not a licence to print the whole vertex grid
     const derived = raw === 'vertex';
+    if (derived) requireTileSize(data, what);
     const pair = derived ? vertexSampleCount(data, region) : (Array.isArray(raw) ? raw : [raw, raw]);
     if (pair.length !== 2) {
         throw new ArgError(`${what}.sampleCount must be a number, a [cols, rows] pair, or "vertex"`);
@@ -841,6 +828,32 @@ function parseSampleCount(raw, what, data, region) {
         );
     }
     return [pair[0], pair[1]];
+}
+
+/**
+ * The grid contourAt/slope sample on. Their default is the region's VERTEX resolution — a coarser
+ * one blurs the very edge being measured — but held to the SAME budget an explicit sampleCount
+ * gets, downsampled by a power-of-two stride (an exact multiple of the tile size): omitting the
+ * argument must not buy what the number it stands for is refused.
+ * @returns {{sampleCount: number[], stride: number, vertex: number[]|null}}
+ */
+function resolveGridSampleCount(raw, what, data, region) {
+    if (raw !== undefined && raw !== null) {
+        return { sampleCount: parseSampleCount(raw, what, data, region), stride: 1, vertex: null };
+    }
+    requireTileSize(data, what);
+    const vertex = vertexSampleCount(data, region);
+    let stride = 1;
+    let pair = vertex;
+    while (pair[0] > GRID_MAX_AXIS || pair[1] > GRID_MAX_AXIS
+           || pair[0] * pair[1] > GRID_MAX_CELLS) {
+        stride *= 2;
+        pair = [
+            Math.max(2, Math.floor((vertex[0] - 1) / stride) + 1),
+            Math.max(2, Math.floor((vertex[1] - 1) / stride) + 1)
+        ];
+    }
+    return { sampleCount: pair, stride, vertex };
 }
 
 function parseExportHeights(raw, data) {
@@ -974,6 +987,17 @@ function pct(v) {
     return v === null || v === undefined ? 'n/a' : `${(v * 100).toFixed(1)}%`;
 }
 
+/**
+ * The one thing a contour/slope reader must not miss silently: it was measured on a COARSER grid
+ * than the vertex one, so anything narrower than the spacing is invisible in these numbers.
+ */
+function downsampleNote(stride, vertex) {
+    return `DOWNSAMPLED 1:${stride} from the region's ${vertex[0]} x ${vertex[1]} vertex grid to ` +
+           `stay inside the ${GRID_MAX_CELLS}-sample budget — measured on THAT grid, so a feature ` +
+           'narrower than the spacing above is not in these numbers. Pass a region around the ' +
+           'edit (or an explicit sampleCount) to measure at vertex resolution.';
+}
+
 /** Left-aligned fixed-width table with a `-`-underlined header */
 function table(headers, rows) {
     const widths = headers.map((h, i) => Math.max(
@@ -1094,6 +1118,13 @@ function renderReport(m, sections = new Set(SECTIONS)) {
     } else if (sections.has('blocks') && m.blocksOmitted === 'budget') {
         lines.push('', `## Blocks (${m.blockCountTotal})`);
         lines.push(`Table omitted for ${m.blockCountTotal} blocks — pass blocks: true to print it.`);
+    } else if (sections.has('blocks') && m.blocksOmitted === 'unusable') {
+        lines.push('', `## Blocks (${m.blockCountDeclared})`);
+        lines.push(
+            'Table unavailable: the stored layerBuffer does not match blockCount (see Warnings), ' +
+            'so which layer a block uses is not readable. An edit_terrain batch rebuilds exactly ' +
+            'these buffers before its first op.'
+        );
     }
 
     if (sections.has('samples') && m.heightSamples) {
@@ -1191,6 +1222,7 @@ function renderReport(m, sections = new Set(SECTIONS)) {
                 `z ${fmt(c.region.z)}..${fmt(c.region.z + c.region.depth)} m; ` +
                 `${c.samples[0]} x ${c.samples[1]} samples, spacing ${fmt(c.spacing[0], 6)} x ${fmt(c.spacing[1], 6)} m`
             );
+            if (c.sampleStride > 1) lines.push(downsampleNote(c.sampleStride, c.vertexSamples));
             lines.push(
                 `Scanned along ${c.axis} — one line per ${scanned}, crossings are ${c.axis} coordinates ` +
                 'linearly interpolated between the straddling sample pair.'
@@ -1232,13 +1264,21 @@ function renderReport(m, sections = new Set(SECTIONS)) {
                     [`${scanned} (m)`, `${c.axis} crossing(s)`],
                     c.lines.map((l) => [
                         fmt(l.coord),
-                        l.crossings.length ? l.crossings.map((v) => fmt(v)).join(', ') : '-'
+                        (l.crossings.length ? l.crossings.map((v) => fmt(v)).join(', ') : '-') +
+                        (l.elided ? ` … +${l.elided} more` : '')
                     ])
                 ));
                 if (c.stride > 1) {
                     lines.push(
                         `Every ${c.stride}th line shown (${s.lines} in total); the statistics above ` +
                         'cover all of them — ask for a smaller region for the full table.'
+                    );
+                }
+                if (c.crossingsElided) {
+                    lines.push(
+                        `${c.crossingsElided} crossing(s) past the first ${MAX_CONTOUR_CROSSINGS_PER_LINE} ` +
+                        'of a line are not shown; the totals above count every one of them — a line ' +
+                        'with that many crossings is a noisy field, not an edge.'
                     );
                 }
             }
@@ -1256,6 +1296,7 @@ function renderReport(m, sections = new Set(SECTIONS)) {
                 `z ${fmt(s.region.z)}..${fmt(s.region.z + s.region.depth)} m; ` +
                 `${s.samples[0]} x ${s.samples[1]} samples, spacing ${fmt(s.spacing[0], 6)} x ${fmt(s.spacing[1], 6)} m`
             );
+            if (s.sampleStride > 1) lines.push(downsampleNote(s.sampleStride, s.vertexSamples));
             lines.push(
                 s.max
                     ? `Max ${fmt(s.max.degrees, 2)}° at x ${fmt(s.max.x)}, z ${fmt(s.max.z)}; ` +
