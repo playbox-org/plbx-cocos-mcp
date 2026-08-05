@@ -357,6 +357,11 @@
     {
       "name": "Zombie_1gr_colander",
       "active": true,
+      "scale": [
+        1.5,
+        1.5,
+        1.5
+      ],
       "prefab": true,
       "prefabSource": "60f23d78…"
     }

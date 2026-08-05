@@ -22,7 +22,7 @@
  */
 
 import { isRef } from './SceneDocument.js';
-import { loadSourcePrefabByUuid, instanceOverrideValue } from './instances.js';
+import { loadSourcePrefabByUuid, instanceOverrideValue, mountedChildrenEntries } from './instances.js';
 import {
     mat4Identity, trsToMat4, mat4Multiply, transformAabb, mergeAabb, eulerToQuat
 } from '../utils/math3d.js';
@@ -39,6 +39,7 @@ export class BoundsCalculator {
     #ctx;
     #meshCache = new Map();
     #terrainCache = new Map();
+    #mountCache = new Map();
 
     /**
      * @param {{assetIndex: object|null, assetInspector: object|null, projectRoot: string|null}} ctx
@@ -50,12 +51,15 @@ export class BoundsCalculator {
     /**
      * @param {import('./SceneDocument.js').SceneDocument} doc
      * @param {number} nodeIdx
+     * @param {{skipUI?: boolean}} [options] - `skipUI` drops cc.UITransform contributions: their
+     *   rects are UI PIXELS, so merging them into a metre AABB makes a Canvas 1080 m wide. A
+     *   caller measuring world ground (a placement/occupancy question) must not see them.
      * @returns {{local: object|null, world: object|null,
      *            contributors: Array<{path: string, type: string, source: string}>,
      *            skipped: Array<{path: string, reason: string}>}}
      */
-    computeSubtree(doc, nodeIdx) {
-        const out = { contributors: [], skipped: [], boxes: [] };
+    computeSubtree(doc, nodeIdx, options = {}) {
+        const out = { contributors: [], skipped: [], boxes: [], skipUI: options.skipUI === true };
         this.#enter(doc, nodeIdx, mat4Identity(), doc.nodePath(nodeIdx) ?? '/', out, 0, true, new Map());
 
         let local = null;
@@ -78,6 +82,64 @@ export class BoundsCalculator {
             contributors: out.contributors,
             skipped: out.skipped
         };
+    }
+
+    /**
+     * World AABB (or world position, when nothing under it is measurable) per DIRECT child — the
+     * "which child stands at (4, 6)" question a merged group box cannot answer.
+     *
+     * A collapsed instance stub has no `_children` of its own: its children live in the source
+     * prefab, and enumerating the document would report zero children right next to a Contributors
+     * list naming all of them. Those are marked `inPrefab` — their paths are relative to the prefab
+     * root, not scene addresses.
+     * @param {import('./SceneDocument.js').SceneDocument} doc
+     * @param {number} nodeIdx
+     * @param {{skipUI?: boolean}} [options]
+     * @returns {Array<{name: string, path: string|null, inPrefab: boolean, active: boolean,
+     *   world: object|null, position: object|null}>}
+     */
+    computeChildren(doc, nodeIdx, options = {}) {
+        if (!doc.isInstanceStub(nodeIdx)) {
+            return doc.childIndices(nodeIdx).map((childIdx) => {
+                const own = this.computeSubtree(doc, childIdx, options);
+                return {
+                    name: doc.nodeName(childIdx) ?? '<unnamed>',
+                    path: doc.nodePath(childIdx),
+                    inPrefab: false,
+                    active: doc.getObject(childIdx)._active !== false,
+                    world: own.world,
+                    position: own.world ? null : this.worldPosition(doc, childIdx)
+                };
+            });
+        }
+
+        const info = doc.getObject(doc.getObject(nodeIdx)._prefab.__id__);
+        let source;
+        try {
+            source = loadSourcePrefabByUuid(this.#ctx, info.asset?.__uuid__);
+        } catch {
+            return [];
+        }
+        const stubWorld = this.#worldMatrix(doc, nodeIdx);
+        return source.doc.childIndices(source.doc.root.idx).map((childIdx) => {
+            const name = source.doc.nodeName(childIdx) ?? '<unnamed>';
+            const out = { contributors: [], skipped: [], boxes: [], skipUI: options.skipUI === true };
+            this.#enter(source.doc, childIdx, mat4Identity(), name, out, 1, false, new Map());
+            let world = null;
+            for (const box of out.boxes) {
+                const m = mat4Multiply(stubWorld, box.matrix);
+                world = mergeAabb(world, transformAabb(box.aabb, effectiveMat(m, box)));
+            }
+            const own = mat4Multiply(stubWorld, nodeTrsMat(source.doc.getObject(childIdx)));
+            return {
+                name,
+                path: name,
+                inPrefab: true,
+                active: source.doc.getObject(childIdx)._active !== false,
+                world: withDerived(world),
+                position: world ? null : { x: own[12], y: own[13], z: own[14] }
+            };
+        });
     }
 
     /**
@@ -208,6 +270,13 @@ export class BoundsCalculator {
             }
 
             if (comp.__type__ === 'cc.UITransform') {
+                if (out.skipUI) {
+                    out.skipped.push({
+                        path: label,
+                        reason: 'cc.UITransform rect is in UI pixels, not world metres'
+                    });
+                    continue;
+                }
                 const w = comp._contentSize?.width ?? 0;
                 const h = comp._contentSize?.height ?? 0;
                 const ax = comp._anchorPoint?.x ?? 0.5;
@@ -279,17 +348,29 @@ export class BoundsCalculator {
     }
 
     /** World matrix of a node (ancestors' TRS, instance stubs included) */
-    #worldMatrix(doc, nodeIdx) {
+    #worldMatrix(doc, nodeIdx, mounts = new Set()) {
         const chain = [];
         let idx = nodeIdx;
+        let above = null;
         const guard = new Set();
         while (idx !== undefined && !guard.has(idx)) {
             guard.add(idx);
             chain.unshift(idx);
             const parent = doc.getObject(idx)._parent;
-            idx = isRef(parent) ? parent.__id__ : undefined;
+            if (isRef(parent)) {
+                idx = parent.__id__;
+                continue;
+            }
+            // A mounted child is serialized with `_parent: null` — the engine resolves it through
+            // the MountedChildrenInfo of the instance it was added to. Without that hop the chain
+            // ends here and the node measures at the document origin.
+            const owner = this.#mountOwners(doc).get(idx);
+            if (owner && !mounts.has(owner.stubIdx)) {
+                above = this.#mountMatrix(doc, owner, new Set(mounts).add(owner.stubIdx));
+            }
+            break;
         }
-        let m = mat4Identity();
+        let m = above ?? mat4Identity();
         for (const i of chain) {
             const node = doc.getObject(i);
             if (doc.isInstanceStub(i)) {
@@ -314,6 +395,50 @@ export class BoundsCalculator {
         return m;
     }
 
+    /**
+     * Mounted-child ROOT node index → the instance it hangs on, built once per document.
+     * @returns {Map<number, {stubIdx: number, localID: string[]|null}>}
+     */
+    #mountOwners(doc) {
+        let map = this.#mountCache.get(doc);
+        if (map) return map;
+        map = new Map();
+        doc.objects.forEach((obj, idx) => {
+            if (!doc.isNode(obj) || !doc.isInstanceStub(idx)) return;
+            const instance = doc.instanceOf(idx);
+            if (!instance) return;
+            for (const entry of mountedChildrenEntries(doc, instance)) {
+                for (const nodeIdx of entry.nodeIndices) {
+                    if (!map.has(nodeIdx)) map.set(nodeIdx, { stubIdx: idx, localID: entry.localID });
+                }
+            }
+        });
+        this.#mountCache.set(doc, map);
+        return map;
+    }
+
+    /**
+     * World matrix of the node a mounted child is mounted ON: the stub's own world matrix times the
+     * TRS chain from the source prefab's root down to the mount node (the root's own TRS is what
+     * the stub's transform already is). Falls back to the stub itself when the source prefab or the
+     * mount fileId is unresolvable — the instance origin, which beats the document origin.
+     * Nested-node propertyOverrides inside the source are not applied, matching #enterStub.
+     */
+    #mountMatrix(doc, owner, mounts) {
+        const stubWorld = this.#worldMatrix(doc, owner.stubIdx, mounts);
+        if (owner.localID?.length !== 1) return stubWorld;
+        const info = doc.getObject(doc.getObject(owner.stubIdx)._prefab.__id__);
+        if (typeof info?.asset?.__uuid__ !== 'string') return stubWorld;
+        let source;
+        try {
+            source = loadSourcePrefabByUuid(this.#ctx, info.asset.__uuid__);
+        } catch {
+            return stubWorld;
+        }
+        const inner = mountNodeMatrix(source.doc, owner.localID[0]);
+        return inner ? mat4Multiply(stubWorld, inner) : stubWorld;
+    }
+
     /** Root node of a stub's source prefab, or null when unavailable */
     #sourceRootNode(info) {
         if (typeof info.asset?.__uuid__ !== 'string') return null;
@@ -335,6 +460,29 @@ export class BoundsCalculator {
 function effectiveMat(m, box) {
     if (!box.translationOnly) return m;
     return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, m[12], m[13], m[14], 1];
+}
+
+/**
+ * TRS chain from a source prefab's root (its own transform EXCLUDED) down to the node whose
+ * PrefabInfo.fileId is `fileId`, or null when no node carries it. The root itself matches as the
+ * identity — mounting onto the instance root is the common case.
+ */
+function mountNodeMatrix(sourceDoc, fileId) {
+    const rootIdx = sourceDoc.root.idx;
+    const walk = (idx, m) => {
+        const node = sourceDoc.getObject(idx);
+        const here = idx === rootIdx ? m : mat4Multiply(m, nodeTrsMat(node));
+        if (isRef(node._prefab)) {
+            const info = sourceDoc.getObject(node._prefab.__id__);
+            if (info?.fileId === fileId) return here;
+        }
+        for (const childIdx of sourceDoc.childIndices(idx)) {
+            const found = walk(childIdx, here);
+            if (found) return found;
+        }
+        return null;
+    };
+    return walk(rootIdx, mat4Identity());
 }
 
 function nodeTrsMat(node) {

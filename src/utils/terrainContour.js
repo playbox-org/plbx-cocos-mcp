@@ -14,6 +14,9 @@ export const CONTOUR_MAX_CELLS = 1_000_000;
 /** Slope buckets in degrees — the "is this walkable" breakdown */
 const SLOPE_BUCKETS = [15, 30, 45];
 
+/** Floats per contour segment in `ContourDistance`: two endpoints + the uphill direction */
+const SEG = 6;
+
 /** Thrown for an unusable request (bad region/threshold) */
 export class ContourError extends Error {
     name = 'ContourError';
@@ -148,36 +151,61 @@ export function contourCrossings(data, threshold, options = {}) {
     const lines = [];
     let crossingsTotal = 0;
     let singleCrossingLines = 0;
+    let emptyLines = 0;
+    let multiCrossingLines = 0;
+    let onContour = 0;
     let holes = 0;
     let min = Infinity;
     let max = -Infinity;
     for (let line = 0; line < lineCount; line++) {
         const crossings = [];
         let sawNull = false;
-        for (let n = 0; n + 1 < alongCount; n++) {
-            const h0 = heightAtIdx(line, n);
-            const h1 = heightAtIdx(line, n + 1);
-            if (h0 === null || h1 === null) { sawNull = true; continue; }
-            const s0 = h0 - T;
-            const s1 = h1 - T;
-            if (s0 === 0) {
-                push(crossings, alongCoord(n));
+        // Three states per sample: below the contour, exactly ON it, above it. A crossing is a
+        // TRANSITION — interpolated between a straddling pair, or at the end of a run of samples
+        // sitting exactly on the threshold where something strictly signed adjoins it. Heights are
+        // quantized to 1/128 m, so a sample landing exactly on a round contour is the rule, not the
+        // edge case: counting each one as a crossing turns a plateau AT the threshold into one
+        // crossing per vertex and hides the rim that is the actual answer.
+        let prevSign = 0;   // sign of the last strictly-signed sample, 0 = none yet on this line
+        let inRun = false;  // inside a run of exactly-on-threshold samples
+        let lastOn = -1;
+        for (let n = 0; n < alongCount; n++) {
+            const h = heightAtIdx(line, n);
+            if (h === null) {
+                // A gap interpolates nothing and adjoins nothing: both runs end unreported
+                sawNull = true;
+                prevSign = 0;
+                inRun = false;
                 continue;
             }
-            if ((s0 < 0) === (s1 < 0)) continue;
-            // Linear interpolation between the straddling pair
-            push(crossings, alongCoord(n) + (s0 / (s0 - s1)) * step);
+            const s = h - T;
+            if (s === 0) {
+                onContour++;
+                if (!inRun) {
+                    inRun = true;
+                    if (prevSign !== 0) push(crossings, alongCoord(n));
+                }
+                lastOn = n;
+                continue;
+            }
+            const sign = s < 0 ? -1 : 1;
+            if (inRun) {
+                push(crossings, alongCoord(lastOn));
+                inRun = false;
+            } else if (prevSign !== 0 && prevSign !== sign) {
+                const s0 = heightAtIdx(line, n - 1) - T;
+                push(crossings, alongCoord(n - 1) + (s0 / (s0 - s)) * step);
+            }
+            prevSign = sign;
         }
-        // The far end can sit exactly on the threshold without a following pair to catch it
-        const last = heightAtIdx(line, alongCount - 1);
-        if (last !== null && last - T === 0) push(crossings, alongCoord(alongCount - 1));
         if (sawNull) holes++;
         crossingsTotal += crossings.length;
-        if (crossings.length === 1) {
+        if (crossings.length === 0) emptyLines++;
+        else if (crossings.length === 1) {
             singleCrossingLines++;
             if (crossings[0] < min) min = crossings[0];
             if (crossings[0] > max) max = crossings[0];
-        }
+        } else multiCrossingLines++;
         lines.push({ coord: lineCoord(line), crossings });
     }
 
@@ -192,6 +220,9 @@ export function contourCrossings(data, threshold, options = {}) {
             lineCount,
             crossingsTotal,
             singleCrossingLines,
+            emptyLines,
+            multiCrossingLines,
+            onContour,
             holes,
             min: singleCrossingLines ? min : null,
             max: singleCrossingLines ? max : null,
@@ -232,7 +263,11 @@ function contourStats(lines, counts) {
         lines: counts.lineCount,
         crossings: counts.crossingsTotal,
         singleCrossingLines: counts.singleCrossingLines,
-        linesWithoutCrossing: counts.lineCount - counts.singleCrossingLines,
+        // Lines with NO crossing at all, and lines with several — the two halves of
+        // `lines - singleCrossingLines`, which one number cannot tell apart
+        linesWithoutCrossing: counts.emptyLines,
+        multiCrossingLines: counts.multiCrossingLines,
+        samplesOnContour: counts.onContour,
         linesWithGaps: counts.holes,
         uniform,
         monotone: comparable > 0 ? (increasing || decreasing) : null,
@@ -251,7 +286,9 @@ function contourStats(lines, counts) {
 export class ContourDistance {
     #data;
     #threshold;
-    #segments = []; // [x0, z0, x1, z1] flattened
+    // [x0, z0, x1, z1, ux, uz] flattened — `u` is the local UPHILL direction (unnormalized),
+    // the only thing that can tell which side a point exactly ON the threshold lies on
+    #segments = [];
     #buckets = new Map();
     #cell;
     #reach;
@@ -272,9 +309,9 @@ export class ContourDistance {
         this.#extract(grid);
     }
 
-    /** Number of contour segments found (0 = the threshold is above or below the whole region) */
+    /** Contour segments found (0 = the region is entirely above, entirely below, or entirely AT it) */
     get segmentCount() {
-        return this.#segments.length / 4;
+        return this.#segments.length / SEG;
     }
 
     get threshold() {
@@ -295,71 +332,113 @@ export class ContourDistance {
     signedDistanceAt(x, z, height = undefined) {
         const h = height === undefined ? heightAt(this.#data, x, z) : height;
         if (h === null || h === undefined) return null;
-        const high = h >= this.#threshold;
-        const d = this.#nearest(x, z);
-        if (d === null) return null;
-        return { signed: high ? -d : d, distance: d, high };
+        const near = this.#nearest(x, z);
+        if (near === null) return null;
+        // A point sitting exactly ON the threshold is on the contour itself, and its own height
+        // then says nothing about which side it is on: a plain AT the contour height is BELOW the
+        // hill standing on it, a plateau AT that height is ABOVE the ramp leading up to it. Both
+        // are ordinary (heights are quantized to 1/128 m), so ask the geometry — the nearest
+        // segment carries the direction the ground rises in.
+        const s = near.s;
+        const high = h === this.#threshold
+            ? (x - near.px) * this.#segments[s + 4] + (z - near.pz) * this.#segments[s + 5] > 0
+            : h > this.#threshold;
+        return { signed: high ? -near.distance : near.distance, distance: near.distance, high };
     }
 
-    /** Nearest segment distance within `reach`, or null */
+    /**
+     * Nearest segment within `reach`: its base offset, its distance and the point on it that is
+     * closest — the foot of the perpendicular the sign of a tie is measured from.
+     * @returns {{s: number, distance: number, px: number, pz: number}|null}
+     */
     #nearest(x, z) {
         const bi = Math.floor(x / this.#cell);
         const bj = Math.floor(z / this.#cell);
         let best = Infinity;
+        let found = null;
         for (let j = bj - 1; j <= bj + 1; j++) {
             for (let i = bi - 1; i <= bi + 1; i++) {
                 const list = this.#buckets.get(`${i},${j}`);
                 if (!list) continue;
                 for (const s of list) {
-                    const d = pointSegmentDistance(x, z, this.#segments[s], this.#segments[s + 1],
+                    const p = closestPointOnSegment(x, z, this.#segments[s], this.#segments[s + 1],
                         this.#segments[s + 2], this.#segments[s + 3]);
-                    if (d < best) best = d;
+                    if (p.distance < best) {
+                        best = p.distance;
+                        found = { s, distance: p.distance, px: p.x, pz: p.z };
+                    }
                 }
             }
         }
-        return best <= this.#reach ? best : null;
+        return best <= this.#reach ? found : null;
     }
 
-    /** Marching squares over the sampled grid; every cell contributes 0, 1 or 2 segments */
+    /**
+     * A sample sitting EXACTLY on the threshold belongs to two different edges: `{h > T}` and
+     * `{h >= T}` have different boundaries, and either can be the one the caller means — a plateau
+     * exactly at T has a rim (only `>=` sees it), a plain exactly at T has none but a hill standing
+     * on it does (only `>` sees that). Heights are quantized to 1/128 m, so both cases are ordinary.
+     * March twice and keep the union; with no exact tie the two passes are identical, so the second
+     * one only visits the cells that have one.
+     */
     #extract(grid) {
+        if (this.#march(grid, false)) this.#march(grid, true);
+    }
+
+    /**
+     * Marching squares over the sampled grid; every cell contributes 0, 1 or 2 segments.
+     * @param {object} grid
+     * @param {boolean} inclusive - Count a sample exactly on the threshold as HIGH; when set, only
+     *   cells that actually have such a sample are visited (the rest came out of the first pass)
+     * @returns {boolean} whether any sample sat exactly on the threshold
+     */
+    #march(grid, inclusive) {
         const T = this.#threshold;
         const at = (i, j) => grid.rows2d[j][i];
+        const high = (s) => (inclusive ? s >= 0 : s > 0);
+        let sawTie = false;
         for (let j = 0; j + 1 < grid.rows; j++) {
             for (let i = 0; i + 1 < grid.cols; i++) {
                 const h = [at(i, j), at(i + 1, j), at(i + 1, j + 1), at(i, j + 1)];
                 if (h.some((v) => v === null)) continue;
+                const tie = h.some((v) => v - T === 0);
+                if (tie) sawTie = true;
+                if (inclusive && !tie) continue;
                 const x0 = grid.xAt(i);
                 const x1 = grid.xAt(i + 1);
                 const z0 = grid.zAt(j);
                 const z1 = grid.zAt(j + 1);
                 const corners = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
-                // Crossings on the four edges, in cell order — 0, 2 or 4 of them
+                // Crossings on the four edges, in cell order — 0, 2 or 4 of them (the corner
+                // states change an even number of times around a closed loop of four)
                 const pts = [];
                 for (let e = 0; e < 4; e++) {
                     const a = h[e] - T;
                     const b = h[(e + 1) % 4] - T;
-                    if (a === 0 && b === 0) continue; // a whole edge on the contour: its ends carry it
-                    if ((a < 0) === (b < 0)) continue;
-                    const t = a / (a - b);
+                    if (high(a) === high(b)) continue;
+                    const t = a / (a - b); // a !== b here, so never 0/0
                     const [ax, az] = corners[e];
                     const [bx, bz] = corners[(e + 1) % 4];
                     pts.push([ax + (bx - ax) * t, az + (bz - az) * t]);
                 }
+                if (pts.length === 0) continue;
+                const cell = [x0, x1, z0, z1];
                 if (pts.length === 2) {
-                    this.#addSegment(pts[0], pts[1]);
+                    this.#addSegment(pts[0], pts[1], uphillAt(h, cell, pts[0], pts[1]));
                 } else if (pts.length === 4) {
                     // Saddle: the pairing is ambiguous, and edge order keeps both branches —
                     // the alternative gives the same distance field to within a cell
-                    this.#addSegment(pts[0], pts[1]);
-                    this.#addSegment(pts[2], pts[3]);
+                    this.#addSegment(pts[0], pts[1], uphillAt(h, cell, pts[0], pts[1]));
+                    this.#addSegment(pts[2], pts[3], uphillAt(h, cell, pts[2], pts[3]));
                 }
             }
         }
+        return sawTie;
     }
 
-    #addSegment(a, b) {
+    #addSegment(a, b, uphill) {
         const s = this.#segments.length;
-        this.#segments.push(a[0], a[1], b[0], b[1]);
+        this.#segments.push(a[0], a[1], b[0], b[1], uphill[0], uphill[1]);
         const i0 = Math.floor(Math.min(a[0], b[0]) / this.#cell);
         const i1 = Math.floor(Math.max(a[0], b[0]) / this.#cell);
         const j0 = Math.floor(Math.min(a[1], b[1]) / this.#cell);
@@ -375,15 +454,40 @@ export class ContourDistance {
     }
 }
 
-function pointSegmentDistance(px, pz, ax, az, bx, bz) {
+/**
+ * Uphill direction at a segment's midpoint: the gradient of the cell's bilinear field, per SEGMENT
+ * so a saddle's two branches get their own. Unnormalized — only its sign against a point offset is
+ * ever read.
+ * @param {number[]} h - Corner heights in cell order: (i,j), (i+1,j), (i+1,j+1), (i,j+1)
+ * @param {number[]} cell - `[x0, x1, z0, z1]` of the cell in metres
+ * @param {number[]} a - Segment endpoint `[x, z]`
+ * @param {number[]} b - The other endpoint
+ * @returns {number[]} `[ux, uz]`
+ */
+function uphillAt(h, cell, a, b) {
+    const [x0, x1, z0, z1] = cell;
+    const dx = x1 - x0;
+    const dz = z1 - z0;
+    const u = dx === 0 ? 0 : ((a[0] + b[0]) / 2 - x0) / dx;
+    const v = dz === 0 ? 0 : ((a[1] + b[1]) / 2 - z0) / dz;
+    return [
+        ((1 - v) * (h[1] - h[0]) + v * (h[2] - h[3])) / (dx || 1),
+        ((1 - u) * (h[3] - h[0]) + u * (h[2] - h[1])) / (dz || 1),
+    ];
+}
+
+/** Closest point of a segment to (px, pz), with its distance */
+function closestPointOnSegment(px, pz, ax, az, bx, bz) {
     const vx = bx - ax;
     const vz = bz - az;
     const len2 = vx * vx + vz * vz;
     let t = len2 === 0 ? 0 : ((px - ax) * vx + (pz - az) * vz) / len2;
     t = t < 0 ? 0 : (t > 1 ? 1 : t);
-    const dx = px - (ax + vx * t);
-    const dz = pz - (az + vz * t);
-    return Math.sqrt(dx * dx + dz * dz);
+    const x = ax + vx * t;
+    const z = az + vz * t;
+    const dx = px - x;
+    const dz = pz - z;
+    return { x, z, distance: Math.sqrt(dx * dx + dz * dz) };
 }
 
 // --- slope + crease ---------------------------------------------------------
@@ -393,7 +497,8 @@ function pointSegmentDistance(px, pz, ax, az, bx, bz) {
  * largest ADJACENT-sample difference — the crease metric, read against its pre-edit value.
  * @param {object} data - Terrain data object
  * @param {{region?: object, sampleCount?: number|number[]}} [options]
- * @returns {object} `{region, samples, spacing, max, mean, maxStep, buckets, sampled, skipped}`
+ * @returns {object} `{region, samples, spacing, max, mean, maxStep, buckets, sampled, skipped}` —
+ *   `buckets` are DISJOINT bands `(from, upTo]`, each with the `label` it is counted under
  */
 export function slopeStats(data, options = {}) {
     const grid = sampleGrid(data, options);
@@ -405,8 +510,15 @@ export function slopeStats(data, options = {}) {
     let sampled = 0;
     let skipped = 0;
     let maxStep = null;
-    const buckets = SLOPE_BUCKETS.map((upTo) => ({ upTo, count: 0 }));
-    buckets.push({ upTo: null, count: 0 });
+    // DISJOINT bands, each carrying the label it is counted under: a `<=N°` reading of a band
+    // count is off by every gentler band, and "how much is walkable" is the question being asked
+    const buckets = [];
+    for (const upTo of SLOPE_BUCKETS) {
+        const from = buckets.length ? buckets[buckets.length - 1].upTo : 0;
+        buckets.push({ from, upTo, label: `${from}-${upTo}°`, count: 0 });
+    }
+    const last = buckets[buckets.length - 1].upTo;
+    buckets.push({ from: last, upTo: null, label: `>${last}°`, count: 0 });
 
     const finite = (v) => v !== null && v !== undefined;
     for (let j = 0; j < rows; j++) {

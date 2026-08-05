@@ -3308,6 +3308,11 @@
         {
           "name": "Cacti2",
           "active": true,
+          "pos": [
+            -9.2,
+            0,
+            16.1
+          ],
           "prefab": true,
           "prefabSource": "bb73cd66…"
         },
@@ -3338,6 +3343,16 @@
         {
           "name": "Cacti3",
           "active": true,
+          "pos": [
+            8.5,
+            0,
+            13.6
+          ],
+          "euler": [
+            0,
+            -39.3,
+            0
+          ],
           "prefab": true,
           "prefabSource": "bb73cd66…"
         }

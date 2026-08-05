@@ -81,6 +81,49 @@ describe('contourCrossings', () => {
         assert.strictEqual(at.stats.maxJump, null);
     });
 
+    it('reads a plateau exactly AT the threshold as one crossing: its rim', () => {
+        // Heights are quantized to 1/128 m, so "sample == threshold" is the rule for a round
+        // contour, not an edge case. Counting each such sample as a crossing turns the plateau
+        // into one crossing per vertex and buries the rim, which is the whole answer.
+        const data = terrainFrom((x) => Math.min(x / 4, 5));
+        const at = contourCrossings(data, 5);
+        assert.strictEqual(at.stats.crossings, 33, 'one per line');
+        assert.strictEqual(at.stats.singleCrossingLines, 33);
+        assert.strictEqual(at.stats.samplesOnContour, 13 * 33, 'x 20..32 sit exactly on 5 m');
+        near(at.stats.min, 20, 1e-9, 'the rim');
+        near(at.stats.max, 20, 1e-9, 'the rim');
+    });
+
+    it('reads a hill standing on a plain exactly AT the threshold as the hill foot', () => {
+        // The mirror case of the plateau: here the PLAIN is the threshold, so the edge is where
+        // the hill leaves it — two crossings per line across the hill, none on the others
+        const data = terrainFrom((x, z) => (x >= 12 && x <= 20 && z >= 12 && z <= 20 ? 3 : 0));
+        const at = contourCrossings(data, 0);
+        assert.strictEqual(at.stats.multiCrossingLines, 9, 'the lines across the hill');
+        assert.strictEqual(at.stats.crossings, 18);
+        assert.strictEqual(at.stats.linesWithoutCrossing, 24, 'the lines that miss it');
+        for (const line of at.lines.filter((l) => l.crossings.length)) {
+            assert.deepStrictEqual(line.crossings, [11, 21], `foot on both sides at z=${line.coord}`);
+        }
+    });
+
+    it('reports a level surface as having no edge at all', () => {
+        const at = contourCrossings(terrainFrom(() => 2), 2);
+        assert.strictEqual(at.stats.crossings, 0, 'nothing but the contour itself');
+        assert.strictEqual(at.stats.samplesOnContour, 33 * 33);
+        assert.strictEqual(at.stats.linesWithoutCrossing, 33);
+    });
+
+    it('counts lines with none and lines with several apart', () => {
+        // A ridge h = 10 - (x - 16)^2 / 10 crosses the 5 m contour TWICE on every line
+        const data = terrainFrom((x) => 10 - ((x - 16) ** 2) / 10);
+        const at = contourCrossings(data, 5);
+        assert.strictEqual(at.stats.multiCrossingLines, 33);
+        assert.strictEqual(at.stats.crossings, 66);
+        assert.strictEqual(at.stats.linesWithoutCrossing, 0, 'every line crosses it — twice');
+        assert.strictEqual(at.stats.singleCrossingLines, 0);
+    });
+
     it('rejects a bad threshold, axis, region and sampleCount', () => {
         const data = terrainFrom(() => 0);
         assert.throws(() => contourCrossings(data, 'high'), ContourError);
@@ -119,6 +162,33 @@ describe('ContourDistance', () => {
         const cd = new ContourDistance(terrainFrom(() => 0), 10, { reach: 2 });
         assert.strictEqual(cd.segmentCount, 0);
         assert.strictEqual(cd.signedDistanceAt(5, 5), null);
+    });
+
+    it('finds the foot of a hill standing on a plain exactly AT the threshold', () => {
+        // What build_terrain leaves plus one adjust_heights: a flat 0 m plain, so the foot of the
+        // hill IS the 0 m contour and every plain sample sits exactly on it. Reading the plain as
+        // "not below" leaves no boundary and the band region has nothing to follow.
+        const data = terrainFrom((x, z) => (Math.hypot(x - 16, z - 16) < 6 ? 3 : 0));
+        const cd = new ContourDistance(data, 0, { reach: 3 });
+        assert.ok(cd.segmentCount > 0, 'the hill foot is an edge');
+        // The plain is exactly ON the threshold, so its own height cannot say which side it is:
+        // geometrically it is BELOW the hill standing on it, and the band's `outer` reaches it
+        const out = cd.signedDistanceAt(24, 16);
+        assert.strictEqual(out.high, false, 'the plain is the low side of the hill foot');
+        near(out.signed, 2, 0.6, '2 m out from the foot');
+        assert.strictEqual(cd.signedDistanceAt(21, 16).high, true, 'the hill flank is the high side');
+    });
+
+    it('finds the rim of a plateau lying exactly AT the threshold', () => {
+        // The mirror case: the high side is exactly ON the threshold, so reading it as "not above"
+        // is what leaves no boundary
+        const data = terrainFrom((x) => Math.min(x / 4, 5));
+        const cd = new ContourDistance(data, 5, { reach: 3 });
+        assert.ok(cd.segmentCount > 0, 'the plateau rim is an edge');
+        near(cd.signedDistanceAt(22, 16).distance, 2, 0.05, '2 m inside the plateau');
+        assert.strictEqual(cd.signedDistanceAt(22, 16).high, true);
+        near(cd.signedDistanceAt(18, 16).distance, 2, 0.05, '2 m down the ramp');
+        assert.strictEqual(cd.signedDistanceAt(18, 16).high, false);
     });
 
     it('measures the true distance to a curved contour, not a grid-quantized one', () => {

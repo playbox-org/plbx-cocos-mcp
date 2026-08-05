@@ -524,12 +524,12 @@
         ◆ MeshRenderer {_materials=["<asset>"] _visFlags=0 _mesh=<asset> _shadowCastingMode=0}
     ● VFXs
     ● Cacti_V1
-    ● Cacti2 [P→bb73cd66…]
+    ● Cacti2 @(-9.2,0,16.1) [P→bb73cd66…]
     ● Cactis
       ● Cacti1 [P→b267cf03…]
       ● Cacti2 [P→b267cf03…]
       ● Cacti3 [P→b267cf03…]
-    ● Cacti3 [P→bb73cd66…]
+    ● Cacti3 @(8.5,0,13.6) rot(0,-39.3,0) [P→bb73cd66…]
   ● [UI] @(540,1184,0)
     ◆ UITransform {_id=c4j9T6VlBIsZF+uD7drQf3 _contentSize=[1080,2368] _anchorPoint=[0.5,0.5]}
     ◆ Canvas {_cameraComponent=→Camera#1886 _alignCanvasWithScreen=true _id=27ETxt9y1CjI42Xinmg0H9}

@@ -509,6 +509,26 @@ describe('QueryTerrain — synthetic terrains', () => {
         assert.strictEqual(zoom.heightGrid.downsampled, false);
     });
 
+    it('holds sampleCount "vertex" to the same budget as the number it resolves to', async () => {
+        // 9x9 blocks = 289x289 = 83 521 samples, an ~130k-token dump. The identical explicit
+        // sampleCount is rejected, so the shorthand for it must be too.
+        const rel = 'assets/Maps/Big.terrain';
+        const text = await fails(
+            { terrainPath: rel, exportHeights: { sampleCount: 'vertex' } }, project
+        );
+        assert.match(text, /289x289 = 83521 samples exceeds 65536/);
+        assert.match(text, /"vertex" over this region is 289x289 samples/);
+        assert.match(text, /ask for a smaller region/);
+
+        // Bounded to the area of an edit, which is what it is for, it works
+        const model = await json({
+            terrainPath: rel,
+            exportHeights: { region: { x: 0, z: 0, width: 32, depth: 32 }, sampleCount: 'vertex' }
+        }, project);
+        assert.deepStrictEqual(model.heightGrid.samples, [33, 33]);
+        assert.strictEqual(model.heightGrid.downsampled, false);
+    });
+
     it('omits the per-block table above the auto limit unless blocks: true', async () => {
         const rel = 'assets/Maps/Big.terrain';
         const auto = await ok({ terrainPath: rel }, project);
@@ -1023,7 +1043,37 @@ describe('QueryTerrain — contourAt / slope / land map', () => {
     it('says so when the threshold misses the height range', async () => {
         const rel = ramp('Flat', () => 1);
         const text = await ok({ terrainPath: rel, contourAt: 9, sections: ['samples'] }, project);
-        assert.match(text, /No crossing at all: the whole region is either above or below 9 m/);
+        assert.match(text, /No crossing at all: the whole region is above, below, or exactly AT 9 m/);
+    });
+
+    it('reads a plateau exactly AT the threshold as its rim, not as a crossing per vertex', async () => {
+        // Heights land exactly on round metres (1/128 m steps), so "sample == threshold" is the
+        // rule and not the edge case: everything at or past x 20 is exactly 5 m
+        const rel = ramp('Plateau', (i) => Math.min(i / 4, 5));
+        const model = await json({ terrainPath: rel, contourAt: 5 }, project);
+        const c = model.contours[0];
+        assert.strictEqual(c.stats.singleCrossingLines, 33, 'one edge per line — the rim');
+        assert.strictEqual(c.stats.crossings, 33);
+        assert.strictEqual(c.stats.monotone, true);
+        assert.ok(Math.abs(c.stats.min - 20) < 1e-9 && Math.abs(c.stats.max - 20) < 1e-9,
+            'the rim stands at x 20');
+    });
+
+    it('reads a hill standing on a plain exactly AT the threshold as the hill foot', async () => {
+        // The mirror case: the plain IS the threshold, so the edge is where the hill leaves it
+        const rel = ramp('Foot', (i, j) => (i >= 12 && i <= 20 && j >= 12 && j <= 20 ? 3 : 0));
+        const model = await json({ terrainPath: rel, contourAt: 0 }, project);
+        const c = model.contours[0];
+        assert.strictEqual(c.stats.crossings, 18, '2 crossings on each of the 9 lines across the hill');
+        assert.strictEqual(c.stats.linesWithoutCrossing, 24, 'the lines that miss the hill');
+        assert.strictEqual(c.stats.multiCrossingLines, 9);
+        assert.strictEqual(c.stats.singleCrossingLines, 0);
+    });
+
+    it('says a level surface has no edge when the whole region sits ON the threshold', async () => {
+        const rel = ramp('Level', () => 2);
+        const text = await ok({ terrainPath: rel, contourAt: 2, sections: ['samples'] }, project);
+        assert.match(text, /exactly AT 2 m \(1089 of 1089 samples sit exactly on it/);
     });
 
     it('reports slope, the crease metric and a walkability distribution', async () => {
@@ -1038,7 +1088,14 @@ describe('QueryTerrain — contourAt / slope / land map', () => {
         assert.match(text, /Max 45°/);
         assert.match(text, /Steepest adjacent-sample step: 1 m/);
         assert.match(text, /the crease metric/);
-        assert.match(text, /Distribution: <=15° 0/);
+        // Bands are disjoint, so they must not be labelled as cumulative thresholds — every
+        // sample is 45°, which is the 30-45° band and 100% of the "<=45°" cumulative reading
+        assert.match(text, /Distribution \(disjoint bands\): 0-15° 0 \(0\.0%\), 15-30° 0 \(0\.0%\), 30-45° 1089 \(100\.0%\), >45° 0/);
+        assert.match(text, /Cumulative: <=15° 0 \(0\.0%\), <=30° 0 \(0\.0%\), <=45° 1089 \(100\.0%\)/);
+        assert.deepStrictEqual(
+            model.slope.buckets.map((b) => [b.from, b.upTo, b.label]),
+            [[0, 15, '0-15°'], [15, 30, '15-30°'], [30, 45, '30-45°'], [45, null, '>45°']]
+        );
     });
 
     it('renders the land map with an explicit and a derived threshold', async () => {

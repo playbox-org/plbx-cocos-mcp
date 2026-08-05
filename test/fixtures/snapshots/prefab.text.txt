@@ -22,4 +22,4 @@
         ● Count [P]
           ◆ UITransform
           ◆ Label "12"
-  ● Zombie_1gr_colander [P→60f23d78…]
+  ● Zombie_1gr_colander scale(1.5,1.5,1.5) [P→60f23d78…]

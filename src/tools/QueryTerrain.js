@@ -166,6 +166,8 @@ export class QueryTerrain extends BaseTool {
                                  `(max ${GRID_MAX_AXIS} per axis, ${GRID_MAX_CELLS} cells), or "vertex" for the ` +
                                  'region\'s exact vertex resolution (width/tileSize + 1 — what a contour ' +
                                  'derivation needs; the default downsamples and would blur the edge). ' +
+                                 '"vertex" obeys the same budget, so on a big terrain it needs a region: ' +
+                                 'pass the area of the edit, not the whole map. ' +
                                  'By default the grid is the vertex resolution of the region, downsampled by a ' +
                                  `power-of-two stride so neither axis exceeds ${GRID_DEFAULT_MAX_AXIS} samples — ` +
                                  'ask for a region to get full resolution on a big terrain'
@@ -177,15 +179,20 @@ export class QueryTerrain extends BaseTool {
                                  '(constant z for axis "x", the default) the crossing is linearly interpolated ' +
                                  'between the straddling vertex pair, at the region\'s VERTEX resolution unless ' +
                                  'sampleCount says otherwise. Reported with the checks a blend edit needs: how ' +
-                                 'many lines have exactly one crossing, whether the crossing list is monotone, ' +
-                                 'and the largest jump between adjacent lines (a jump is a step in the geometry)'
+                                 'many lines have exactly one crossing, how many have none and how many ' +
+                                 'several, whether the crossing list is monotone, and the largest jump ' +
+                                 'between adjacent lines (a jump is a step in the geometry). A sample sitting ' +
+                                 'EXACTLY on the height counts as a crossing only where the surface leaves ' +
+                                 'it — heights are quantized to 1/128 m, so a plateau at a round height is ' +
+                                 'reported as its rim and a level surface as no contour at all'
                 },
                 slope: {
                     description: 'Gradient magnitude in degrees over the region: true for the whole terrain, ' +
-                                 'or {region?, sampleCount?}. Reports max (with its location), mean, a ' +
-                                 'walkability distribution, and maxStep — the largest height difference ' +
-                                 'between adjacent samples, i.e. the crease metric to compare before/after ' +
-                                 'a shape edit'
+                                 'or {region?, sampleCount?}. Reports max (with its location), mean, the ' +
+                                 'distribution over DISJOINT bands (0-15°, 15-30°, 30-45°, >45°) plus a ' +
+                                 'separate cumulative row for the "how much of this is walkable" reading, ' +
+                                 'and maxStep — the largest height difference between adjacent samples, ' +
+                                 'i.e. the crease metric to compare before/after a shape edit'
                 },
                 blocks: {
                     type: 'boolean',
@@ -808,23 +815,29 @@ function parseRegionArg(raw, what) {
 /** A `sampleCount`: `n`, `[cols, rows]`, or `"vertex"` (= `width / tileSize + 1` per axis) */
 function parseSampleCount(raw, what, data, region) {
     if (raw === undefined || raw === null) return null;
-    if (raw === 'vertex') return vertexSampleCount(data, region);
-    const pair = Array.isArray(raw) ? raw : [raw, raw];
+    // "vertex" is a resolved pair like any other, and goes through the same budget: it is the
+    // resolution a contour derivation needs, not a licence to print the whole vertex grid
+    const derived = raw === 'vertex';
+    const pair = derived ? vertexSampleCount(data, region) : (Array.isArray(raw) ? raw : [raw, raw]);
     if (pair.length !== 2) {
         throw new ArgError(`${what}.sampleCount must be a number, a [cols, rows] pair, or "vertex"`);
     }
+    const tail = derived
+        ? ` — "vertex" over this region is ${pair[0]}x${pair[1]} samples; ask for a smaller region, ` +
+          'or a plain sampleCount if a coarser grid answers the question'
+        : '';
     for (const n of pair) {
         if (!Number.isInteger(n) || n < 2 || n > GRID_MAX_AXIS) {
             throw new ArgError(
                 `${what}.sampleCount must be an integer in 2..${GRID_MAX_AXIS} per axis, ` +
-                `got ${JSON.stringify(n)}`
+                `got ${JSON.stringify(n)}${tail}`
             );
         }
     }
     if (pair[0] * pair[1] > GRID_MAX_CELLS) {
         throw new ArgError(
             `${what}.sampleCount ${pair[0]}x${pair[1]} = ${pair[0] * pair[1]} samples exceeds ` +
-            `${GRID_MAX_CELLS} — ask for a smaller region instead`
+            `${GRID_MAX_CELLS} — ask for a smaller region instead${tail}`
         );
     }
     return [pair[0], pair[1]];
@@ -1186,15 +1199,20 @@ function renderReport(m, sections = new Set(SECTIONS)) {
             lines.push(
                 `Lines: ${s.lines}, with exactly one crossing ${s.singleCrossingLines}` +
                 (s.lines - s.singleCrossingLines
-                    ? ` (${s.lines - s.singleCrossingLines} with none or several — a lagoon, a ` +
-                      'peninsula, or the contour leaving the region)'
+                    ? ` (${s.linesWithoutCrossing} with none, ${s.multiCrossingLines} with several — ` +
+                      'a lagoon, a peninsula, or the contour leaving the region)'
                     : '') +
                 `; total crossings ${s.crossings}`
             );
             if (s.crossings === 0) {
                 lines.push(
-                    `No crossing at all: the whole region is either above or below ${fmt(c.threshold)} m. ` +
-                    'Check the Height line for the range that exists.'
+                    `No crossing at all: the whole region is above, below, or exactly AT ` +
+                    `${fmt(c.threshold)} m` +
+                    (s.samplesOnContour
+                        ? ` (${s.samplesOnContour} of ${c.samples[0] * c.samples[1]} samples sit ` +
+                          'exactly on it — a level surface has no edge to follow)'
+                        : '') +
+                    '. Check the Height line for the range that exists.'
                 );
             } else {
                 lines.push(
@@ -1253,10 +1271,14 @@ function renderReport(m, sections = new Set(SECTIONS)) {
             }
             const total = s.buckets.reduce((n, b) => n + b.count, 0);
             if (total > 0) {
-                lines.push('Distribution: ' + s.buckets.map((b) => {
-                    const label = b.upTo === null ? '>45°' : `<=${b.upTo}°`;
-                    return `${label} ${b.count} (${((b.count / total) * 100).toFixed(1)}%)`;
-                }).join(', '));
+                const share = (n) => `${n} (${((n / total) * 100).toFixed(1)}%)`;
+                lines.push('Distribution (disjoint bands): ' + s.buckets
+                    .map((b) => `${b.label} ${share(b.count)}`).join(', '));
+                let running = 0;
+                lines.push('Cumulative: ' + s.buckets
+                    .filter((b) => b.upTo !== null)
+                    .map((b) => { running += b.count; return `<=${b.upTo}° ${share(running)}`; })
+                    .join(', ') + ' — the "how much of this is walkable" reading');
             }
         }
     }

@@ -120,6 +120,41 @@ describe('spatial scene queries', () => {
             assert.doesNotMatch(out, /Marker/, 'no MeshRenderer on the marker');
         });
 
+        it('leaves screen-space nodes out and says how many', async () => {
+            // The golden scene's Canvas subtree is laid out in PIXELS (x 0..1080), so it overlaps
+            // any region asked about — including one 400 m from anything in the scene
+            const out = await text(tool, {
+                scenePath: SCENE_REL,
+                region: { x: 400, z: -1, width: 20, depth: 2 }
+            }, project);
+            assert.match(out, /Found: 0/);
+            assert.match(out, /node\(s\) under a cc\.Canvas matched the other criteria but were left out/);
+
+            // …and a 3D node does not inherit pixels from a UI descendant either: the scene root
+            // spans its 3D content, not the 1080 px Canvas under it
+            const near = await text(tool, {
+                scenePath: SCENE_REL, region: { x: 0, z: 0, width: 5, depth: 5 }
+            }, project);
+            const rootLine = near.split('\n').find((l) => l.startsWith('- ● / #'));
+            assert.ok(rootLine, `the scene root should be in:\n${near}`);
+            assert.doesNotMatch(rootLine, /1080/, `root box carries Canvas pixels: ${rootLine}`);
+        });
+
+        it('measures a mounted child through the instance it hangs on', async () => {
+            // Mounted children are serialized with `_parent: null`; without the mount hop they all
+            // measure at the document origin — a false miss where they are and a false hit at (0,0)
+            const at = await text(tool, {
+                scenePath: SCENE_REL, pattern: '^icon$', region: { center: [-2, 7.7], radius: 2 }
+            }, project);
+            assert.match(at, /Found: 1/);
+            assert.match(at, /@ x -2\.\.-2, z 7\.7\.\.7\.7/);
+
+            const origin = await text(tool, {
+                scenePath: SCENE_REL, pattern: '^icon$', region: { center: [0, 0], radius: 1 }
+            }, project);
+            assert.match(origin, /Found: 0/);
+        });
+
         it('rejects a malformed region and an empty filter set', async () => {
             assert.match(
                 await fails(tool, { scenePath: SCENE_REL }, project),
@@ -154,6 +189,17 @@ describe('spatial scene queries', () => {
             const out = await text(tool, { filePath: SCENE_REL, node: 'Props' }, project);
             assert.doesNotMatch(out, /Per child/);
         });
+
+        it('lists the SOURCE prefab children of a collapsed instance', async () => {
+            // A stub has no `_children`: reading the document reports "Per child (0)" right next to
+            // a Contributors list naming the very children whose meshes built the box
+            const out = await text(tool, {
+                filePath: SCENE_REL, node: 'Props/CrateNear', perChild: true
+            }, project);
+            assert.match(out, /## Per child \(1\)/);
+            assert.match(out, /● Visual: x 1\.9\d+\.\.2\.0\d+, z 2\.9\d+\.\.3\.0\d+/);
+            assert.match(out, /collapsed prefab instance, so these are the SOURCE PREFAB's children/);
+        });
     });
 
     describe('transforms in the read pipeline', () => {
@@ -163,6 +209,16 @@ describe('spatial scene queries', () => {
             }, project);
             // Depth 1 below the queried node — the old depth <= 2 rule hid this
             assert.match(out, /Tilted @\(1,2,3\) scale\(2,2,2\) rot\(0,90,0\)/);
+        });
+
+        it('prints an instance stub\'s transform, which lives in its overrides', async () => {
+            // A collapsed stub has no _lpos of its own — reading the node prints every instance of
+            // a scene at its parent's origin, which is where the placement question is answered
+            const out = await text(new InspectNode(), {
+                filePath: SCENE_REL, nodeName: 'Props'
+            }, project);
+            assert.match(out, /CrateNear @\(2,0,3\)/);
+            assert.match(out, /CrateFar @\(40,0,40\)/);
         });
     });
 

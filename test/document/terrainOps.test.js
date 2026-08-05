@@ -947,6 +947,42 @@ describe('terrainOps — shaped height edits (falloff / profile / clamp / band)'
         assert.strictEqual(heightAtVertex(data, 12, 10), (12 - 16) / 4, 'beyond outer — untouched');
     });
 
+    it('tapers a band across its thickness only, not against the bounding box', () => {
+        // The box defaults to the whole terrain, so ramping against it would leave the band at 0
+        // amplitude on the border rows — a step along the whole band, in the middle of the edit
+        const data = terrain();
+        for (let j = 0; j < 33; j++) {
+            for (let i = 0; i < 33; i++) setVertexHeight(data, i, j, (i - 16) / 4, true);
+        }
+        const { results } = apply(data, {
+            op: 'adjust_heights', delta: 2, falloff: 1,
+            region: { shape: 'band', contour: 0, inner: -2, outer: 2 },
+        });
+        assert.deepStrictEqual(results[0].notes, [], 'nothing to report — no step, full amplitude');
+        for (const z of [0, 1, 16, 32]) {
+            assert.strictEqual(heightAtVertex(data, 16, z), 2, `full amplitude on row z ${z}`);
+        }
+        // Across the band it still tapers: the band edge at x 14 keeps its original height
+        assert.strictEqual(heightAtVertex(data, 14, 16), (14 - 16) / 4, 'factor 0 at the band edge');
+    });
+
+    it('follows a contour a flat plain sits exactly ON', () => {
+        // build_terrain leaves a flat 0 m field, so the foot of anything raised into it is the
+        // 0 m contour — with the sampled plain landing EXACTLY on the threshold
+        const data = terrain();
+        for (let j = 0; j < 33; j++) {
+            for (let i = 0; i < 33; i++) {
+                setVertexHeight(data, i, j, Math.hypot(i - 16, j - 16) < 6 ? 3 : 0, true);
+            }
+        }
+        const { results } = apply(data, {
+            op: 'adjust_heights', delta: 1,
+            region: { shape: 'band', contour: 0, inner: -1, outer: 1 },
+        });
+        assert.match(results[0].summary, /band -1\.\.1 m around the 0 m contour/);
+        assert.ok(results[0].summary.includes('108 changed'), results[0].summary);
+    });
+
     it('rejects a band that has no contour, no width, or wrong-way offsets', () => {
         const data = terrain();
         assert.throws(

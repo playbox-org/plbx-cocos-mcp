@@ -189,19 +189,23 @@ export class NodeTreeBuilder {
             active: node._active !== false
         };
 
-        // Position, scale and euler wherever they are non-default
+        // Position, scale and euler wherever they are non-default. A collapsed instance stub has
+        // no transform fields of its own — its placement is a propertyOverride on the source root,
+        // and reading the node would print every stub of a scene at its parent's origin.
         if (this.#transforms === 'all' || depth <= 2) {
-            const p = node._lpos;
+            const ov = instance?.overrides ?? {};
+            const p = ov._lpos ?? node._lpos;
             if (p && (Math.abs(p.x) > POS_EPS || Math.abs(p.y) > POS_EPS || Math.abs(p.z) > POS_EPS)) {
                 minNode.pos = round(p, 10);
             }
-            const s = node._lscale;
+            const s = ov._lscale ?? node._lscale;
             if (s && (Math.abs(s.x - 1) > SCALE_EPS || Math.abs(s.y - 1) > SCALE_EPS
                 || Math.abs(s.z - 1) > SCALE_EPS)) {
                 minNode.scale = round(s, 1000);
             }
             // Prefer `_lrot` (what the runtime reads) over a possibly stale `_euler`
-            const e = node._lrot ? quatToEulerYZX(node._lrot) : node._euler;
+            const rot = ov._lrot ?? node._lrot;
+            const e = rot ? quatToEulerYZX(rot) : (ov._euler ?? node._euler);
             if (e && (Math.abs(e.x) > EULER_EPS || Math.abs(e.y) > EULER_EPS || Math.abs(e.z) > EULER_EPS)) {
                 minNode.euler = round(e, 10);
             }

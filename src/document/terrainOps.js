@@ -290,9 +290,11 @@ function parseRegion(op, data) {
         if (!(r.inner < r.outer)) {
             throw new TerrainOpError(
                 `region: inner ${fmt(r.inner)} must be less than outer ${fmt(r.outer)} m — both are ` +
-                'SIGNED distances from the contour, negative on the HIGH side (above the contour ' +
-                'height) and positive on the low side, so {inner: -1, outer: 2} is "from 1 m above ' +
-                'the contour to 2 m below it"'
+                'SIGNED HORIZONTAL distances from the contour line (metres across the ground in the ' +
+                'XZ plane, not height), negative on the HIGH side and positive on the low side, so ' +
+                '{inner: -1, outer: 2} is "from 1 m inside the high side to 2 m out on the low side". ' +
+                'How much height that spans depends on the local slope: on a 1:20 beach 2 m of ground ' +
+                'is 0.1 m of height'
             );
         }
     } else if (bandGiven.length) {
@@ -350,7 +352,7 @@ function describeRegion(data, r) {
     const box = `x ${fmt(r.x)}..${fmt(r.x + r.width)} m, z ${fmt(r.z)}..${fmt(r.z + r.depth)} m`;
     if (r.shape === 'band') {
         return `${box}, band ${fmt(r.inner)}..${fmt(r.outer)} m around the ${fmt(r.contour)} m ` +
-            'contour (signed: negative = above it)';
+            'contour (signed horizontal distance across the ground: negative = the high side)';
     }
     return `${box}${r.shape === 'rect' ? '' : ` (${r.shape})`}`;
 }
@@ -360,11 +362,13 @@ function describeRegion(data, r) {
 /**
  * The mask a region + falloff describe: `factorAt(x, z)` is 0..1 inside, `null` outside. The factor
  * is 0 AT the border and 1 `falloff` metres in, so a ramp can never be centred on the edge (= step).
+ * A band tapers across its THICKNESS only — its rectangle is a bounding box, and the default box is
+ * the whole terrain, so feathering against it would fade the band out along the map border.
  * @param {object} data - Terrain data object
  * @param {object} r - Parsed region
  * @param {object} op - The op (read for `falloff`/`profile`)
  * @returns {{factorAt: (x: number, z: number, h?: number|null) => number|null, falloff: number,
- *   profile: string}}
+ *   profile: string, shape: string}}
  */
 function buildMask(data, r, op) {
     const falloff = op.falloff === undefined
@@ -404,9 +408,9 @@ function buildMask(data, r, op) {
         if (contour.segmentCount === 0) {
             throw new TerrainOpError(
                 `region: no ${fmt(r.contour)} m contour runs through x ${fmt(r.x)}..${fmt(r.x + r.width)} m, ` +
-                `z ${fmt(r.z)}..${fmt(r.z + r.depth)} m — the whole area is either above or below ` +
-                'that height, so there is no edge to follow. Check the height range with ' +
-                'query_terrain (its Height line), or pick the contour with ' +
+                `z ${fmt(r.z)}..${fmt(r.z + r.depth)} m — the whole area is above, below, or exactly ` +
+                'AT that height, and a level surface has no edge to follow. Check the height range ' +
+                'with query_terrain (its Height line), or pick the contour with ' +
                 'query_terrain {contourAt: <height>}'
             );
         }
@@ -435,10 +439,13 @@ function buildMask(data, r, op) {
         if (!sd) return null;
         const s = sd.signed;
         if (s < r.inner - EPS || s > r.outer + EPS) return null;
-        return ramp(Math.min(s - r.inner, r.outer - s, rectEdge(x, z)));
+        // ACROSS the band only. The rectangle is a bounding box (see parseRegion), and it defaults
+        // to the whole terrain — feathering against it would fade the band to nothing along the map
+        // border, which is a step in the middle of the band and not a transition to anything.
+        return ramp(Math.min(s - r.inner, r.outer - s));
     };
 
-    return { factorAt, falloff, profile };
+    return { factorAt, falloff, profile, shape: r.shape };
 }
 
 /** `, 3 m falloff (smooth)` — the mask part of an op summary */
@@ -1159,10 +1166,14 @@ function writeMaskedHeights(data, range, factors, targetAt, clamp = 'none') {
 function maskNotes(data, mask, shaped, res, amount, clamp) {
     const notes = [];
     if (mask.falloff > 0 && shaped.peak < 1 - 1e-6) {
+        // A band tapers ACROSS its thickness, so its way out is a wider inner/outer spread —
+        // region.inner/outer are rejected on any other shape, so the advice cannot be shared
         notes.push(
-            `falloff ${fmt(mask.falloff)} m is wider than the region's half-extent, so the full ` +
-            `${amount} is reached NOWHERE — the ramp peaks at ${fmt(shaped.peak)} of it. Use a ` +
-            'smaller falloff, or a larger region'
+            `falloff ${fmt(mask.falloff)} m is wider than ` +
+            (mask.shape === 'band' ? 'the band is thick' : "the region's half-extent") +
+            `, so the full ${amount} is reached NOWHERE — the ramp peaks at ` +
+            `${fmt(shaped.peak)} of it. Use a smaller falloff, or ` +
+            (mask.shape === 'band' ? 'a wider band (a larger inner/outer spread)' : 'a larger region')
         );
     }
     // A falloff over N tiles necessarily leaves ~1/N of the amplitude at the last covered vertex
@@ -1596,12 +1607,16 @@ function paintLayer(data, op, ctx) {
             `${fmt(peakFactor)} of it and the strongest texel got ${fmt((vHigh < 0 ? 0 : vHigh) / 255)}. ` +
             `Use a falloff of at most ${fmt(halfExtent)} m, or a larger region`
         );
-    } else if (falloff > 0 && peak < 1 - 1e-6) {
+    } else if (r.shape === 'band' && falloff > 0 && peak < 1 - 1e-6) {
+        // Only a band gets the MEASURED verdict: it has no half-extent for the analytic branch
+        // above, whereas for a rect/ellipse that branch is exact about the region — a measured
+        // shortfall there is the texel grid missing the peak, and the band advice does not apply
+        // to it at all (region.inner/outer are rejected outside a band).
         notes.push(
             `falloff ${fmt(falloff)} m is wider than the band is thick, so the requested weight ` +
             `${fmt(weight)} is reached NOWHERE — the ramp peaks at ${fmt(peak)} of it and the ` +
             `strongest texel got ${fmt((vHigh < 0 ? 0 : vHigh) / 255)}. Use a smaller falloff, or ` +
-            'a wider band (inner/outer)'
+            'a wider band (a larger inner/outer spread)'
         );
     }
     if (assigned.length) {

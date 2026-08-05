@@ -28,7 +28,9 @@ export class GetNodeBounds extends BaseTool {
                'use as BoxCollider center/size on that node) and `world` (document space). ' +
                '3D sizes are in world units; UITransform contributions are in UI pixels. ' +
                'perChild adds one world AABB per DIRECT child — the merged box of a group cannot answer ' +
-               '"which child stands at (4, 6)", and the merge already computes every child box anyway. ' +
+               '"which child stands at (4, 6)", and the merge already computes every child box anyway; ' +
+               'on a collapsed prefab instance those are the SOURCE prefab\'s children, placed by the ' +
+               'instance transform. ' +
                'Args: {filePath (required), node (required: "Canvas/Panel/BuyBtn" path, _id, or "/"), ' +
                'perChild?: boolean}.';
     }
@@ -90,18 +92,13 @@ export class GetNodeBounds extends BaseTool {
  * measurable — for a placement question the position is still an answer.
  */
 function perChildBoxes(calculator, doc, nodeIdx) {
-    const all = doc.childIndices(nodeIdx);
-    const rows = all.slice(0, MAX_PER_CHILD).map((childIdx) => {
-        const own = calculator.computeSubtree(doc, childIdx);
-        return {
-            name: doc.nodeName(childIdx) ?? '<unnamed>',
-            path: doc.nodePath(childIdx),
-            world: own.world,
-            position: own.world ? null : calculator.worldPosition(doc, childIdx),
-            active: doc.getObject(childIdx)._active !== false
-        };
-    });
-    return { rows, total: all.length, omitted: Math.max(0, all.length - MAX_PER_CHILD) };
+    const all = calculator.computeChildren(doc, nodeIdx);
+    return {
+        rows: all.slice(0, MAX_PER_CHILD),
+        total: all.length,
+        omitted: Math.max(0, all.length - MAX_PER_CHILD),
+        inPrefab: doc.isInstanceStub(nodeIdx)
+    };
 }
 
 function renderAabb(title, aabb) {
@@ -124,6 +121,13 @@ function renderBoundsReport(nodePath, result, children) {
     if (children) {
         lines.push('', `## Per child (${children.rows.length}${children.omitted ? ` of ${children.total}` : ''})`);
         lines.push('World AABBs. XZ is the footprint — the axes a placement or occupancy question asks about.');
+        if (children.inPrefab && children.rows.length) {
+            lines.push(
+                'This node is a collapsed prefab instance, so these are the SOURCE PREFAB\'s children ' +
+                'placed by the instance transform. Their names address nodes inside the prefab, not ' +
+                'the scene — edit them in the prefab, or override them via set_instance_property.'
+            );
+        }
         for (const c of children.rows) {
             const marker = c.active ? '●' : '○';
             if (!c.world) {

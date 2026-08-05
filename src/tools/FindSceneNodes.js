@@ -11,7 +11,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
 import { SceneMinifier } from '../core/SceneMinifier.js';
-import { SceneDocument } from '../document/SceneDocument.js';
+import { SceneDocument, isRef } from '../document/SceneDocument.js';
 import { BoundsCalculator } from '../document/Bounds.js';
 import { buildBoundsContext, fmt } from './measure.js';
 
@@ -32,7 +32,9 @@ export class FindSceneNodes extends BaseTool {
                'AABB footprint overlaps it (nodes with nothing measurable are matched by their world ' +
                'position), and prints that footprint — the "what already stands in this area" query ' +
                'for placement, occupancy and cleanup. Terrain-local XZ equals world XZ only when the ' +
-               'terrain node sits at the origin. ' +
+               'terrain node sits at the origin. Screen-space nodes (anything under a cc.Canvas) are ' +
+               'left out of a region query and counted in a footer — a Canvas lays its subtree out in ' +
+               'PIXELS, not metres — and a cc.UITransform rect never contributes to a footprint. ' +
                'Each match shows its full root-anchored path — reuse it verbatim as the ' +
                '`node` argument of inspect_node/get_node_bounds/apply_edits — and its #N ' +
                'nodeId (inspect_node only). ' +
@@ -65,7 +67,9 @@ export class FindSceneNodes extends BaseTool {
                     description: 'Only nodes whose world AABB footprint overlaps this area of the XZ ' +
                                  'plane: {x, z, width, depth} (metres, x/z are the near corner) or ' +
                                  '{center: [x, z], radius}. Y is ignored — occupancy is a footprint ' +
-                                 'question. Matches print their world x/z extent'
+                                 'question. Nodes under a cc.Canvas are excluded (screen pixels, not ' +
+                                 'metres) and UITransform rects never count toward a footprint. ' +
+                                 'Matches print their world x/z extent'
                 }
             },
             required: ['scenePath']
@@ -99,15 +103,22 @@ export class FindSceneNodes extends BaseTool {
             let matches = minifier.findNodes(args.pattern ?? null, args.component ?? null);
 
             let placed = null;
+            let uiExcluded = 0;
             if (region) {
                 // Node ids ARE array indices in both readers, so a match maps straight over
                 const doc = SceneDocument.load(scenePath);
                 const calculator = new BoundsCalculator(buildBoundsContext(projectRoot));
+                const uiCache = new Map();
                 placed = new Map();
                 matches = matches.filter((m) => {
                     const node = doc.getObject(m.id);
                     if (!node || !doc.isNode(node)) return false;
-                    const world = calculator.computeSubtree(doc, m.id).world;
+                    // A Canvas subtree is laid out in PIXELS, not placed on the ground: its rects
+                    // and positions answer no question about world XZ occupancy, and their numbers
+                    // are large enough to overlap any region asked about
+                    if (isScreenSpace(doc, m.id, uiCache)) { uiExcluded++; return false; }
+                    // …and a 3D node's own box must not inherit pixels from a UI descendant either
+                    const world = calculator.computeSubtree(doc, m.id, { skipUI: true }).world;
                     const footprint = world
                         ? { minX: world.min.x, maxX: world.max.x, minZ: world.min.z, maxZ: world.max.z, measured: true }
                         : pointFootprint(calculator.worldPosition(doc, m.id));
@@ -147,6 +158,11 @@ export class FindSceneNodes extends BaseTool {
                     output += '\nExtents are WORLD XZ; get_node_bounds {perChild: true} on a group ' +
                               'gives the same per-child boxes without a name/component filter.';
                 }
+            }
+            if (region && uiExcluded > 0) {
+                output += `\n\n${uiExcluded} node(s) under a cc.Canvas matched the other criteria but ` +
+                          'were left out: a Canvas lays its subtree out in screen PIXELS, which is not ' +
+                          'the world XZ plane a region asks about. Drop `region` to see them.';
             }
 
             return this.success(output);
@@ -209,6 +225,37 @@ function describeRegion(region) {
         return `${fmt(region.radius)} m around (${fmt(region.x)}, ${fmt(region.z)})`;
     }
     return `x ${fmt(region.minX)}..${fmt(region.maxX)}, z ${fmt(region.minZ)}..${fmt(region.maxZ)}`;
+}
+
+/**
+ * Is this node laid out in SCREEN space? True when it or an ancestor carries a cc.Canvas, which is
+ * what makes its subtree's positions and sizes Canvas pixels instead of world metres.
+ *
+ * The test is the Canvas and not the cc.UITransform on purpose: a UITransform parented into the 3D
+ * hierarchy (a world-space sprite, e.g. a zone icon) has a real world POSITION and only its rect is
+ * in pixels — `skipUI` handles the rect, and the position is still the answer to a placement question.
+ * @param {import('../document/SceneDocument.js').SceneDocument} doc
+ * @param {number} nodeIdx
+ * @param {Map<number, boolean>} cache - Shared across one call: a Canvas subtree re-walks one chain
+ */
+function isScreenSpace(doc, nodeIdx, cache) {
+    const chain = [];
+    let idx = nodeIdx;
+    let answer = false;
+    const guard = new Set();
+    while (idx !== undefined && !guard.has(idx)) {
+        guard.add(idx);
+        if (cache.has(idx)) { answer = cache.get(idx); break; }
+        chain.push(idx);
+        if (doc.componentIndices(idx).some(i => doc.getObject(i)?.__type__ === 'cc.Canvas')) {
+            answer = true;
+            break;
+        }
+        const parent = doc.getObject(idx)._parent;
+        idx = isRef(parent) ? parent.__id__ : undefined;
+    }
+    for (const i of chain) cache.set(i, answer);
+    return answer;
 }
 
 function pointFootprint(pos) {
