@@ -15,6 +15,7 @@ import { builtinLabel } from './builtins.js';
 
 /** Friendly type aliases → meta importer names (keys normalized: lowercase, no -/_) */
 const TYPE_ALIASES = {
+    __proto__: null, // user-sourced key (list_assets type): no Object.prototype hits
     image: ['image'],
     sprite: ['image'],
     spriteframe: ['image'], // sprite frames are sub-assets of images, not a top-level type
@@ -209,7 +210,7 @@ export class AssetIndex {
 
     /** True when the type filter can match anything: a known alias or an importer present in the project */
     isKnownType(type) {
-        return normalizeType(type) in TYPE_ALIASES ||
+        return Object.hasOwn(TYPE_ALIASES, normalizeType(type)) ||
                this.#entries.some(e => e.importer === type.toLowerCase());
     }
 

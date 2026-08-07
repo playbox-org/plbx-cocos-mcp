@@ -2,9 +2,10 @@
  * build_terrain tool tests (Phase T3)
  *
  * Every test runs against a throwaway copy of the mock project, so the tool's real write
- * sequence (mkdir → atomic binary write → .meta → parent-dir metas → AssetIndex.invalidate)
- * is exercised end to end. The tool is instantiated directly: registration in
- * `src/tools/index.js` lands with a later change.
+ * sequence (mkdir → move an overwritten binary aside → atomic binary write → .meta →
+ * parent-dir metas → drop the aside copy → AssetIndex.invalidate) is exercised end to end.
+ * The tool is instantiated directly: registration in `src/tools/index.js` lands with a later
+ * change. `writeFileAtomic` itself is covered in `test/utils/fsAtomic.test.js`.
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -13,13 +14,15 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as zlib from 'zlib';
-import { fileURLToPath } from 'url';
+import { execFileSync } from 'child_process';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 import { BuildTerrain } from '../../src/tools/BuildTerrain.js';
 import { EditTerrain } from '../../src/tools/EditTerrain.js';
+import { TerrainBuilder } from '../../src/document/TerrainBuilder.js';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
 import { readTerrain, readTerrainInfo } from '../../src/utils/terrainBin.js';
-import { writeFileAtomic } from '../../src/utils/fsAtomic.js';
+import { section } from './reportSection.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MOCK_PROJECT = path.resolve(__dirname, '../fixtures/mock-project');
@@ -268,35 +271,80 @@ describe('BuildTerrain tool', () => {
     // orphan .terrain with no meta and no report.
     it('removes the binary when the .meta write fails', async () => {
         fs.mkdirSync(path.join(root, 'assets/Locked'));
-        // Trigger: the ".meta" companion blows the 255-BYTE filename limit while the binary fits
-        // (254 vs 259), so the binary lands and the meta write is the step that throws.
-        const name = `${'x'.repeat(246)}.terrain`;
-        assert.strictEqual(name.length, 254);
+        // The meta write shares its directory with every other step of the sequence, so no
+        // filesystem state can single it out: fail the rename that COMMITS the meta. (The old
+        // trigger — a 254-byte binary name whose ".meta" companion needs 259 — aborts before any
+        // bytes are written now; the message it aborts with is the next test's subject.)
+        const metaPath = path.join(root, 'assets/Locked/M.terrain.meta');
+        const report = failRenameOnto(metaPath, root,
+            { outputPath: 'assets/Locked/M.terrain', spec: {} });
 
-        const result = await build({ outputPath: `assets/Locked/${name}`, spec: {} });
-        assert.strictEqual(result.isError, true);
-        assert.match(text(result), /Cannot write assets\/Locked\//);
-        assert.match(text(result), /Nothing was written\./);
-        assert.strictEqual(fs.existsSync(path.join(root, 'assets/Locked', name)), false);
+        assert.strictEqual(report.isError, true);
+        assert.match(report.text, /Cannot write assets\/Locked\/M\.terrain/);
+        assert.match(report.text, /Nothing was written\./);
+        assert.strictEqual(fs.existsSync(path.join(root, 'assets/Locked/M.terrain')), false);
         assert.deepStrictEqual(fs.readdirSync(path.join(root, 'assets/Locked')), []);
     });
 
-    // A plain writeFileSync FOLLOWS a symlink, so a symlinked `<asset>.meta` took the meta out of
-    // the project (verified); temp+rename replaces the link instead.
-    it('replaces a symlinked .meta path instead of writing through it', async () => {
+    // That abort used to answer "Cannot read existing …: check what is at that path … a real .meta
+    // there carries the uuid every existing reference uses". NOTHING is at that path: the asset
+    // name fits and its ".meta" companion is 4 bytes over the limit, which is the actionable fact.
+    it('names the 255-byte filename limit when the .meta name cannot exist', async () => {
+        const base = `${'x'.repeat(246)}.terrain`; // 254 bytes; "<base>.meta" needs 259
+        const dir = path.join(root, 'assets/Long');
+        fs.mkdirSync(dir);
+        const result = await build({ outputPath: `assets/Long/${base}`, spec: {} });
+
+        assert.strictEqual(result.isError, true);
+        assert.match(text(result), /No \.meta can exist next to assets\/Long\/x{20}/);
+        assert.match(text(result), /4 byte\(s\) over the 255-BYTE filename limit/);
+        assert.match(text(result), /shorten the asset name/);
+        assert.doesNotMatch(text(result), /Cannot read existing|check what is at that path/);
+        assert.match(text(result), /Nothing was written\./);
+        assert.deepStrictEqual(fs.readdirSync(dir), [],
+            'refused before the binary, so there is nothing to roll back');
+    });
+
+    // …but only where the lstat can see it: with the folder still missing it reads ENOENT, so the
+    // same name is caught by the meta's own rename — the .meta failing AFTER the binary landed,
+    // which is what the length trigger covered before it moved to a rename mock above.
+    it('rolls the landed binary back when the .meta rename hits the limit', async () => {
+        const base = `${'x'.repeat(246)}.terrain`;
+        const result = await build({ outputPath: `assets/Deeper/${base}`, spec: {} });
+
+        assert.strictEqual(result.isError, true);
+        assert.match(text(result), /Cannot write assets\/Deeper\/x{20}/);
+        assert.match(text(result), /ENAMETOOLONG/);
+        assert.match(text(result), /Nothing was written\./);
+        assert.strictEqual(fs.existsSync(path.join(root, 'assets/Deeper')), false,
+            'the binary, its folder and the folder meta are all unwound');
+        assert.strictEqual(fs.existsSync(path.join(root, 'assets/Deeper.meta')), false);
+    });
+
+    // A dangling symlink at `<asset>.meta` read as "no meta at all" through existsSync, so a fresh
+    // uuid was minted and the rename replaced the link — UUID churn for an asset that may already
+    // be referenced by the link's target. Refused instead, with the link left for the user.
+    it('refuses a symlinked .meta path, writing nothing', async () => {
         const outside = path.join(root, '..', 'escape-target');
         fs.mkdirSync(outside, { recursive: true });
-        fs.mkdirSync(path.join(root, 'assets/Sym'));
-        const metaPath = path.join(root, 'assets/Sym/S.terrain.meta');
-        // existsSync is false (dangling), so a fresh meta is minted for this path
-        fs.symlinkSync(path.join(outside, 'escaped.meta'), metaPath);
+        try {
+            fs.mkdirSync(path.join(root, 'assets/Sym'));
+            const metaPath = path.join(root, 'assets/Sym/S.terrain.meta');
+            fs.symlinkSync(path.join(outside, 'escaped.meta'), metaPath);
 
-        const result = await build({ outputPath: 'assets/Sym/S.terrain', spec: {} });
-        assert.strictEqual(result.isError, undefined);
-        assert.strictEqual(fs.existsSync(path.join(outside, 'escaped.meta')), false,
-            'the .meta must not be written outside the project through the link');
-        assert.strictEqual(fs.lstatSync(metaPath).isSymbolicLink(), false, 'the link is replaced');
-        assert.strictEqual(JSON.parse(fs.readFileSync(metaPath, 'utf-8')).importer, 'terrain');
+            const result = await build({ outputPath: 'assets/Sym/S.terrain', spec: {} });
+            assert.strictEqual(result.isError, true);
+            assert.match(text(result), /assets\/Sym\/S\.terrain\.meta is a symlink/);
+            assert.match(text(result), /Nothing was written\./);
+            assert.strictEqual(fs.existsSync(path.join(outside, 'escaped.meta')), false,
+                'the .meta must not be written outside the project through the link');
+            assert.strictEqual(fs.lstatSync(metaPath).isSymbolicLink(), true,
+                'the link is left exactly as found, for the user to remove or replace');
+            assert.strictEqual(fs.existsSync(path.join(root, 'assets/Sym/S.terrain')), false,
+                'the refusal is resolved before the binary, so nothing landed');
+        } finally {
+            fs.rmSync(outside, { recursive: true, force: true });
+        }
     });
 
     // mkdirSync ran before the write, so a failing write left freshly created,
@@ -340,9 +388,10 @@ describe('BuildTerrain tool', () => {
         assert.deepStrictEqual(fs.readdirSync(dir).filter(f => f.includes('.tmp-')), []);
     });
 
-    // An overwrite is the one step that cannot be undone. Reporting "left untouched" after the
-    // rename told the agent the asset was intact while the user's heights were already gone.
-    it('reports the overwrite honestly when a step AFTER the rename fails', async () => {
+    // The overwrite used to be the one unrecoverable step: the new bytes were already in place
+    // when a later step failed, so the user's heights were gone and the tool could only say so.
+    // Moving the victim aside first makes the whole window undoable.
+    it('restores the previous terrain when a step AFTER the rename fails', async () => {
         const victim = path.join(root, 'assets/Maps/Terrain.terrain');
         const before = fs.readFileSync(victim);
         // Last step in the try block is the folder metas: assets/ read-only (so assets/Maps.meta
@@ -358,12 +407,74 @@ describe('BuildTerrain tool', () => {
             fs.chmodSync(path.join(root, 'assets'), 0o755);
         }
         assert.strictEqual(result.isError, true);
-        assert.match(text(result), /WARNING: assets\/Maps\/Terrain\.terrain had ALREADY been replaced/);
-        assert.match(text(result), /previous heights, layers and weights are gone/);
-        assert.ok(!text(result).includes('Nothing was written.'));
-        assert.ok(!text(result).includes('left untouched'));
-        // the report is truthful: the bytes really did change
-        assert.notDeepEqual(fs.readFileSync(victim), before);
+        assert.match(text(result), /Cannot write assets\/Maps\/Terrain\.terrain/);
+        assert.match(text(result), /Nothing was written\.$/);
+        assert.ok(!text(result).includes('WARNING'), text(result));
+        // the promise is measured, not restated: the victim's own bytes are back
+        assert.deepStrictEqual(fs.readFileSync(victim), before);
+        // and the copy it was parked as is gone
+        assert.deepStrictEqual(fs.readdirSync(path.join(root, 'assets/Maps')).filter(f => f.includes('.tmp-')), []);
+    });
+
+    // The aside copy is the previous terrain: leaking it would leave a full-size dotfile in
+    // assets/ after every successful overwrite.
+    it('removes the aside copy of the previous terrain on success', async () => {
+        const dir = path.join(root, 'assets/Maps');
+        const result = await build({
+            outputPath: 'assets/Maps/Terrain.terrain', spec: { baseHeight: 4 }, overwrite: true,
+        });
+        assert.ok(!result.isError, text(result));
+        assert.deepStrictEqual(fs.readdirSync(dir).filter(f => f.includes('.tmp-')), []);
+        assert.strictEqual(readTerrainInfo(path.join(dir, 'Terrain.terrain')).heightMin, 4);
+    });
+
+    // A directory named X.terrain is "existing" too, and moving THAT aside would displace a
+    // folder instead of failing on it.
+    it('never moves a directory aside for an overwrite', async () => {
+        const dir = path.join(root, 'assets/Maps/Folder.terrain');
+        fs.mkdirSync(dir);
+        fs.writeFileSync(path.join(dir, 'keep.txt'), 'keep');
+
+        const result = await build({
+            outputPath: 'assets/Maps/Folder.terrain', spec: {}, overwrite: true,
+        });
+        assert.strictEqual(result.isError, true);
+        assert.match(text(result), /Nothing was written\.$/);
+        assert.strictEqual(fs.readFileSync(path.join(dir, 'keep.txt'), 'utf-8'), 'keep');
+        assert.deepStrictEqual(fs.readdirSync(path.join(root, 'assets/Maps')).filter(f => f.includes('.tmp-')), []);
+    });
+
+    // The one window left: the move BACK can fail too (a directory that turned read-only fails
+    // both the write and the restore). Then the previous bytes exist only under the temp name,
+    // and the report has to name that file — following it must really restore the terrain.
+    it('names the aside file when even the restore fails', async () => {
+        const victim = path.join(root, 'assets/Maps/Terrain.terrain');
+        const before = fs.readFileSync(victim);
+        fs.rmSync(path.join(root, 'assets/Maps.meta'));
+        fs.chmodSync(path.join(root, 'assets'), 0o555); // same trigger as above
+        let report;
+        try {
+            // The restore is the SECOND rename onto the target (the first is writeFileAtomic's),
+            // and no filesystem state can single it out — both move a dotfile in a writable dir.
+            report = failRenameOnto(victim, root,
+                { outputPath: 'assets/Maps/Terrain.terrain', spec: { baseHeight: 7 }, overwrite: true },
+                { nth: 2 });
+        } finally {
+            fs.chmodSync(path.join(root, 'assets'), 0o755);
+        }
+        assert.strictEqual(report.isError, true);
+        assert.ok(!report.text.includes('Nothing was written.'), report.text);
+        assert.match(report.text, /WARNING: the previous assets\/Maps\/Terrain\.terrain was moved aside and could NOT be moved back/);
+
+        const named = report.text.match(/intact as "([^"]+)"/);
+        assert.ok(named, report.text);
+        assert.match(report.text, /rename that file to "Terrain\.terrain"/);
+        const aside = path.join(root, 'assets/Maps', named[1]);
+        assert.deepStrictEqual(fs.readFileSync(aside), before,
+            'the file the report names must hold the previous terrain');
+        // following the instruction restores it
+        fs.renameSync(aside, victim);
+        assert.deepStrictEqual(fs.readFileSync(victim), before);
     });
 
     // The undo entry for a folder meta used to be `fs.unlinkSync(<parsed meta object>)`, which
@@ -486,11 +597,20 @@ describe('BuildTerrain tool', () => {
     it('reports fillLayer exactly once', async () => {
         const off = await build({
             outputPath: 'assets/Maps/Off.terrain',
-            spec: { layers: [{ detailMap: 'Sprites/coin_bar.png' }], fillLayer: -1 },
+            spec: {
+                layers: [{ detailMap: 'Sprites/coin_bar.png' }, { detailMap: 'Sprites/panel.png' }],
+                fillLayer: -1,
+            },
         });
         const offText = text(off);
+        assert.strictEqual(section(offText, 'Notes').bullets.length, 1);
         assert.match(offText, /fillLayer is off/);
-        assert.doesNotMatch(offText, /layer slot 0 is defined but no block uses it/);
+        // dropped by KIND: the family is ONE aggregated line naming only its first slot, so
+        // nothing is left over for the second one either
+        assert.doesNotMatch(offText, /no block uses it/);
+        assert.doesNotMatch(offText, /more occurrences/);
+        // …and a note is not a problem: there is no Warnings section left to count at all
+        assert.strictEqual(section(offText, 'Warnings'), null, offText);
         assert.doesNotMatch(offText, /edit_terrain/);
 
         const explicit = await build({
@@ -502,6 +622,57 @@ describe('BuildTerrain tool', () => {
         assert.match(text(explicit), /used by 1 block\(s\)/);
     });
 
+    // `## Warnings (N)` counted the builder's notes too, so "copied 1:1" — a disclosure about the
+    // heightmap the caller passed — was reported as one of two problems with the asset.
+    it('counts only real problems under ## Warnings, notes in their own section', async () => {
+        const rows = Array.from({ length: 33 }, (_, j) => Array.from({ length: 33 }, (_, i) => (i + j) * 0.05));
+        const informational = text(await build({
+            outputPath: 'assets/Maps/Rows.terrain',
+            spec: { blockCount: [1, 1], weightMapSize: 16, heightmap: { rows } },
+        }));
+        assert.match(section(informational, 'Notes').bullets[0], /matches the 33x33 vertex grid exactly/);
+        assert.strictEqual(section(informational, 'Warnings'), null, informational);
+
+        // both kinds at once: the default fill discloses itself, slot 1 really is dangling
+        const mixed = text(await build({
+            outputPath: 'assets/Maps/Mixed.terrain',
+            spec: {
+                weightMapSize: 16,
+                layers: [{ detailMap: 'Sprites/coin_bar.png' }, { detailMap: 'Sprites/panel.png' }],
+            },
+        }));
+        assert.match(section(mixed, 'Notes').bullets[0], /every block is painted with layer 0/);
+        const warnings = section(mixed, 'Warnings');
+        assert.deepStrictEqual(warnings.bullets, ['layer slot 1 is defined but no block uses it']);
+        assert.strictEqual(warnings.count, warnings.bullets.length, mixed);
+    });
+
+    // The duplicate `unusedLayer` warning used to be suppressed by matching the builder's note
+    // prose, so rewording that note silently brought the duplicate back. This test rewords it.
+    it('suppresses the duplicate unused-layer warning by the builder\'s field, not its wording', async () => {
+        const original = TerrainBuilder.prototype.compile;
+        TerrainBuilder.prototype.compile = function reworded(spec) {
+            const out = original.call(this, spec);
+            return { ...out, notes: out.notes.map(() => 'the palette is defined but unpainted') };
+        };
+        let report;
+        try {
+            report = text(await build({
+                outputPath: 'assets/Maps/Reworded.terrain',
+                spec: {
+                    weightMapSize: 16,
+                    layers: [{ detailMap: 'Sprites/coin_bar.png' }, { detailMap: 'Sprites/panel.png' }],
+                    fillLayer: -1,
+                },
+            }));
+        } finally {
+            TerrainBuilder.prototype.compile = original;
+        }
+        assert.deepStrictEqual(section(report, 'Notes').bullets, ['the palette is defined but unpainted']);
+        assert.doesNotMatch(report, /no block uses it/, report);
+        assert.strictEqual(section(report, 'Warnings'), null, report);
+    });
+
     it('speaks of depth, not height, for the Z axis and gives the metre formula', () => {
         assert.match(tool.description, /x = width, z = depth, heights are Y in metres/);
         assert.match(tool.description, /blockCount \* 32 \* tileSize/);
@@ -511,35 +682,52 @@ describe('BuildTerrain tool', () => {
     });
 });
 
-describe('writeFileAtomic', () => {
-    let dir;
-
-    beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'atomic-')); });
-    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
-
-    it('writes buffers and strings, replacing existing content', () => {
-        const target = path.join(dir, 'a.bin');
-        writeFileAtomic(target, Buffer.from([1, 2, 3]));
-        assert.deepStrictEqual([...fs.readFileSync(target)], [1, 2, 3]);
-        writeFileAtomic(target, 'text');
-        assert.strictEqual(fs.readFileSync(target, 'utf-8'), 'text');
-        assert.deepStrictEqual(fs.readdirSync(dir), ['a.bin']);
-    });
-
-    it('removes the temp file when the rename fails', () => {
-        const target = path.join(dir, 'busy');
-        fs.mkdirSync(target); // renaming a file onto a directory fails
-        assert.throws(() => writeFileAtomic(target, Buffer.from([1])));
-        assert.deepStrictEqual(fs.readdirSync(dir), ['busy']);
-    });
-
-    it('rejects bad arguments', () => {
-        assert.throws(() => writeFileAtomic('', Buffer.alloc(1)), /non-empty string/);
-        assert.throws(() => writeFileAtomic(path.join(dir, 'x'), { a: 1 }), /Buffer, a TypedArray or a string/);
-    });
-});
-
 // --- helpers -----------------------------------------------------------------
+
+/**
+ * Run build_terrain in a child process whose `nth` `renameSync` onto `dest` throws EACCES — the
+ * only way to single out ONE step of a write sequence whose steps all share a directory (the
+ * rollback rename onto the target, which no filesystem state can tell from writeFileAtomic's; the
+ * `.meta` commit). A `--require` preload is the only way to patch it: `import * as fs` binds the
+ * CJS exports after the preload ran, while an in-process mock cannot redefine them.
+ * @param {string} dest - Absolute rename destination to fail; need not exist yet
+ * @param {string} projectRoot
+ * @param {object} args - build_terrain arguments
+ * @param {{nth?: number}} [opts] - Which rename onto `dest` throws (default the first)
+ * @returns {{isError: boolean, text: string}} the tool's result
+ */
+function failRenameOnto(dest, projectRoot, args, { nth = 1 } = {}) {
+    const box = fs.mkdtempSync(path.join(os.tmpdir(), 'build-terrain-child-'));
+    // The tool resolves its paths and os.tmpdir() is a symlink; `dest` itself may not exist yet,
+    // so only its directory is resolved.
+    dest = path.join(fs.realpathSync(path.dirname(dest)), path.basename(dest));
+    try {
+        fs.writeFileSync(path.join(box, 'preload.cjs'), `
+const fs = require('fs');
+const real = fs.renameSync;
+let n = 0;
+fs.renameSync = (from, to) => {
+    if (to === ${JSON.stringify(dest)} && ++n === ${nth}) {
+        const err = new Error('EACCES: permission denied, rename');
+        err.code = 'EACCES';
+        throw err;
+    }
+    return real(from, to);
+};
+`);
+        fs.writeFileSync(path.join(box, 'main.mjs'), [
+            `import { BuildTerrain } from ${JSON.stringify(pathToFileURL(path.resolve(__dirname, '../../src/tools/BuildTerrain.js')).href)};`,
+            `const result = await new BuildTerrain().run(${JSON.stringify(args)}, ${JSON.stringify(projectRoot)});`,
+            'console.log(JSON.stringify({ isError: result.isError === true, text: result.content[0].text }));',
+        ].join('\n'));
+        const out = execFileSync(
+            process.execPath, ['--require', path.join(box, 'preload.cjs'), path.join(box, 'main.mjs')],
+            { encoding: 'utf-8' });
+        return JSON.parse(out.trim().split('\n').pop());
+    } finally {
+        fs.rmSync(box, { recursive: true, force: true });
+    }
+}
 
 /** The `## Terrain` block of a report: contiguous lines up to the next blank one */
 function cardOf(report) {

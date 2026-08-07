@@ -98,6 +98,55 @@ describe('BuildAnimGraph tool', () => {
             JSON.stringify({ ver: '1.2.0', importer: 'animation-graph' }));
     });
 
+    // `ensureParentDirMetas` refuses a symlinked FOLDER meta, and it ran AFTER doc.save() and
+    // OUTSIDE any try: the tool answered "Error: New.meta is a symlink…" while the graph AND its
+    // .meta were already on disk with no UUID reported. build_terrain's rollback is the reference.
+    it('rolls the graph back when a parent folder meta is refused', async () => {
+        const gone = path.join(root, 'nope-target.meta');
+        fs.symlinkSync(gone, path.join(root, 'assets', 'New.meta')); // dangling folder meta
+
+        const result = await build({ outputPath: 'assets/New/G.animgraph', spec: SPEC });
+        assert.strictEqual(result.isError, true);
+        // the refusal names the FOLDER, not a bare "New.meta"
+        assert.match(text(result), /assets\/New\.meta is a symlink/);
+        assert.match(text(result), /Nothing was written\.$/);
+        assert.strictEqual(fs.existsSync(path.join(root, 'assets/New/G.animgraph')), false);
+        assert.strictEqual(fs.existsSync(path.join(root, 'assets/New/G.animgraph.meta')), false);
+        assert.strictEqual(fs.existsSync(path.join(root, 'assets/New')), false,
+            'the directory this call created must go with it');
+        assert.strictEqual(fs.existsSync(gone), false, 'nothing written through the link');
+        assert.strictEqual(fs.lstatSync(path.join(root, 'assets', 'New.meta')).isSymbolicLink(), true,
+            'the link is left exactly as found');
+    });
+
+    // An overwrite cannot be rolled back by unlinking, so the previous file is moved ASIDE first.
+    it('restores the previous graph when a later step fails', async () => {
+        const victim = path.join(root, 'assets/Anims/Keep.animgraph');
+        await build({ outputPath: 'assets/Anims/Keep.animgraph', spec: SPEC });
+        const before = fs.readFileSync(victim, 'utf-8');
+        // remove the folder meta and make assets/ read-only: writing assets/Anims.meta now fails
+        fs.rmSync(path.join(root, 'assets/Anims.meta'));
+        fs.chmodSync(path.join(root, 'assets'), 0o555);
+        let result;
+        try {
+            result = await build({
+                outputPath: 'assets/Anims/Keep.animgraph',
+                spec: { ...SPEC, states: [{ name: 'Run', clip: 'assets/Models/Coin.fbx@c0001' }],
+                    transitions: [{ from: 'Entry', to: 'Run' }] },
+                overwrite: true,
+            });
+        } finally {
+            fs.chmodSync(path.join(root, 'assets'), 0o755);
+        }
+        assert.strictEqual(result.isError, true);
+        assert.match(text(result), /Nothing was written\.$/);
+        assert.strictEqual(fs.readFileSync(victim, 'utf-8'), before,
+            'the previous graph must be back in place, byte for byte');
+        assert.deepStrictEqual(
+            fs.readdirSync(path.join(root, 'assets/Anims')).filter(f => f.includes('.tmp-')), [],
+            'no aside copy left behind');
+    });
+
     it('aborts with nothing written when the existing meta is corrupt', async () => {
         const metaPath = path.join(root, 'assets/Anims/Broken.animgraph.meta');
         fs.writeFileSync(metaPath, '{ this is not json');

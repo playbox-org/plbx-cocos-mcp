@@ -56,6 +56,7 @@ function head(type) {
 }
 
 const TEMPLATES = {
+    __proto__: null, // user-sourced key (add_component type): no Object.prototype hits
     'cc.UITransform': () => ({
         component: {
             ...head('cc.UITransform'),
@@ -1179,7 +1180,7 @@ ALIASES.set('animationcontroller', 'cc.animation.AnimationController');
  * @returns {string|null}
  */
 export function resolveTemplateType(type) {
-    if (TEMPLATES[type]) return type;
+    if (Object.hasOwn(TEMPLATES, type)) return type;
     const viaAlias = ALIASES.get(String(type).toLowerCase());
     if (viaAlias) return viaAlias;
     if (type.startsWith('cc.')) {
@@ -1199,7 +1200,7 @@ export function templateTypes() {
  * @returns {{component: object, extras: object[]}}
  */
 export function createComponent(type) {
-    const factory = TEMPLATES[type];
+    const factory = Object.hasOwn(TEMPLATES, type) ? TEMPLATES[type] : null;
     if (!factory) throw new Error(`No component template for "${type}"`);
     const { component, extras = [] } = factory();
     return { component, extras };

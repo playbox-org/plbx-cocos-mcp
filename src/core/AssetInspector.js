@@ -16,7 +16,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { extractMeshBounds } from '../utils/glb.js';
-import { readTerrainInfo, TERRAIN_HEIGHT_FACTOR } from '../utils/terrainBin.js';
+import {
+    readTerrainInfo, withTerrainWarnings, TerrainWarnings, TERRAIN_HEIGHT_FACTOR
+} from '../utils/terrainBin.js';
 import { compressUuid, decompressUuid, isCompressedUuid } from '../utils/uuid.js';
 
 export class AssetInspector {
@@ -288,13 +290,19 @@ export class AssetInspector {
      * `height: {min, max, mean, minRaw, maxRaw, flat, quantum}` block. Both are emitted
      * here so a consumer can read either tool with one code path; the flat `heightMin`/
      * `isFlat`/… keys stay for compatibility and this text card renders from them.
+     *
+     * That includes the warnings: this tool's own layer findings are folded in through
+     * `withTerrainWarnings`, so `warnings` and `warningEntries` stay two views of ONE list
+     * built by ONE collector — terrainBin's contract, entry shape and subject cap included.
      */
     #inspectTerrain(entry) {
         const info = this.#terrainInfo(path.resolve(this.#projectRoot, entry.path));
         if (!info) return { error: 'Cannot read terrain file' };
         if (info.error) return { error: info.error };
 
-        const warnings = [...info.warnings];
+        // A dangling texture id is a defect IN the binary; only a tool with an AssetIndex can see
+        // that it dangles, so it is collected here — terrainBin owns its wording and aggregation.
+        const own = new TerrainWarnings();
         const layers = info.layers.map((layer) => {
             const resolved = {
                 ...layer,
@@ -304,20 +312,19 @@ export class AssetInspector {
                 detailMapName: layer.detailMapId ? this.#index.label(layer.detailMapId) : null,
                 normalMapName: layer.normalMapId ? this.#index.label(layer.normalMapId) : null
             };
-            for (const [key, idKey] of [['detailMapName', 'detailMapId'], ['normalMapName', 'normalMapId']]) {
-                if (layer[idKey] && resolved[key] === null) {
-                    warnings.push(
-                        `layer slot ${layer.slot} ${idKey} "${layer[idKey]}" does not resolve to a ` +
-                        'project asset — the texture was deleted, or its .meta has no texture sub-asset'
-                    );
+            for (const field of ['detailMap', 'normalMap']) {
+                if (layer[`${field}Id`] && resolved[`${field}Name`] === null) {
+                    own.family('unresolvedTexture',
+                        { slot: layer.slot, field, id: layer[`${field}Id`] });
                 }
             }
             return resolved;
         });
-
         // `filePath` is the absolute path readTerrainInfo echoes back — the card
-        // already carries the project-relative `path`, so drop it.
-        const { filePath, ...card } = info;
+        // already carries the project-relative `path`, so drop it. Uncapped list: this is the
+        // DATA card (`warnings.length` IS the problem count, as on terrainBin's own card) —
+        // GetAssetInfo's text card applies TERRAIN_MAX_WARNINGS.
+        const { filePath, ...card } = withTerrainWarnings(info, own);
         return {
             ...card,
             height: {
@@ -329,8 +336,7 @@ export class AssetInspector {
                 flat: info.isFlat,
                 quantum: TERRAIN_HEIGHT_FACTOR
             },
-            layers,
-            warnings
+            layers
         };
     }
 

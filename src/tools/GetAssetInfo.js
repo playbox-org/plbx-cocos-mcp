@@ -12,6 +12,7 @@ import { BaseTool } from './BaseTool.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 import { AssetInspector } from '../core/AssetInspector.js';
 import { resolveBuiltin } from '../core/builtins.js';
+import { renderTerrainWarnings, terrainWarningElision } from '../utils/terrainBin.js';
 
 export class GetAssetInfo extends BaseTool {
     get name() {
@@ -221,8 +222,8 @@ export class GetAssetInfo extends BaseTool {
 
     /**
      * Terrain card. `t` is AssetInspector's terrain block (readTerrainInfo plus
-     * resolved layer texture names) — or `{error}`, which #formatText does not
-     * render on its own, so it is printed here.
+     * resolved layer texture names and the warning entries that resolution adds) —
+     * or `{error}`, which #formatText does not render on its own, so it is printed here.
      */
     #formatTerrain(lines, t) {
         const fmt = v => Number(v.toFixed(4));
@@ -278,10 +279,16 @@ export class GetAssetInfo extends BaseTool {
                        `metallic ${fmt(layer.metallic)}, ${used}`);
         }
 
-        if (t.warnings?.length) {
+        // Through the shared renderer, so this card aggregates, caps and elides exactly like
+        // query_terrain/edit_terrain — a 16-layer palette of dead textures was 16 lines here
+        // against their one. `total` counts real problems, so the header stays truthful.
+        const { lines: warnings, total, elided } = renderTerrainWarnings(t);
+        if (total) {
             lines.push('');
-            lines.push(`## Terrain warnings (${t.warnings.length})`);
-            for (const warning of t.warnings) lines.push(`- ${warning}`);
+            lines.push(`## Terrain warnings (${total})`);
+            for (const warning of warnings) lines.push(`- ${warning}`);
+            // A continuation line, never a bullet: the header above counts real problems
+            if (elided) lines.push(terrainWarningElision(elided, total, 'warning'));
         }
     }
 

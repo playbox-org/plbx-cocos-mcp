@@ -36,6 +36,9 @@ import { compressUuid, isCompressedUuid } from '../utils/uuid.js';
 
 /** Builtin engine layers (cocos/scene-graph/layers.ts) */
 export const LAYERS = {
+    // Prototype-less: the lookup key is user input, and LAYERS.constructor
+    // used to pass resolveLayer's `!== undefined` guard as a layer value.
+    __proto__: null,
     ignore_raycast: 1 << 20,
     gizmos: 1 << 21,
     editor: 1 << 22,
@@ -48,6 +51,7 @@ export const LAYERS = {
 
 /** Asset meta importer → __expectedType__ */
 const IMPORTER_TO_TYPE = {
+    __proto__: null, // JSON-sourced key (meta importer)
     'sprite-frame': 'cc.SpriteFrame',
     'texture': 'cc.Texture2D',
     'image': 'cc.ImageAsset',
@@ -111,6 +115,7 @@ export function applyOperations(doc, ops, ctx = {}) {
 }
 
 const HANDLERS = {
+    __proto__: null, // user-sourced key (op.op), like every lookup table in this file
     set_node_property: setNodeProperty,
     add_node: addNode,
     remove_node: removeNode,
@@ -129,10 +134,9 @@ const HANDLERS = {
 };
 
 export function applyOperation(doc, op, ctx = {}) {
-    // `Object.hasOwn`, not a bare lookup: `HANDLERS.constructor` / `.toString` / `.valueOf` all
-    // resolve through Object.prototype, so a bare truthiness check would let
-    // `{op: "constructor"}` past this guard and "succeed" as a silent no-op. Mirrored in
-    // terrainOps.js's applyTerrainOperation so both op tables reject the same way.
+    // Prototype-less table AND an `Object.hasOwn` lookup: `constructor`/`toString`/`valueOf`
+    // must not resolve to a handler and "succeed" as a silent no-op. The hasOwn form is
+    // mirrored in terrainOps.js's applyTerrainOperation so both op tables reject the same way.
     if (!Object.hasOwn(HANDLERS, op?.op ?? '')) {
         throw new OperationError(
             `Unknown op "${op?.op}". Supported: ${Object.keys(HANDLERS).join(', ')}`
@@ -386,7 +390,10 @@ const HIDDEN_FIELDS = ['__type__', '_objFlags', '__editorExtras__', 'node', '__p
  * generic retry, and a redundant entry here would mask a regression in it.
  */
 const PROPERTY_ALIASES = {
-    'cc.Terrain': { asset: '__asset' }
+    // Prototype-less at EVERY level: both keys are JSON/user-sourced (__type__, then the
+    // property spelling), and an inner `.toString` would resolve to Object.prototype's.
+    __proto__: null,
+    'cc.Terrain': { __proto__: null, asset: '__asset' }
 };
 
 /**
@@ -394,17 +401,41 @@ const PROPERTY_ALIASES = {
  * Returns the serialized key, or undefined when the type has no alias for it
  * or the aliased key is absent from THIS object (so a stale template never
  * gets a manufactured field).
- *
- * Exported because `locateProperty` below is not the only top-segment
- * resolver: `overridePathForComponent` in instances.js builds the
- * `propertyPath` of a prefab-instance override and must agree with it — a
- * path the engine does not recognise is applied verbatim
- * (`targetPropOwner[name] = value`, scene-graph/prefab/utils.ts), i.e. a
- * silently dead override rather than an error.
  */
-export function aliasTopSegment(component, seg) {
+function aliasTopSegment(component, seg) {
     const alias = PROPERTY_ALIASES[component?.__type__]?.[seg];
     return alias !== undefined && Object.hasOwn(component, alias) ? alias : undefined;
+}
+
+const visibleFields = (obj) => Object.keys(obj).filter(k => !HIDDEN_FIELDS.includes(k));
+
+/** A name reachable through Object.prototype must never become an own key */
+const isPrototypeName = (seg) => seg in {};
+
+/**
+ * Resolve the TOP segment of a property path to its serialized key: the
+ * PROPERTY_ALIASES entry first, then the underscore retry ("sizeX" → "_sizeX").
+ * Throws unless `allowCreate` (a script may declare a field the file omits) —
+ * and never mints a prototype name, which as an own key shadows
+ * Object.prototype on load.
+ *
+ * Exported because `locateProperty` is not the only top-segment resolver:
+ * `overridePathForComponent` in instances.js builds the `propertyPath` of a
+ * prefab-instance override and MUST agree with it — the engine applies an
+ * override with a bare `targetPropOwner[name] = value`
+ * (scene-graph/prefab/utils.ts), so a path it does not recognise is not an
+ * error but a silently dead override.
+ */
+export function resolveTopSegment(component, seg, { allowCreate = false } = {}) {
+    if (typeof seg !== 'string' || Object.hasOwn(component, seg)) return seg;
+    const alias = aliasTopSegment(component, seg);
+    if (alias !== undefined) return alias;
+    if (Object.hasOwn(component, `_${seg}`)) return `_${seg}`;
+    if (allowCreate && !isPrototypeName(seg)) return seg;
+    throw new OperationError(
+        `Component ${component.__type__} has no property "${seg}". ` +
+        `Available: ${visibleFields(component).join(', ')}`
+    );
 }
 
 function locateProperty(doc, component, path, { allowCreate = false } = {}) {
@@ -414,29 +445,22 @@ function locateProperty(doc, component, path, { allowCreate = false } = {}) {
     for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         const last = i === segments.length - 1;
-        // `Object.hasOwn`, not `in`: `toString`/`constructor`/… resolve through
-        // Object.prototype, so `in` accepted them as existing fields and wrote
-        // them to disk as new own keys (same hardening as the HANDLERS guard).
-        if (typeof seg === 'string' && !Array.isArray(container) && !Object.hasOwn(container, seg)) {
-            // Component-level alias first (i === 0 — the map is keyed by the
-            // component type), and only when the aliased key really exists, so
-            // a stale template never gets a manufactured field. Like the retry
-            // below it rewrites segments[i] IN PLACE: callers pass the mutated
-            // segments on to dropTargetOverrides, which must record the
-            // serialized key, not the user's spelling.
-            const alias = i === 0 ? aliasTopSegment(component, seg) : undefined;
+        // Rewrites segments[i] IN PLACE: callers pass the mutated segments on to
+        // dropTargetOverrides, which must record the serialized key, not the
+        // user's spelling.
+        if (i === 0) {
+            segments[0] = resolveTopSegment(component, seg, { allowCreate: allowCreate && last });
+        } else if (typeof seg === 'string' && !Array.isArray(container) && !Object.hasOwn(container, seg)) {
+            // `Object.hasOwn`, not `in`: `toString`/`constructor`/… resolve through
+            // Object.prototype, so `in` accepted them as existing fields and wrote
+            // them to disk as new own keys (same hardening as the HANDLERS guard).
             const underscored = `_${seg}`;
-            if (alias !== undefined) {
-                segments[i] = alias;
-            } else if (Object.hasOwn(container, underscored)) {
+            if (Object.hasOwn(container, underscored)) {
                 segments[i] = underscored;
-            } else if (!(allowCreate && last)) {
-                const owner = i === 0
-                    ? `Component ${component.__type__}`
-                    : `"${segments.slice(0, i).join('.')}" (${container.__type__ ?? 'object'})`;
-                const fields = Object.keys(container).filter(k => !HIDDEN_FIELDS.includes(k));
+            } else if (!(allowCreate && last && !isPrototypeName(seg))) {
                 throw new OperationError(
-                    `${owner} has no property "${seg}". Available: ${fields.join(', ')}`
+                    `"${segments.slice(0, i).join('.')}" (${container.__type__ ?? 'object'}) ` +
+                    `has no property "${seg}". Available: ${visibleFields(container).join(', ')}`
                 );
             }
         }
@@ -687,7 +711,8 @@ function setNodeProperty(doc, op, ctx) {
         );
     }
 
-    const base = { position: node._lpos, rotation: node._euler, scale: node._lscale }[property];
+    // Prototype-less like every other table here: `property` is user input
+    const base = { __proto__: null, position: node._lpos, rotation: node._euler, scale: node._lscale }[property];
     for (const write of normalizeNodeProperty(property, value, base)) {
         node[write.field] = write.value;
     }
@@ -970,6 +995,7 @@ function addComponent(doc, op, ctx) {
  * bypass this — the editor forbids it too.
  */
 export const REQUIRED_COMPANIONS = {
+    __proto__: null, // JSON/user-sourced key (component __type__)
     'cc.UITransform': [
         'cc.Sprite', 'cc.Label', 'cc.RichText', 'cc.Button', 'cc.Layout',
         'cc.Widget', 'cc.Mask', 'cc.Graphics', 'cc.ProgressBar', 'cc.Slider',
@@ -988,7 +1014,7 @@ export const REQUIRED_COMPANIONS = {
  * the editor on scene activation (Widget.onEnable reads a null UITransform).
  */
 const COMPANIONS_FOR = (() => {
-    const map = {};
+    const map = Object.create(null); // user-sourced key (add_component type)
     for (const [companion, dependents] of Object.entries(REQUIRED_COMPANIONS)) {
         for (const dep of dependents) (map[dep] ??= []).push(companion);
     }
@@ -1192,25 +1218,29 @@ function removeMountedComponent(doc, op, ctx, stubIdx, hit) {
  * sync too.
  */
 const PAIRED_FIELDS = {
-    'cc.animation.AnimationController': { _graph: 'graph', graph: '_graph' },
+    // Prototype-less at EVERY level (see PROPERTY_ALIASES): the inner key is the written
+    // field name, and Object.prototype's `toString` must never be mirrored as a twin.
+    __proto__: null,
+    'cc.animation.AnimationController': { __proto__: null, _graph: 'graph', graph: '_graph' },
     // Particle-system pairs (editor serializes both halves, values equal):
     // enableCulling is the deprecated serialized alias of dataCulling
-    'cc.ParticleSystem': { _dataCulling: 'enableCulling', enableCulling: '_dataCulling' },
-    'cc.ShapeModule': { _shapeType: 'shapeType', shapeType: '_shapeType' },
+    'cc.ParticleSystem': { __proto__: null, _dataCulling: 'enableCulling', enableCulling: '_dataCulling' },
+    'cc.ShapeModule': { __proto__: null, _shapeType: 'shapeType', shapeType: '_shapeType' },
     'cc.TextureAnimationModule': {
+        __proto__: null,
         _numTilesX: 'numTilesX', numTilesX: '_numTilesX',
         _numTilesY: 'numTilesY', numTilesY: '_numTilesY'
     },
-    'cc.ParticleSystem2D': { _preview: 'preview', preview: '_preview' },
+    'cc.ParticleSystem2D': { __proto__: null, _preview: 'preview', preview: '_preview' },
     // Light components: the HDR field and its formerlySerializedAs twin.
     // NOTE: the LDR field (_illuminanceLDR / _luminanceLDR) is intentionally
     // NOT mirrored — it is HDR × standard-exposure (≈ HDR/38400), not an equal
     // twin, and the editor itself leaves it at default when HDR is bumped
     // (3.8 defaults to the HDR pipeline). LDR-pipeline projects must set it
     // explicitly. See CODE_REVIEW finding #8.
-    'cc.DirectionalLight': { _illuminanceHDR: '_illuminance', _illuminance: '_illuminanceHDR' },
-    'cc.SphereLight': { _luminanceHDR: '_luminance', _luminance: '_luminanceHDR' },
-    'cc.SpotLight': { _luminanceHDR: '_luminance', _luminance: '_luminanceHDR' }
+    'cc.DirectionalLight': { __proto__: null, _illuminanceHDR: '_illuminance', _illuminance: '_illuminanceHDR' },
+    'cc.SphereLight': { __proto__: null, _luminanceHDR: '_luminance', _luminance: '_luminanceHDR' },
+    'cc.SpotLight': { __proto__: null, _luminanceHDR: '_luminance', _luminance: '_luminanceHDR' }
 };
 
 function syncPairedField(container, key, value) {
@@ -1263,7 +1293,7 @@ function setPropertyOnComponent(doc, compIdx, property, rawValue, ctx, { isScrip
         // __type__) — mirror each field the merge touched, normalizing the
         // underscore twin the same way mergeTyped did.
         for (const rawK of Object.keys(value)) {
-            const k = rawK in merged ? rawK : `_${rawK}`;
+            const k = Object.hasOwn(merged, rawK) ? rawK : `_${rawK}`;
             syncPairedField(merged, k, merged[k]);
         }
     } else {

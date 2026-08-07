@@ -49,6 +49,7 @@ import {
     vertexCounts,
     heightToRaw,
     TERRAIN_HEIGHT_BASE,
+    TERRAIN_MAX_BLEND_LAYERS,
     TERRAIN_HEIGHT_FMIN,
     TERRAIN_HEIGHT_FMAX,
     TERRAIN_DATA_VERSION7,
@@ -106,6 +107,15 @@ function texel(data, i, j) {
 
 /** Sum of one texel's four channels */
 const texelSum = (data, i, j) => texel(data, i, j).reduce((a, b) => a + b, 0);
+
+/** Write one texel's four channel BYTES (terrainBin's setWeightAtTexel takes 0..1 fractions) */
+function setTexelBytes(data, i, j, bytes) {
+    const base = weightTexelIndex(data, i, j);
+    for (let k = 0; k < TERRAIN_MAX_BLEND_LAYERS; k++) data.weights[base + k] = bytes[k];
+}
+
+/** terrainOps' own `fmt`: 3 digits, no trailing zeros */
+const fmt3 = (v) => String(Number(v.toFixed(3)));
 
 /** Texels of the whole weight map that do not sum to 255 (observable or not) */
 function countShort(data) {
@@ -1276,6 +1286,146 @@ describe('terrainOps — paint_layer', () => {
         assert.deepStrictEqual(texel(data, 2, 1), [170, 85, 0, 0]);
     });
 
+    // The falloff BLENDS toward the requested weight, it does not write `weight * t`. Writing it
+    // made every mask border erase the coverage it reached — for heights the same module has always
+    // blended (`current + (target - current) * t`), and a paint has to agree or two overlapping
+    // strokes leave a bare stripe of the underlying layer down the middle of continuous painting.
+    it('blends a falloff paint into existing coverage instead of erasing it', () => {
+        // Two 20 m strokes overlapping by 4 m, both with a 4 m falloff. z is deliberately overhung
+        // so only the x edges taper: the seam at x = 16 is where stroke 1 reached full weight and
+        // stroke 2's ramp starts at 0.
+        const data = terrain({ weightMapSize: 32, layers: 2, slots: [0, 1] });
+        const stroke = (x) => ({
+            op: 'paint_layer', layer: 1, weight: 1, falloff: 4,
+            region: { x, z: -8, width: 20, depth: 48 },
+        });
+        apply(data, stroke(0));
+        const afterFirst = channelGrid(data, 1);
+        // Texels sit every 32/31 m, so the seam texel is at x = 16.5 m: stroke 2's ramp is barely
+        // above 0 there while stroke 1 had it all but fully covered
+        assert.ok(afterFirst[0][16] > 200, `stroke 1 covers the seam (${afterFirst[0][16]})`);
+
+        apply(data, stroke(16));
+        const afterBoth = channelGrid(data, 1);
+        for (let j = 0; j < 32; j++) {
+            for (let i = 0; i < 32; i++) {
+                // Painting TOWARD weight 1 can never lower a texel: t = 0 keeps it, t = 1 sets 255
+                assert.ok(afterBoth[j][i] >= afterFirst[j][i],
+                    `texel (${i},${j}) fell from ${afterFirst[j][i]} to ${afterBoth[j][i]}`);
+                assert.strictEqual(texelSum(data, i, j), 255, `texel (${i},${j})`);
+            }
+        }
+        // …so the continuously painted middle stays continuous. Two blended ramps compose as
+        // `1 - (1 - a)(1 - b)`, which bottoms out at 0.75 where both are half — the old write-through
+        // left the seam texel at its own ramp value (0.13) with stroke 1's coverage gone.
+        for (let i = 4; i < 32; i++) {
+            assert.ok(afterBoth[0][i] > 180, `texel ${i} of the joined strokes is ${afterBoth[0][i]}`);
+        }
+    });
+
+    it('leaves an already-normalized texel byte-identical where the mask factor is 0', () => {
+        const data = terrain({ weightMapSize: 8, layers: 3, slots: [0, 1, 2] });
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 8; i++) setTexelBytes(data, i, j, [100, 80, 75, 0]);
+        }
+        const before = Uint8Array.from(data.weights);
+        // The whole terrain with a falloff: the border texels sit exactly ON the region edge, t = 0
+        apply(data, { op: 'paint_layer', layer: 2, weight: 1, falloff: 8 });
+        for (let n = 0; n < 8; n++) {
+            for (const [i, j] of [[n, 0], [n, 7], [0, n], [7, n]]) {
+                assert.deepStrictEqual(texel(data, i, j), [100, 80, 75, 0], `border texel (${i},${j})`);
+            }
+        }
+        assert.ok(data.weights.some((v, n) => v !== before[n]), 'the inside was painted');
+
+        // Re-running the identical paint moves nothing where the factor is 0 (nothing to blend) or
+        // 1 (already at the target) — texels 2..5 of both axes are the 8 m-inside plateau
+        const settled = Uint8Array.from(data.weights);
+        apply(data, { op: 'paint_layer', layer: 2, weight: 1, falloff: 8 });
+        for (const [i, j] of [[0, 0], [7, 3], [3, 7], [2, 2], [5, 5], [3, 4]]) {
+            assert.deepStrictEqual(
+                texel(data, i, j),
+                [0, 1, 2, 3].map((k) => settled[weightTexelIndex(data, i, j) + k]),
+                `texel (${i},${j}) at factor 0 or 1`
+            );
+        }
+    });
+
+    // A blend by 0 is a no-op only for a texel that already sums to 255. A SHORT one is repaired
+    // (deliberately — a short texel renders darkened), and that repair was silent: `repaired`
+    // counts only blocks that GAINED a channel, and `short` is measured AFTER the write.
+    it('reports the texels it repaired, including the ones the mask factor left at 0', () => {
+        const data = terrain({ weightMapSize: 8, layers: 3, slots: [0, 1, 2] });
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 8; i++) setTexelBytes(data, i, j, [85, 85, 85, 0]);
+        }
+        // (0,0) is a corner of the whole-terrain region → factor 0; (1,1) sits 4.571 m in → 0.571
+        setTexelBytes(data, 0, 0, [80, 80, 80, 0]);
+        setTexelBytes(data, 1, 1, [80, 80, 80, 0]);
+        const { results } = apply(data, { op: 'paint_layer', layer: 2, weight: 1, falloff: 8 });
+
+        // The repair happened at factor 0: only the painted layer's own byte was left alone
+        assert.strictEqual(texelSum(data, 0, 0), 255);
+        assert.strictEqual(texel(data, 0, 0)[2], 80, 'a blend by 0 keeps the painted channel');
+        assert.notDeepStrictEqual(texel(data, 0, 0), [80, 80, 80, 0]);
+        assert.ok(texel(data, 1, 1)[2] > 80, 'the in-ramp texel was painted');
+        assert.strictEqual(texelSum(data, 1, 1), 255);
+
+        const notes = results[0].notes.join('\n');
+        assert.match(notes, /2 texels did not sum to 255 before this op and were rescaled to it, as they were written/);
+        assert.match(notes, /1 texel changed where the mask factor is 0/);
+        // …and it is a repair, not the "please report it" defect
+        assert.doesNotMatch(notes, /please report it/);
+        assert.strictEqual(countShort(data), 0);
+
+        // Nothing to repair → nothing claimed: the same paint over a normalized map stays quiet
+        const clean = terrain({ weightMapSize: 8, layers: 3, slots: [0, 1, 2] });
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 8; i++) setTexelBytes(clean, i, j, [85, 85, 85, 0]);
+        }
+        const quiet = apply(clean, { op: 'paint_layer', layer: 2, weight: 1, falloff: 8 });
+        assert.doesNotMatch(quiet.results[0].notes.join('\n'), /did not sum to 255 before this op|mask factor is 0/);
+    });
+
+    // `rescaled` counts short texels at ANY factor, so justifying ALL of them with "they move bytes
+    // this op was not asked to write" claimed the wrong thing about most of them: a texel at factor 1
+    // WAS asked to be written. Measured, 64 of 64 texels are rescaled while only the 28 of the border
+    // ring sit at factor 0 — and only those 28 are what the unasked-bytes clause may claim.
+    it('justifies the repair count by what it counts, not by the factor-0 subset', () => {
+        const data = terrain({ weightMapSize: 8, layers: 3, slots: [0, 1, 2] });
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 8; i++) setTexelBytes(data, i, j, [80, 80, 80, 0]);
+        }
+        // Whole terrain with a 2 m falloff: only the border ring's texels sit ON the region edge
+        const { results } = apply(data, { op: 'paint_layer', layer: 2, weight: 1, falloff: 2 });
+        // MEASURED: a blend by 0 keeps the painted channel, so a texel still holding 80 there is a
+        // factor-0 one — 28, the border ring, against 64 rescaled in all
+        let atZeroFactor = 0;
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 8; i++) if (texel(data, i, j)[2] === 80) atZeroFactor++;
+        }
+        assert.strictEqual(atZeroFactor, 28);
+        const notes = results[0].notes.join('\n');
+        assert.match(notes, /64 texels did not sum to 255 before this op and were rescaled to it, as they were written/);
+        assert.match(notes, /28 texels changed where the mask factor is 0/, 'the factor-0 subset is 28 of 64');
+        assert.doesNotMatch(notes, /a factor of 0 otherwise means/);
+        // the count the op was not asked to write is the factor-0 one, and it is the only one claimed
+        assert.match(notes, /bytes moved outside what this op was asked to write: a factor-0 texel asked for no change at all/);
+        assert.doesNotMatch(notes, /whatever the mask factor there/);
+        assert.doesNotMatch(notes, /the sweep reaches beyond/, 'no block gained a layer here');
+    });
+
+    it('agrees with itself about one texel', () => {
+        const data = terrain({ weightMapSize: 8, layers: 3, slots: [0, 1, 2] });
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 8; i++) setTexelBytes(data, i, j, [85, 85, 85, 0]);
+        }
+        setTexelBytes(data, 3, 3, [80, 80, 80, 0]);
+        const { results } = apply(data, { op: 'paint_layer', layer: 2, weight: 1 });
+        // `plural()` yields "1 texel" — the verb beside it used to be hardcoded plural
+        assert.match(results[0].notes.join('\n'), /1 texel did not sum to 255 before this op and was rescaled to it, as it was written/);
+    });
+
     it('assigns the layer into the first free block channel', () => {
         const data = terrain({ blockCount: [2, 1], weightMapSize: 4, layers: 3, slots: [0] });
         const { results } = apply(data, { op: 'paint_layer', layer: 2, weight: 1 });
@@ -1450,8 +1600,8 @@ describe('terrainOps — T4 review regressions', () => {
         for (let j = 0; j < 4; j++) {
             for (let i = 0; i < 4; i++) assert.strictEqual(texelSum(data, i, j), 255, `texel (${i},${j})`);
         }
-        assert.match(results[0].notes.join('\n'), /did not sum to 255/);
-        assert.match(results[0].notes.join('\n'), /rescaled to 255 before painting/);
+        assert.match(results[0].notes.join('\n'), /16 texels did not sum to 255/);
+        assert.match(results[0].notes.join('\n'), /in 1 block that gained layer 1, swept WHOLE before painting/);
     });
 
     // The sum-255 diagnostic must measure the texels this op WROTE, not every texel of the
@@ -1522,6 +1672,218 @@ describe('terrainOps — T4 review regressions', () => {
             op: 'paint_layer', layer: 1, weight: 1, region: { x: 8, z: 8, width: 16, depth: 16 }, falloff: 2,
         });
         assert.doesNotMatch(r2.results[0].notes.join('\n'), /wider than the region/);
+    });
+
+    // The note has to bound the MOVE, not name an amount "every texel keeps": the blend leaves
+    // `1 - t` of what a texel held with `t <= peak`, so `1 - peak` is a floor the deepest texel
+    // alone sits at — the note claimed it of every texel while its own weight range disproved it.
+    it('bounds the blend by the achieved factor when the falloff is too wide', () => {
+        const data = terrain({ weightMapSize: 8, layers: 2, slots: [0, 1] });
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 8; i++) setTexelBytes(data, i, j, [0, 255, 0, 0]);
+        }
+        // Painted DOWN to 0 from full coverage, so a texel's remaining byte IS what it kept
+        const { results } = apply(data, {
+            op: 'paint_layer', layer: 1, weight: 0, falloff: 20,
+            region: { x: 6, z: 6, width: 20, depth: 20 },
+        });
+        const notes = results[0].notes.join('\n');
+        assert.match(notes, /the mask peaks at 0\.5/); // min(1, 10 / 20)
+
+        const bound = Number(/no texel moves more than ([\d.]+) of the way/.exec(notes)?.[1]);
+        assert.ok(Number.isFinite(bound), `no move bound in: ${notes}`);
+        const kept = [];
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 8; i++) kept.push(texel(data, i, j)[1] / 255);
+        }
+        const moved = Math.max(...kept.map((v) => 1 - v));
+        assert.ok(moved <= bound + 1 / 255, `moved ${fmt3(moved)} exceeds the stated ${bound}`);
+        assert.ok(moved >= bound - 1 / 255, `the stated ${bound} is not reached (max ${fmt3(moved)})`);
+        // The old claim, disproven by measurement: NO texel keeps as little as 1 - peakFactor
+        assert.ok(Math.min(...kept) > 0.5, `least kept is ${fmt3(Math.min(...kept))}, not 0.5`);
+        assert.doesNotMatch(notes, /every texel keeps/);
+        // and the weight range the note quotes is the one the summary reports
+        assert.match(notes, new RegExp(`weights written ${fmt3(Math.min(...kept))}\\.\\.`));
+    });
+
+    // Same claim on the band branch, where the peak is MEASURED rather than derived
+    it('bounds the blend by the measured factor when a band is thinner than its falloff', () => {
+        // Ramp h = (x - 16) / 4, so the 0 m contour is the line x = 16 and the band is x 14..18
+        const data = terrain({ weightMapSize: 32, layers: 2, slots: [0, 1] });
+        for (let j = 0; j < 33; j++) {
+            for (let i = 0; i < 33; i++) setVertexHeight(data, i, j, (i - 16) / 4, true);
+        }
+        const { results } = apply(data, {
+            op: 'paint_layer', layer: 1, weight: 1, falloff: 4,
+            region: { shape: 'band', contour: 0, inner: -2, outer: 2 },
+        });
+        const notes = results[0].notes.join('\n');
+        assert.match(notes, /wider than the band is thick/);
+        const bound = Number(/the mask peaks at ([\d.]+)/.exec(notes)?.[1]);
+        assert.ok(bound > 0 && bound < 0.5, `measured peak ${bound} (half-thickness 2 / falloff 4)`);
+
+        // Painting up from 0 coverage, so the stored byte IS the fraction of the way it moved
+        let moved = 0;
+        for (let j = 0; j < 32; j++) {
+            for (let i = 0; i < 32; i++) moved = Math.max(moved, texel(data, i, j)[1] / 255);
+        }
+        assert.ok(moved <= bound + 1 / 255, `moved ${fmt3(moved)} exceeds the stated ${bound}`);
+        assert.ok(moved >= bound - 1 / 255, `the stated ${bound} is not reached (max ${fmt3(moved)})`);
+        assert.doesNotMatch(notes, /every texel keeps/);
+    });
+
+    // The mask bounds NOTHING where the painted layer is the block's only assigned one: paintTexel
+    // stores 255 whatever the factor (the same fact the op reports as `ignored`), so the note that
+    // claimed "no texel moves more than 0.114 of the way toward 0.5" was refuted by its own
+    // parenthetical — every texel moved the whole way and PAST the target.
+    it('does not bound the move by the mask where the block assigns this layer alone', () => {
+        const data = terrain({ weightMapSize: 8, layers: 2, slots: [0] });
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 8; i++) setWeightAtTexel(data, i, j, [0, 0, 0, 0]);
+        }
+        const { results } = apply(data, {
+            op: 'paint_layer', layer: 0, weight: 0.5, falloff: 20,
+            region: { x: 8, z: 8, width: 8, depth: 8 },
+        });
+        // measured: all four covered texels went 0 -> 255, i.e. twice the way to the requested 0.5
+        for (const [i, j] of [[2, 2], [3, 2], [2, 3], [3, 3]]) {
+            assert.deepStrictEqual(texel(data, i, j), [255, 0, 0, 0], `texel (${i},${j})`);
+        }
+        const notes = results[0].notes.join('\n');
+        assert.match(notes, /the mask peaks at 0\.2 \(0\.114 on the texel grid\)/);
+        assert.match(notes, /but that bounds nothing here/);
+        assert.match(notes, /every texel it covers \(4\) sits in a block assigning layer 0 alone/);
+        assert.doesNotMatch(notes, /no texel moves more than/, 'there is no such bound here');
+        assert.doesNotMatch(notes, /reached NOWHERE/, 'weight 1 was reached everywhere');
+        // …and a single stored value is not printed as a range, which the summary omits outright
+        assert.doesNotMatch(notes, /weights written 1\.\.1/);
+        assert.match(notes, /every touched texel at weight 1/);
+        assert.doesNotMatch(results[0].summary, /weights written/);
+    });
+
+    it('excepts those texels from the bound but keeps it for the blended ones', () => {
+        // Block [0,0] assigns layer 0 alone, block [1,0] blends 0 and 1: one paint, both regimes
+        const data = terrain({ blockCount: [2, 1], weightMapSize: 8, layers: 2, slots: [] });
+        setBlockLayers(data, 0, 0, [0, -1, -1, -1]);
+        setBlockLayers(data, 1, 0, [0, 1, -1, -1]);
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 8; i++) setWeightAtTexel(data, i, j, [0, 0, 0, 0]);
+            for (let i = 8; i < 16; i++) setWeightAtTexel(data, i, j, [0, 1, 0, 0]);
+        }
+        const { results } = apply(data, {
+            op: 'paint_layer', layer: 0, weight: 1, falloff: 30,
+            region: { x: 20, z: 8, width: 24, depth: 8 },
+        });
+        const notes = results[0].notes.join('\n');
+        assert.match(notes, /EXCEPT the 6 texels whose block assigns layer 0 alone/);
+        const bound = Number(/no texel moves more than ([\d.]+) of the way/.exec(notes)?.[1]);
+        assert.ok(Number.isFinite(bound), `no move bound in: ${notes}`);
+        // Painting up from 0 coverage, so the stored byte IS the fraction of the way it moved
+        for (let j = 0; j < 8; j++) {
+            for (let i = 8; i < 16; i++) {
+                assert.ok(texel(data, i, j)[0] / 255 <= bound + 1 / 255,
+                    `blended texel (${i},${j}) moved past the stated ${bound}`);
+            }
+            // …while the sole-layer block ignored the mask entirely
+            for (let i = 0; i < 8; i++) {
+                assert.ok([0, 255].includes(texel(data, i, j)[0]), `sole-layer texel (${i},${j})`);
+            }
+        }
+    });
+
+    // A sole-layer block stores 255 whatever the mask says, so the REQUEST is ignored at every one of
+    // its texels — but the count was decided against the BLENDED value, which is itself 255 at factor 0
+    // on an already-full texel. Every falloff border texel therefore dropped out of the count: measured
+    // 196 of the 289 the byte scan finds, while the same op without a falloff reported all 289.
+    it('counts every texel whose block ignored the requested weight, at any mask factor', () => {
+        const sole = () => terrain({
+            blockCount: [2, 2], weightMapSize: 16, layers: 3, slots: [0, -1, -1, -1],
+        });
+        const region = { x: 0, z: 0, width: 32, depth: 32 };
+        const data = sole();
+        const { results } = apply(data, { op: 'paint_layer', layer: 0, weight: 0, region, falloff: 8 });
+        // MEASURED: all 17x17 touched texels stand at 255, i.e. the requested 0 was ignored at each
+        let at255 = 0;
+        for (let j = 0; j <= 16; j++) {
+            for (let i = 0; i <= 16; i++) if (texel(data, i, j)[0] === 255) at255++;
+        }
+        assert.strictEqual(at255, 289);
+        assert.match(results[0].summary, /over 289 texels in 4 blocks/);
+        assert.match(results[0].notes.join('\n'), /289 texels got weight 1 instead of the requested 0, whatever the mask factor there/);
+
+        // …and the falloff cannot change that count, since the request is one number for the region
+        const flat = apply(sole(), { op: 'paint_layer', layer: 0, weight: 0, region });
+        assert.match(flat.results[0].notes.join('\n'), /289 texels got weight 1 instead of the requested 0,/);
+    });
+
+    // The wide-falloff note's EXCEPT clause counted `ignored` while its parenthetical quoted the whole
+    // region: "reached NOWHERE …, EXCEPT the 196 texels … (every touched texel at weight 1)" — 289 and
+    // 196 in one sentence. The escapees are the FORCED texels, a property of their blocks alone, so
+    // "bounds nothing here" holds whenever the whole region sits in such blocks (against the blended
+    // value it needed a texel the mask had actually moved, which a factor-0 border never is).
+    it('states one count in the wide-falloff note when every texel is in a sole-layer block', () => {
+        const sole = () => terrain({
+            blockCount: [2, 2], weightMapSize: 16, layers: 3, slots: [0, -1, -1, -1],
+        });
+        const region = { x: 0, z: 0, width: 32, depth: 32 };
+        const { results } = apply(sole(), {
+            op: 'paint_layer', layer: 0, weight: 0.25, region, falloff: 40,
+        });
+        const wideNote = results[0].notes.find((n) => n.startsWith('falloff 40 m'));
+        assert.match(wideNote, /but that bounds nothing here: every texel it covers \(289\)/);
+        assert.doesNotMatch(wideNote, /EXCEPT/, 'the exception cannot coexist with "bounds nothing"');
+        assert.doesNotMatch(wideNote, /reached NOWHERE/);
+        assert.doesNotMatch(wideNote, /\b196\b/, 'the two clauses used to disagree by 93 texels');
+        assert.match(results[0].notes.join('\n'), /289 texels got weight 1 instead of the requested 0\.25/);
+
+        // At weight 1 the request IS 1, so nothing is ignored — but the same texels still escape the
+        // bound, so the note keeps counting them and its "see below" pointer goes away with the note
+        const asked = apply(sole(), { op: 'paint_layer', layer: 0, weight: 1, region, falloff: 40 });
+        const notes = asked.results[0].notes.join('\n');
+        assert.match(notes, /every texel it covers \(289\)/);
+        assert.doesNotMatch(notes, /got weight 1 instead of the requested/);
+        assert.doesNotMatch(notes, /see below/);
+    });
+
+    // Two differently-worded notes for one phenomenon, with disjoint counts and no statement that
+    // they partition: measured, a block gaining the layer contributed 64 and the writes 64 for 128
+    // touched texels, reported as "64 … of the newly-multi-layer block(s)" AND "64 … in the region".
+    it('accounts for both halves of the short-texel repair in one note', () => {
+        const data = terrain({ blockCount: [2, 1], weightMapSize: 8, layers: 3 });
+        setBlockLayers(data, 0, 0, [0, -1, -1, -1]); // gains layer 2 → swept before painting
+        setBlockLayers(data, 1, 0, [0, 1, 2, -1]); // already assigns it → rescaled as written
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 16; i++) setTexelBytes(data, i, j, [90, 10, 5, 0]); // sums to 105
+        }
+        const { results } = apply(data, { op: 'paint_layer', layer: 2, weight: 1 });
+        const accounts = results[0].notes.filter((n) => /did not sum to 255/.test(n));
+        assert.strictEqual(accounts.length, 1, `one account, not two:\n${accounts.join('\n')}`);
+        assert.match(accounts[0], /128 texels did not sum to 255 before this op and were rescaled to it, 64 in 1 block that gained layer 2, swept WHOLE before painting/);
+        assert.match(accounts[0], /64 as they were written/);
+        // …and 128 is every touched texel, so the two halves partition the region
+        assert.match(results[0].summary, /over 128 texels in 2 blocks/);
+        assert.strictEqual(countShort(data), 0);
+    });
+
+    // …and the sweep's justification must hold for what it counts: `repaired` sums over the blocks
+    // that GAINED the layer, which is not the same as the blocks that became multi-layer — a block
+    // already blending two layers was counted as "left over from when the block assigned a single
+    // layer, where the shader ignores the weight map", where the shortness had been rendering all along.
+    it('does not explain the sweep by a single-layer block that was already blending two', () => {
+        const data = terrain({ weightMapSize: 8, layers: 3, slots: [0, 1, -1, -1] });
+        for (let j = 0; j < 8; j++) {
+            for (let i = 0; i < 8; i++) setTexelBytes(data, i, j, [90, 10, 0, 0]); // sums to 100
+        }
+        const { results } = apply(data, {
+            op: 'paint_layer', layer: 2, weight: 1, region: { x: 0, z: 0, width: 4, depth: 4 },
+        });
+        const notes = results[0].notes.join('\n');
+        assert.match(notes, /64 texels did not sum to 255 before this op and were rescaled to it, in 1 block that gained layer 2, swept WHOLE before painting/);
+        assert.match(notes, /gaining a channel changes what the block blends/);
+        assert.doesNotMatch(notes, /left over from when the block assigned a single layer/);
+        // the sweep reached the whole block: 64 texels for a region that touches exactly one
+        assert.match(results[0].summary, /over 1 texel in 1 block/);
+        assert.strictEqual(countShort(data), 0);
     });
 
     it('reports the painted texel index range so a falloff paint is verifiable', () => {
@@ -1640,6 +2002,47 @@ describe('terrainOps — set_block_layers', () => {
         assert.strictEqual(texelSum(data, 0, 0), 255);
         assert.ok(!again.results[0].notes.join('\n').includes('renormalized'),
             'nothing to repair — the channel was already zeroed when it lost its layer');
+    });
+
+    // A weight byte belongs to its LAYER, not to its channel position. Renormalizing by position
+    // handed the bytes to whichever layer landed on that channel: [0,1] -> [1] gave layer 0's
+    // coverage to layer 1 and dropped layer 1's own, which is exactly what the emitted note claimed
+    // did NOT happen. terrainBin's removeLayer has always moved the weights along.
+    it('moves each channel\'s weights with its layer, dropping only un-assigned ones', () => {
+        const data = terrain({ weightMapSize: 4, layers: 3 });
+        for (let j = 0; j < 4; j++) {
+            for (let i = 0; i < 4; i++) setTexelBytes(data, i, j, [51, 68, 136, 0]);
+        }
+        const { results } = apply(data, { op: 'set_block_layers', block: [0, 0], layers: [1, 2] });
+        assert.deepStrictEqual(blockLayers(data, 0, 0), [1, 2, -1, -1]);
+        // layers 1 and 2 keep their own 68 : 136 ratio, rescaled from 204 up to 255; layer 0's 51 is
+        // gone rather than inherited by layer 1
+        assert.deepStrictEqual(texel(data, 0, 0), [85, 170, 0, 0]);
+        assert.strictEqual(texelSum(data, 2, 3), 255);
+        const notes = results[0].notes.join('\n');
+        assert.match(notes, /weights of 16 texels FOLLOWED their layer/);
+        assert.match(notes, /16 texels were renormalized/);
+    });
+
+    it('keeps every layer\'s coverage when the channels are only reordered', () => {
+        const data = terrain({ blockCount: [1, 1], weightMapSize: 4, layers: 2 });
+        for (let j = 0; j < 4; j++) {
+            for (let i = 0; i < 4; i++) setTexelBytes(data, i, j, [64, 191, 0, 0]);
+        }
+        /** What each palette slot covers at texel (0,0), by its channel */
+        const coverage = () => {
+            const slots = blockLayers(data, 0, 0);
+            return [0, 1].map((s) => texel(data, 0, 0)[slots.indexOf(s)]);
+        };
+        assert.deepStrictEqual(coverage(), [64, 191]);
+
+        const { results } = apply(data, { op: 'set_block_layers', block: [0, 0], layers: [1, 0] });
+        assert.deepStrictEqual(blockLayers(data, 0, 0), [1, 0, -1, -1]);
+        assert.deepStrictEqual(coverage(), [64, 191], 'a pure reorder cannot change what a layer covers');
+        assert.deepStrictEqual(texel(data, 0, 0), [191, 64, 0, 0]);
+        // The sum never left 255, so there was nothing to renormalize — only to move
+        assert.match(results[0].notes.join('\n'), /weights of 16 texels FOLLOWED their layer/);
+        assert.doesNotMatch(results[0].notes.join('\n'), /were renormalized/);
     });
 
     // The same repair remove_layer performs: a texel covered ONLY by an un-assigned layer has

@@ -183,6 +183,63 @@ describe('MetaGenerator', () => {
         assert.strictEqual(fs.readFileSync(first.metaPath, 'utf-8'), onDisk);
     });
 
+    // Both entry points must agree about one path. writeMetaFile gated on `existsSync`, which
+    // FOLLOWS the link: a dangling `<asset>.meta` read as "no meta at all", so a fresh uuid was
+    // minted and writeMeta's rename replaced the link — while resolveAssetMeta refused it.
+    it('should refuse a symlinked meta path, exactly as resolveAssetMeta does', () => {
+        const target = path.join(assets, 'Linked.mtl');
+        fs.writeFileSync(target, '{}');
+        const metaPath = `${target}.meta`;
+        const gone = path.join(assets, 'link-target.meta');
+        fs.symlinkSync(gone, metaPath); // dangling
+
+        assert.throws(() => writeMetaFile(target), (err) => {
+            assert.ok(err instanceof MetaGenerationError, err.constructor.name);
+            // folder-qualified: a bare "Linked.mtl.meta" never says which folder to look in
+            assert.match(err.message, /^assets\/Linked\.mtl\.meta is a symlink/);
+            assert.strictEqual(err.assetPath, target); // which path of a chain walk was refused
+            return true;
+        });
+        assert.ok(fs.lstatSync(metaPath).isSymbolicLink(), 'the link is left exactly as found');
+        assert.strictEqual(fs.existsSync(gone), false, 'no meta written through the link');
+
+        // …and the builders' entry point refuses the same path with the same reason
+        const out = resolveAssetMeta(metaPath, 'assets/Linked.mtl', () => {
+            throw new Error('the factory must not run for a link at the meta path');
+        });
+        assert.match(out.error, /^assets\/Linked\.mtl\.meta is a symlink/);
+        assert.strictEqual(out.uuid, null);
+    });
+
+    // The lstat gate answers three ways, and only 'exists' may be a skip: an unclassifiable
+    // errno reported as `created: false` claimed a meta that was never written (before the gate,
+    // `existsSync` returned false on EACCES and the write failed loudly).
+    it('should refuse an unreadable meta path instead of calling it "meta exists"', (t) => {
+        const dir = path.join(assets, 'Locked');
+        fs.mkdirSync(dir, { recursive: true });
+        const target = path.join(dir, 'x.mtl');
+        fs.writeFileSync(target, '{}');
+        fs.chmodSync(dir, 0o444); // readable, NOT searchable — lstat inside gives EACCES
+        try {
+            try {
+                fs.lstatSync(`${target}.meta`);
+                return t.skip('mode 444 is still searchable here'); // root, or a mode-blind fs
+            } catch (err) {
+                if (err.code !== 'EACCES') return t.skip(`unexpected ${err.code}`);
+            }
+            assert.throws(() => writeMetaFile(target), (err) => {
+                assert.ok(err instanceof MetaGenerationError, err.constructor.name);
+                assert.match(err.message, /^Cannot tell whether Locked\/x\.mtl\.meta exists: EACCES/);
+                assert.match(err.message, /No \.meta was minted/);
+                assert.strictEqual(err.assetPath, target);
+                return true;
+            });
+        } finally {
+            fs.chmodSync(dir, 0o755);
+        }
+        assert.strictEqual(fs.existsSync(`${target}.meta`), false, 'no meta was written');
+    });
+
     it('should create metas for the parent folder chain, excluding assets root', () => {
         const file = path.join(assets, 'Scripts', 'Core', 'Spin.ts');
         const created = ensureParentDirMetas(file, assets);
@@ -350,6 +407,64 @@ describe('MetaGenerator', () => {
             assert.match(out.error, /Nothing was written\.$/);
         });
 
+        // JSON.parse quotes the input it choked on, and `<asset>.meta` may be a symlink to any
+        // file — so the error names the meta and never carries a slice of its content.
+        it('does not echo the meta\'s content into the error', () => {
+            const metaPath = path.join(dir, 'secret.prefab.meta');
+            // the parser quotes the first ~10 bytes, so that is where the probe sits
+            fs.writeFileSync(metaPath, 'TOPSECRET-' + 'private-key-material\n'.repeat(4));
+            const out = resolveAssetMeta(metaPath, 'assets/secret.prefab', mint);
+            assert.strictEqual(out.uuid, null);
+            assert.strictEqual(out.newMeta, null);
+            assert.ok(!out.error.includes('TOPSECRET'), `content leaked: ${out.error}`);
+            // still actionable: which meta, and what to do about it
+            assert.match(out.error,
+                /^Cannot parse existing assets\/secret\.prefab\.meta: it is not valid JSON/);
+            assert.match(out.error, /delete it and re-run|fix it by hand/);
+            assert.match(out.error, /Nothing was written\.$/);
+        });
+
+        // Hiding the PARSER's message (it quotes content) must not swallow the READ error too:
+        // "it is not valid JSON — delete it" is both wrong and destructive for an EISDIR/EACCES
+        // path, and it hides the only thing that explains the failure.
+        it('names the real read error instead of blaming JSON (EISDIR)', () => {
+            const metaPath = path.join(dir, 'dirmeta.prefab.meta');
+            fs.mkdirSync(metaPath, { recursive: true });
+            const out = resolveAssetMeta(metaPath, 'assets/dirmeta.prefab', () => {
+                throw new Error('the factory must not run when something exists at the meta path');
+            });
+            assert.strictEqual(out.uuid, null);
+            assert.strictEqual(out.newMeta, null);
+            assert.match(out.error, /^Cannot read existing assets\/dirmeta\.prefab\.meta: EISDIR/);
+            assert.doesNotMatch(out.error, /valid JSON/);
+            assert.doesNotMatch(out.error, /delete it/); // destructive advice for a directory
+            assert.match(out.error, /Nothing was written\.$/);
+            assert.ok(fs.statSync(metaPath).isDirectory()); // untouched
+        });
+
+        it('names the real read error instead of blaming JSON (EACCES)', (t) => {
+            const metaPath = path.join(dir, 'locked.prefab.meta');
+            fs.writeFileSync(metaPath, JSON.stringify({ uuid: 'TOPSECRET-uuid' }));
+            fs.chmodSync(metaPath, 0);
+            try {
+                fs.readFileSync(metaPath, 'utf-8');
+                // running as root (or a filesystem ignoring the mode): nothing to observe
+                return t.skip('mode 000 is still readable here');
+            } catch { /* expected: EACCES */ }
+            try {
+                const out = resolveAssetMeta(metaPath, 'assets/locked.prefab', mint);
+                assert.strictEqual(out.uuid, null);
+                assert.strictEqual(out.newMeta, null);
+                assert.match(out.error, /^Cannot read existing assets\/locked\.prefab\.meta: EACCES/);
+                assert.doesNotMatch(out.error, /valid JSON/);
+                assert.doesNotMatch(out.error, /delete it/);
+                assert.ok(!out.error.includes('TOPSECRET'), `content leaked: ${out.error}`);
+                assert.match(out.error, /Nothing was written\.$/);
+            } finally {
+                fs.chmodSync(metaPath, 0o600);
+            }
+        });
+
         // A meta that parses but has no usable uuid used to yield `uuid === undefined`,
         // printed as "UUID: undefined" while the asset landed on disk.
         it('refuses a parsed meta with no usable uuid', () => {
@@ -367,6 +482,62 @@ describe('MetaGenerator', () => {
                 assert.match(out.error, new RegExp(`^assets/${name}\\.prefab\\.meta has no "uuid"`));
                 assert.match(out.error, /Nothing was written\.$/);
             }
+        });
+
+        // existsSync FOLLOWS the link, so a dangling or looping `<asset>.meta` read as "no meta":
+        // a fresh uuid was minted (verified: both returned `{uuid: 'fresh-uuid', error: null}`) and
+        // writeMeta's rename then replaced the link — UUID churn on an existing meta path.
+        it('refuses a symlinked meta path instead of minting over it', () => {
+            const cases = [
+                ['dangling', (p) => fs.symlinkSync(path.join(dir, 'gone.json'), p)],
+                ['looping', (p) => fs.symlinkSync(p, p)],
+                ['resolvable', (p) => {
+                    fs.writeFileSync(path.join(dir, 'outside.json'), JSON.stringify({ uuid: 'outside-uuid' }));
+                    fs.symlinkSync(path.join(dir, 'outside.json'), p);
+                }]
+            ];
+            for (const [name, link] of cases) {
+                const metaPath = path.join(dir, `${name}.prefab.meta`);
+                link(metaPath);
+                const out = resolveAssetMeta(metaPath, `assets/${name}.prefab`, () => {
+                    throw new Error('the factory must not run for a link at the meta path');
+                });
+                assert.strictEqual(out.uuid, null, name);
+                assert.strictEqual(out.newMeta, null, name);
+                assert.match(out.error, new RegExp(`^assets/${name}\\.prefab\\.meta is a symlink`), name);
+                assert.match(out.error, /Nothing was written\.$/, name);
+                assert.ok(fs.lstatSync(metaPath).isSymbolicLink(), `${name}: the link is left alone`);
+            }
+            // and the resolvable one never leaks the uuid it could have read through the link
+            const out = resolveAssetMeta(path.join(dir, 'resolvable.prefab.meta'),
+                'assets/resolvable.prefab', mint);
+            assert.ok(!out.error.includes('outside-uuid'), out.error);
+        });
+
+        // ENAMETOOLONG/ELOOP/ENOTDIR mean NOTHING is at that path, so "check what is at that path
+        // — a real .meta there carries the uuid every existing reference uses" was fiction. The
+        // actionable fact is the 255-BYTE filename limit the ".meta" companion blows.
+        it('names the filename limit when no meta can exist at the path', () => {
+            const base = `${'x'.repeat(246)}.terrain`; // 254 bytes; "<base>.meta" needs 259
+            const out = resolveAssetMeta(path.join(dir, `${base}.meta`), `assets/${base}`, () => {
+                throw new Error('the factory must not run for a path that cannot hold a meta');
+            });
+            assert.strictEqual(out.uuid, null);
+            assert.strictEqual(out.newMeta, null);
+            assert.match(out.error, /^No \.meta can exist next to assets\/x{20}/);
+            assert.match(out.error, /4 byte\(s\) over the 255-BYTE filename limit/);
+            assert.match(out.error, /shorten the asset name/);
+            assert.doesNotMatch(out.error, /Cannot read existing/);
+            assert.doesNotMatch(out.error, /check what is at that path|carries the uuid/);
+            assert.match(out.error, /Nothing was written\.$/);
+
+            // same class, same answer: a path component that is a file, not a directory
+            fs.writeFileSync(path.join(dir, 'notadir'), 'x');
+            const nested = resolveAssetMeta(path.join(dir, 'notadir', 'x.prefab.meta'),
+                'assets/notadir/x.prefab', mint);
+            assert.strictEqual(nested.uuid, null);
+            assert.match(nested.error,
+                /^No \.meta can exist next to assets\/notadir\/x\.prefab: that path cannot hold a file \(ENOTDIR\)/);
         });
 
         it('leaves the offending meta on disk for the user to fix', () => {

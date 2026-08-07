@@ -79,7 +79,10 @@ export class SceneParser {
             ? this.getObject(prefabInfo.instance.__id__) : null;
         if (!instance) return null;
 
-        const overrides = {};
+        // Prototype-less: the keys come from the file, so a serialized override
+        // named `toString` must not read as already-present, and `__proto__` must
+        // become a key instead of re-parenting this object.
+        const overrides = Object.create(null);
         for (const ref of instance.propertyOverrides ?? []) {
             const override = ref?.__id__ !== undefined ? this.getObject(ref.__id__) : ref;
             if (!override?.propertyPath || override.propertyPath.length !== 1) continue;
@@ -88,7 +91,8 @@ export class SceneParser {
             if (target?.localID?.length !== 1 || target.localID[0] !== prefabInfo.fileId) continue;
             const value = override.value?.__id__ !== undefined
                 ? this.getObject(override.value.__id__) : override.value;
-            if (!(override.propertyPath[0] in overrides)) overrides[override.propertyPath[0]] = value;
+            const key = override.propertyPath[0];
+            if (!Object.hasOwn(overrides, key)) overrides[key] = value;
         }
         return {
             nameOverride: typeof overrides._name === 'string' ? overrides._name : null,

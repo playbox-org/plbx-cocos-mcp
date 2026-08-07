@@ -6,7 +6,8 @@
  * so the asset is referencable from a cc.Terrain component immediately.
  *
  * The binary is written atomically (temp + rename) — a truncated .terrain is not
- * recoverable and the editor would import it as a corrupt asset.
+ * recoverable and the editor would import it as a corrupt asset — and an overwrite moves the
+ * previous file aside first, so a failure after the rename can still put it back.
  */
 
 import * as fs from 'fs';
@@ -16,8 +17,8 @@ import { TerrainBuilder, TerrainBuildError } from '../document/TerrainBuilder.js
 import { AssetIndex } from '../core/AssetIndex.js';
 import { writeMeta, ensureParentDirMetas, resolveAssetMeta } from '../document/MetaGenerator.js';
 import { resolveInAssets } from '../utils/assetPaths.js';
-import { writeFileAtomic } from '../utils/fsAtomic.js';
-import { readTerrainInfo } from '../utils/terrainBin.js';
+import { writeFileAtomic, tempPathFor } from '../utils/fsAtomic.js';
+import { readTerrainInfo, renderTerrainWarnings, terrainWarningElision } from '../utils/terrainBin.js';
 import { terrainCard } from './terrainCard.js';
 
 export class BuildTerrain extends BaseTool {
@@ -104,8 +105,9 @@ export class BuildTerrain extends BaseTool {
         const assetIndex = AssetIndex.shared(projectRoot);
         let buffer;
         let notes;
+        let fillLayer;
         try {
-            ({ buffer, notes } = new TerrainBuilder(assetIndex, projectRoot).compile(args.spec));
+            ({ buffer, notes, fillLayer } = new TerrainBuilder(assetIndex, projectRoot).compile(args.spec));
         } catch (err) {
             if (err instanceof TerrainBuildError) {
                 return this.error(`${err.message}\n\nNothing was written.`);
@@ -123,21 +125,32 @@ export class BuildTerrain extends BaseTool {
         // Everything below touches the filesystem. `undo` unwinds exactly what THIS call
         // created, so a mid-way ENOSPC/EACCES/ENAMETOOLONG leaves no orphan binary, no
         // meta-less directory and no half-imported asset — the "Nothing was written."
-        // promise the error paths above already make. Overwriting an existing binary is the ONE
-        // step outside that promise (the previous bytes are gone once the rename lands), so the
-        // failure report distinguishes "before the rename" from "after it".
+        // promise the error paths above already make. An overwrite keeps it by moving the
+        // victim ASIDE instead of letting the new bytes replace it; only a failing move BACK
+        // (`aside` still set after the rollback) leaves the previous terrain out of place.
         const undo = [];
-        let binaryWritten = false;
+        let aside = null;
         try {
             for (const dir of this.#missingDirs(path.dirname(outputPath))) {
                 fs.mkdirSync(dir);
                 undo.push(() => fs.rmdirSync(dir));
             }
+            // Only a FILE is moved aside: renaming a directory named `X.terrain` away would turn
+            // the clean EISDIR from the write below into a silently displaced folder.
+            if (binaryExisted && fs.statSync(outputPath).isFile()) {
+                // Same directory, so this rename is atomic too; assigned only once it landed, or
+                // the rollback would look for a file that was never moved. A hard kill in the two
+                // fs calls between here and the target's own rename leaves the bytes at `stash`.
+                const stash = tempPathFor(outputPath);
+                fs.renameSync(outputPath, stash);
+                aside = stash;
+                undo.push(() => { fs.renameSync(aside, outputPath); aside = null; });
+            }
             writeFileAtomic(outputPath, buffer);
-            binaryWritten = true;
-            // Only unlink a file we created: an overwrite would be someone else's data. The
-            // predicate is whether the BINARY pre-existed — `newMeta` answers a different
-            // question, and a leftover `.meta` beside a missing binary makes the two disagree.
+            // On an overwrite the restore rename above replaces the new binary, so unlinking is
+            // only for a path we created. The predicate is whether the BINARY pre-existed —
+            // `newMeta` answers a different question, and a leftover `.meta` beside a missing
+            // binary makes the two disagree.
             if (!binaryExisted) undo.push(() => fs.unlinkSync(outputPath));
             if (newMeta) {
                 // Registered BEFORE the write: a failure during it must still unwind a partial meta.
@@ -156,19 +169,23 @@ export class BuildTerrain extends BaseTool {
             }
             return this.error(
                 `Cannot write ${args.outputPath}: ${err.message}\n\n` +
-                (binaryExisted && binaryWritten
-                    ? `WARNING: ${args.outputPath} had ALREADY been replaced with the new data when ` +
-                      'this failed — an overwrite is not undoable, so the previous heights, layers ' +
-                      'and weights are gone. Everything else this call created was rolled back. ' +
-                      'Re-read the file with query_terrain before deciding what to do.'
+                (aside
+                    ? `WARNING: the previous ${args.outputPath} was moved aside and could NOT be ` +
+                      `moved back. Its bytes are intact as "${path.basename(aside)}" in the same ` +
+                      `folder — rename that file to "${path.basename(outputPath)}" by hand; the ` +
+                      'target itself now holds either this call\'s new data or nothing. Everything ' +
+                      'else this call created was rolled back.'
                     : 'Nothing was written.')
             );
         }
+        // The overwrite is committed, so the set-aside previous terrain is dead weight. Best
+        // effort: a stray dotfile is not worth failing a build that already succeeded.
+        if (aside) { try { fs.unlinkSync(aside); } catch { /* best effort */ } }
         AssetIndex.invalidate(projectRoot);
 
         // Re-READ what landed on disk, never report the spec back
         const info = readTerrainInfo(outputPath);
-        return this.success(this.#report(args, uuid, newMeta, info, notes, assetIndex));
+        return this.success(this.#report(args, uuid, newMeta, info, notes, fillLayer, assetIndex));
     }
 
     /**
@@ -190,7 +207,7 @@ export class BuildTerrain extends BaseTool {
         return missing;
     }
 
-    #report(args, uuid, newMeta, info, notes, assetIndex) {
+    #report(args, uuid, newMeta, info, notes, fillLayer, assetIndex) {
         const lines = [
             `# Built ${args.outputPath}`,
             '',
@@ -199,10 +216,24 @@ export class BuildTerrain extends BaseTool {
         ];
         lines.push(...terrainCard(info, assetIndex));
 
-        const warnings = mergeWarnings(notes, info?.warnings ?? []);
-        if (warnings.length) {
-            lines.push('', '## Warnings');
+        // Builder notes get their own section: they state what the build DID (a snapped tileSize,
+        // a 1:1 heightmap copy), and a count of problems must never include them.
+        if (notes.length) {
+            lines.push('', '## Notes');
+            notes.forEach(n => lines.push(`- ${n}`));
+        }
+
+        // With no fill, the note above already states the whole unusedLayer family — one fact
+        // twice otherwise. Dropped by KIND and keyed on the builder's structural `fillLayer`,
+        // never on its prose: the family is one aggregated line naming only its first slot.
+        const { lines: warnings, total, elided } = renderTerrainWarnings(info, {
+            drop: entry => fillLayer < 0 && entry.kind === 'unusedLayer'
+        });
+        if (total) {
+            lines.push('', `## Warnings (${total})`);
             warnings.forEach(w => lines.push(`- ${w}`));
+            // A continuation line, never a bullet: the header above counts real problems
+            if (elided) lines.push(terrainWarningElision(elided, total, 'warning'));
         }
 
         lines.push(
@@ -218,19 +249,4 @@ export class BuildTerrain extends BaseTool {
         );
         return lines.join('\n');
     }
-}
-
-/**
- * Builder notes + the format-level warnings `readTerrainInfo` derives from the bytes.
- *
- * The two lists overlap in exactly one place: when `fillLayer` is off, the builder
- * already says "no block references them yet" and terrainBin then reports every unused
- * palette slot separately — one fact, N + 1 warnings.
- */
-function mergeWarnings(notes, fileWarnings) {
-    const fillIsOff = notes.some(n => n.startsWith('fillLayer is off'));
-    const kept = fillIsOff
-        ? fileWarnings.filter(w => !/^layer slot \d+ is defined but no block uses it/.test(w))
-        : fileWarnings;
-    return [...notes, ...kept];
 }

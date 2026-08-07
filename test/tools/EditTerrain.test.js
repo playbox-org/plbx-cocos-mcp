@@ -28,6 +28,7 @@ import {
     weightTexelIndex,
     blockLayers,
 } from '../../src/utils/terrainBin.js';
+import { section } from './reportSection.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MOCK_PROJECT = path.join(__dirname, '..', 'fixtures', 'mock-project');
@@ -93,6 +94,15 @@ function fresh(name, {
 }
 
 const load = (abs) => readTerrain(fs.readFileSync(abs));
+
+/**
+ * The `## Warnings (N — <composition>)` header. `section()` reads a bare `(N)` only, and this
+ * header names WHAT it counts (see the header-unit test below).
+ */
+function warningsHeader(report) {
+    const m = report.match(/^## Warnings \((\d+) — (.+)\)$/m);
+    return m ? { total: Number(m[1]), split: m[2] } : null;
+}
 
 /** The four channel bytes of one global texel */
 function texel(data, i, j) {
@@ -307,13 +317,19 @@ describe('EditTerrain — the eight ops, verified by re-reading the file', () =>
         assert.match(report, /over 64 texels in 1 block/);
     });
 
-    it('set_block_layers rewrites the block slots only', async () => {
+    it('set_block_layers rewrites the block slots, the weights following their layer', async () => {
         const { rel, abs } = fresh('Slots');
         const original = load(abs);
         await ok({ terrainPath: rel, ops: [{ op: 'set_block_layers', block: 'all', layers: [1, 0] }] });
         const data = load(abs);
         assert.deepStrictEqual(blockLayers(data, 0, 0), [1, 0, -1, -1]);
-        assert.deepStrictEqual([...data.weights], [...original.weights]);
+        // The two channels swap, so their bytes swap with them: what each LAYER covers is untouched,
+        // which is the only reading of a reorder that is not a silent repaint
+        const swapped = [...original.weights];
+        for (let n = 0; n < swapped.length; n += 4) {
+            [swapped[n], swapped[n + 1]] = [swapped[n + 1], swapped[n]];
+        }
+        assert.deepStrictEqual([...data.weights], swapped);
     });
 
     it('applies a multi-op batch in order', async () => {
@@ -530,7 +546,7 @@ describe('EditTerrain — T4 review regressions', () => {
 
     it('documents the paint-weight-0 erase and the height clamp/reject split', () => {
         const desc = tool.description;
-        assert.match(desc, /weight 0 ERASES this layer at those texels/);
+        assert.match(desc, /weight 0 ERASES this layer where the factor is 1/);
         assert.match(desc, /that is the local undo, NOT remove_layer/);
         assert.match(desc, /an explicit out-of-range set_heights "value" is REJECTED/);
         assert.match(desc, /rows\/heightmap samples and adjust_heights results are clamped/);
@@ -538,6 +554,32 @@ describe('EditTerrain — T4 review regressions', () => {
         assert.match(desc, /set_block_layers \{block: \[x,z\]\|"all"/);
         assert.doesNotMatch(desc, /block: \[x,y\]/);
         assert.match(desc, /power of two in 4\.\.1024/);
+        // what the mask factor does to a painted weight (terrainOps' paintLayer): it BLENDS,
+        // it does not scale — a doc that says `weight * t` describes the bug that was fixed
+        assert.match(desc, /current \+ \(weight\*255 - current\) \* t/);
+        assert.match(desc, /two overlapping strokes JOIN/);
+        // and where a slot change moves the stored bytes (terrainOps' remapBlockWeights)
+        assert.match(desc, /the stored weights FOLLOW their layer through the change/);
+        assert.match(desc, /a channel whose layer the block did not carry starts at 0/);
+    });
+
+    // The doc claim above, measured end to end: the mask edge must leave coverage that is
+    // already there alone, or continuous painting shows a bare stripe down every seam.
+    it('joins two overlapping paint strokes instead of eroding the overlap', async () => {
+        const { rel, abs } = fresh('Strokes');
+        const stroke = (x) => ({
+            op: 'paint_layer', layer: 1, weight: 1, falloff: 4,
+            region: { x, z: 0, width: 20, depth: 32 },
+        });
+        // texel 14 sits at x 14.45 m: inside the first stroke's plateau, inside the SECOND
+        // stroke's 4 m ramp (12..16 m), so its factor there is 0.61
+        const at = (data) => texel(data, 14, 8)[1];
+
+        await ok({ terrainPath: rel, ops: [stroke(0)] });
+        assert.strictEqual(at(load(abs)), 255, 'the first stroke paints it full');
+
+        await ok({ terrainPath: rel, ops: [stroke(12)] });
+        assert.strictEqual(at(load(abs)), 255, 'a factor of 0.61 over full coverage changes nothing');
     });
 
     it('rejects an op name inherited from Object.prototype instead of writing a no-op', async () => {
@@ -595,6 +637,34 @@ describe('EditTerrain — report surfaces the hazards', () => {
         assert.doesNotMatch(relabelled, /baked lightmap/);
     });
 
+    // `## Warnings (N)` counted the batch's preparation notes too, so materializing the empty
+    // "Create > Terrain" sentinel — what the tool DID, exactly like the editor's first save —
+    // was reported as a problem with the file. build_terrain now splits the two the same way.
+    it('counts only real problems under ## Warnings, notes in their own section', async () => {
+        const sentinel = {
+            source: path.join(GOLDEN_DIR, 'default.terrain'),
+            meta: path.join(MOCK_PROJECT, `${MOCK_TERRAIN}.meta`),
+        };
+        const informational = await ok({
+            terrainPath: fresh('NotesOnly', sentinel).rel, ops: [{ op: 'adjust_heights', delta: 1 }],
+        });
+        assert.match(section(informational, 'Notes').bullets[0], /empty "Create > Terrain" sentinel/);
+        assert.strictEqual(section(informational, 'Warnings'), null, informational);
+
+        // both kinds at once: the same note, plus the missing .meta which IS a real problem
+        const mixed = await ok({
+            terrainPath: fresh('NotesAndWarning', { ...sentinel, meta: null }).rel,
+            ops: [{ op: 'adjust_heights', delta: 1 }],
+        });
+        assert.match(section(mixed, 'Notes').bullets[0], /empty "Create > Terrain" sentinel/);
+        const warnings = section(mixed, 'Warnings');
+        assert.strictEqual(warnings.bullets.length, 1, mixed);
+        assert.match(warnings.bullets[0], /has no \.meta/);
+        const header = warningsHeader(mixed);
+        assert.strictEqual(header.total, warnings.bullets.length, mixed);
+        assert.strictEqual(header.split, 'all about the file', mixed);
+    });
+
     it('warns that a .terrain without a .meta is not an addressable asset yet', async () => {
         const { rel, abs } = fresh('Orphan', { meta: null });
         assert.strictEqual(fs.existsSync(`${abs}.meta`), false);
@@ -626,6 +696,110 @@ describe('EditTerrain — report surfaces the hazards', () => {
             ],
         });
         assert.doesNotMatch(painted, /no block references it yet/);
+    });
+
+    // The hint is per OCCURRENCE. Rewriting the whole aggregated family (what matching its prose
+    // amounts to) either claimed one dangling slot where there were several, or — when the batch
+    // appended a slot the aggregate does not lead with — never mentioned the new one at all.
+    it('annotates exactly the slots this batch appended and counts the rest truthfully', async () => {
+        const both = await ok({
+            terrainPath: fresh('TwoNew').rel,
+            ops: [
+                { op: 'set_layer', slot: 2, detailMap: 'Sprites/panel.png' },
+                { op: 'set_layer', slot: 3, detailMap: 'Sprites/coin_bar.png' },
+            ],
+        });
+        assert.match(both, /palette slot 2 exists now but no block references it yet/);
+        assert.match(both, /palette slot 3 exists now but no block references it yet/);
+        assert.doesNotMatch(both, /no block uses it/, 'both are this batch\'s doing');
+        assert.match(both, /## Warnings \(2 — all for palette slots this batch appended\)/);
+
+        // slots 2 and 3 are ALREADY dangling; this batch appends 4 only
+        const { rel } = fresh('Inherited');
+        await ok({
+            terrainPath: rel,
+            ops: [
+                { op: 'set_layer', slot: 2, detailMap: 'Sprites/panel.png' },
+                { op: 'set_layer', slot: 3, detailMap: 'Sprites/coin_bar.png' },
+            ],
+        });
+        const report = await ok({
+            terrainPath: rel, ops: [{ op: 'set_layer', slot: 4, detailMap: 'Sprites/panel.png' }],
+        });
+        assert.match(report, /palette slot 4 exists now but no block references it yet/);
+        assert.doesNotMatch(report, /palette slot [23] exists now/);
+        // the two it inherited are still reported, still as two, and the head is one of THEM
+        assert.match(report, /layer slot 2 is defined but no block uses it … and 1 more occurrence \(2 total\)/);
+        assert.match(report, /## Warnings \(2 — 1 about the file, 1 for palette slots this batch appended\)/);
+    });
+
+    // The elided count used to be pushed as another list element, so the header counted it as a
+    // problem: 8 named out of 11 printed "## Warnings (9)".
+    it('caps the warning list without counting the elision as a warning', async () => {
+        const ops = [];
+        for (let slot = 2; slot < 12; slot++) {
+            ops.push({ op: 'set_layer', slot, detailMap: 'Sprites/panel.png' });
+        }
+        const report = await ok({ terrainPath: fresh('ManyUnused').rel, ops });
+
+        const named = report.split('\n').filter((l) => /^- palette slot \d+ exists now/.test(l));
+        assert.strictEqual(named.length, 8, `${named.length} named:\n${report}`);
+        assert.match(
+            report,
+            /## Warnings \(10 — all for palette slots this batch appended\)/,
+            '10 dangling slots, not 8 and not 9');
+        assert.match(report, /^… and 2 more warnings \(10 total\)$/m);
+    });
+
+    // The hints used to be rendered in the place of the family they replace, i.e. BEFORE the
+    // warnings terrainBin emits after it: appending 10 slots filled the 8-line cap with this
+    // batch's own hints and pushed the file's zero-coverage layer into the elision — the section
+    // hiding exactly what it exists for. The file's own warnings now come first.
+    it('never lets the appended-slot hints push a genuine file warning past the cap', async () => {
+        // painting slot 0 at full weight leaves slot 1 assigned in the block with no coverage
+        // anywhere: a file warning terrainBin emits AFTER the unused-slot family
+        const ops = [{ op: 'paint_layer', layer: 0, weight: 1 }];
+        for (let slot = 2; slot < 12; slot++) {
+            ops.push({ op: 'set_layer', slot, detailMap: 'Sprites/panel.png' });
+        }
+        const report = await ok({ terrainPath: fresh('CapOrder').rel, ops });
+
+        const warnings = section(report, 'Warnings');
+        assert.strictEqual(warningsHeader(report).total, 11, report);
+        assert.strictEqual(warnings.bullets.length, 8, report);
+        assert.match(warnings.bullets[0], /zero\s+weight coverage/, report);
+        assert.strictEqual(
+            warnings.bullets.filter((b) => /^palette slot \d+ exists now/.test(b)).length, 7, report);
+        assert.match(report, /^… and 3 more warnings \(11 total\)$/m);
+    });
+
+    // For the SAME file state query_terrain's header counted warning ENTRIES ("1 — all in the
+    // file") while this one counted LINES ("17") — two numbers for one file, because a file family
+    // is one line whatever it covers while the appended-slot hints are one line per slot. The
+    // header now names that composition, so its "about the file" part IS query_terrain's count.
+    it('names what the warning header counts, so its parts add up to its total', async () => {
+        const ops = [];
+        for (let slot = 2; slot < 22; slot++) {
+            ops.push({ op: 'set_layer', slot, detailMap: 'Sprites/panel.png' });
+        }
+        const report = await ok({ terrainPath: fresh('HeaderUnit').rel, ops });
+
+        const header = warningsHeader(report);
+        assert.strictEqual(header.total, 17, report);
+        const parts = header.split.match(/^(\d+) about the file, (\d+) for palette slots this batch appended$/);
+        assert.ok(parts, header.split);
+        assert.strictEqual(Number(parts[1]) + Number(parts[2]), header.total, report);
+        // 20 appended slots, 16 of them named per slot (the rest past the subject cap the file's
+        // own family still counts) — and 16 is what the header's per-slot part claims
+        assert.strictEqual(Number(parts[2]), 16, report);
+        const warnings = section(report, 'Warnings');
+        const perSlot = warnings.bullets.filter((b) => /^palette slot \d+ exists now/.test(b));
+        assert.strictEqual(warnings.bullets.length - perSlot.length, Number(parts[1]), report);
+        assert.match(warnings.bullets[0], /4 more "unusedLayer" occurrences past the 16 a card retains/);
+        // …and the whole section still accounts for the header: bullets printed + elided
+        const elided = report.match(/^… and (\d+) more warnings \((\d+) total\)$/m);
+        assert.strictEqual(warnings.bullets.length + Number(elided[1]), header.total, report);
+        assert.strictEqual(Number(elided[2]), header.total, report);
     });
 
     it('materializes the empty "Create > Terrain" sentinel and says so', async () => {

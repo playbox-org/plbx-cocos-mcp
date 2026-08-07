@@ -23,6 +23,12 @@ import {
     readTerrain,
     readTerrainInfo,
     terrainInfoFromData,
+    renderTerrainWarnings,
+    withTerrainWarnings,
+    terrainWarningElision,
+    terrainWarningText,
+    TerrainWarnings,
+    TERRAIN_MAX_WARNING_SUBJECTS,
     weightUsage,
     readTerrainLayout,
     writeTerrain,
@@ -61,6 +67,7 @@ import {
     heightStats,
     isKnownVersion,
     versionName,
+    TERRAIN_MAX_WARNINGS,
     TERRAIN_MAX_BLOCKS,
     TERRAIN_MAX_WEIGHT_TEXELS,
     TERRAIN_HEIGHT_BASE,
@@ -471,6 +478,387 @@ describe('terrainBin — readTerrainInfo', () => {
         assert.match(joined, /normals count 3 is neither 0 nor 3267/);
         // a mis-sized layerBuffer means no per-block table at all
         assert.deepStrictEqual(info2.blockLayers, []);
+    });
+
+    it('names the missing array instead of throwing a bare TypeError', () => {
+        const data = synthetic({ weightMapSize: 4 });
+        for (const key of ['heights', 'normals', 'weights', 'layerBuffer', 'layers']) {
+            const broken = { ...data };
+            delete broken[key];
+            assert.throws(() => terrainInfoFromData(broken), {
+                name: 'Error',      // not TypeError: "Cannot read properties of undefined"
+                message: new RegExp(`^terrain: data\\.${key} is missing`),
+            });
+        }
+    });
+});
+
+// A repeating warning family used to be emitted per BLOCK and per palette slot with nothing
+// filtering it: a 33 KB file with 4096 blocks produced 4098 warnings / 532597 characters in
+// one query_terrain response, and the same list went into edit_terrain and build_terrain.
+// The card is DATA (one entry per family, its occurrences addressable up to the retention cap);
+// the line cap is a RENDER budget, and its elision is never an entry — see renderTerrainWarnings.
+describe('terrainBin — warning budget', () => {
+    const layerRecord = (n) => ({
+        slot: n, tileSize: 1, detailMapId: `aaa${n}@6c48a`, normalMapId: '', roughness: 1, metallic: 0,
+    });
+
+    it('aggregates a per-block family into one line naming the true total', () => {
+        const layerBuffer = [];
+        for (let b = 0; b < 64 * 64; b++) layerBuffer.push(-1, 0, -1, -1);   // channel 0 empty below 1
+        const { buffer } = craft(TERRAIN_DATA_VERSION8, {
+            blockCount: [64, 64], weightMapSize: 4,
+            heights: [TERRAIN_HEIGHT_BASE],          // mis-sized on purpose: 4096 blocks in 33 KB
+            weights: [255, 0, 0, 0],
+            layerBuffer,
+            layers: [{ slot: 0, tileSize: 1, detailMapId: 'abc@6c48a' }],
+        });
+        const info = withTempTerrain(buffer, (f) => readTerrainInfo(f));
+        assert.strictEqual(info.blockLayers.length, 4096, 'the file really does carry 4096 bad blocks');
+        const chars = info.warnings.join('').length;
+        assert.ok(chars < 2000, `${chars} characters of warnings`);
+
+        const empty = info.warnings.filter((w) => /empty channel/.test(w));
+        assert.strictEqual(empty.length, 1, empty.join(' | '));
+        assert.match(empty[0], /^block \[0,0\] has an empty channel 0 below used channel 1/);
+        assert.match(empty[0], /… and 4095 more occurrences \(4096 total\)$/);
+        // …and the occurrences are there as DATA — the exact count, plus the first
+        // TERRAIN_MAX_WARNING_SUBJECTS of them, which is what a consumer re-words or drops by
+        const entry = info.warningEntries.find((e) => e.kind === 'emptyChannel');
+        assert.strictEqual(entry.count, 4096);
+        assert.strictEqual(entry.subjects.length, TERRAIN_MAX_WARNING_SUBJECTS);
+        assert.deepStrictEqual(entry.subjects[0], { block: [0, 0], channel: 0, usedChannel: 1 });
+        assert.deepStrictEqual(entry.subjects.at(-1), { block: [15, 0], channel: 0, usedChannel: 1 });
+        // one line per entry, no elision element among them
+        assert.deepStrictEqual(info.warnings, info.warningEntries.map((e) => e.text));
+        // The DATA channel is bounded too: 4096 subjects was 819 KB of `format:"json"` here
+        const json = JSON.stringify(info.warningEntries, null, 2).length;
+        assert.ok(json < 8000, `${json} characters of warning data`);
+    });
+
+    // The entry count is bounded by the number of distinct checks; `subjects` was not, and a card
+    // is serialized verbatim by get_asset_info format:"json" — 2050 occurrences = 410 KB there.
+    it('retains a bounded number of occurrences while every rendered count stays exact', () => {
+        const layerBuffer = [];
+        for (let b = 0; b < 32 * 32; b++) layerBuffer.push(-1, 0, -1, 1);   // channels 0 and 2 empty
+        const { buffer } = craft(TERRAIN_DATA_VERSION8, {
+            blockCount: [32, 32], weightMapSize: 4,
+            heights: [TERRAIN_HEIGHT_BASE],
+            weights: [255, 0, 0, 0],
+            layerBuffer,
+            layers: [{ slot: 0, tileSize: 1, detailMapId: 'abc@6c48a' }],
+        });
+        const info = withTempTerrain(buffer, (f) => readTerrainInfo(f));
+        const empty = info.warningEntries.find((e) => e.kind === 'emptyChannel');
+        assert.strictEqual(empty.count, 2048, '2 empty channels in each of 1024 blocks');
+        assert.strictEqual(empty.subjects.length, TERRAIN_MAX_WARNING_SUBJECTS);
+        assert.match(empty.text, /… and 2047 more occurrences \(2048 total\)$/);
+        // a re-render off the retained subjects states the same total, not 16
+        const { lines, total } = renderTerrainWarnings(info, { limit: Infinity });
+        assert.strictEqual(total, info.warnings.length);
+        assert.deepStrictEqual(lines, info.warnings);
+        // and one occurrence re-worded leaves 2047 counted, not 15: an occurrence the card did
+        // not retain was never offered to `reword`, so it is still there
+        const reworded = renderTerrainWarnings(info, {
+            limit: Infinity,
+            reword: (e, s) => (e.kind === 'emptyChannel' && s.block[0] === 0 && s.channel === 0
+                ? 'block [0,0] channel 0 is mine' : null),
+        });
+        assert.ok(reworded.lines.includes('block [0,0] channel 0 is mine'));
+        assert.ok(
+            reworded.lines.some((l) => /^block \[0,0\] has an empty channel 2 .*… and 2046 more occurrences \(2047 total\)$/.test(l)),
+            reworded.lines.join('\n')
+        );
+    });
+
+    it('keeps the single-occurrence wording and extends it for an aggregate', () => {
+        const single = synthetic({ weightMapSize: 4 });
+        single.layers = [layerRecord(0)];
+        assert.deepStrictEqual(
+            terrainInfoFromData(single).warnings.filter((w) => /no block uses it/.test(w)),
+            ['layer slot 0 is defined but no block uses it']
+        );
+
+        const many = synthetic({ weightMapSize: 4 });
+        many.layers = [layerRecord(0), layerRecord(1), layerRecord(2)];
+        const info = terrainInfoFromData(many);
+        const aggregated = info.warnings.filter((w) => /no block uses it/.test(w));
+        assert.strictEqual(aggregated.length, 1, aggregated.join(' | '));
+        // The aggregate leads with its FIRST occurrence and states the true total…
+        assert.strictEqual(
+            aggregated[0],
+            `layer slot 0 is defined but no block uses it ${terrainWarningElision(2, 3, 'occurrence')}`
+        );
+        // …and every slot it stands for is addressable
+        assert.deepStrictEqual(
+            info.warningEntries.find((e) => e.kind === 'unusedLayer').subjects,
+            [{ slot: 0 }, { slot: 1 }, { slot: 2 }]
+        );
+    });
+
+    /** Eleven distinct problems: five structural + six families */
+    function elevenProblems() {
+        return craft(TERRAIN_DATA_VERSION8, {
+            tileSize: 1.005,                       // the loader snaps it to 1
+            weightMapSize: 4,
+            heights: [TERRAIN_HEIGHT_BASE],
+            normals: [0, 1, 0],
+            weights: [255, 0, 0, 0],
+            layerBuffer: [-1, 5, -1, 9],           // channels 0 and 2 empty below 3, slots unbacked
+            layers: [
+                { slot: 2, tileSize: 1, detailMapId: '' },
+                { slot: 3, tileSize: 1, detailMapId: 'ÿ@6c48a' },
+                { slot: 4, tileSize: 1, detailMapId: 'ok@6c48a', normalMapId: 'ÿ@6c48a' },
+            ],
+        }).buffer;
+    }
+
+    it('never counts an elision as a warning: the data is complete, the RENDER caps', () => {
+        const info = withTempTerrain(elevenProblems(), (f) => readTerrainInfo(f));
+        // the card is data — eleven problems are eleven entries, nothing to subtract
+        assert.strictEqual(info.warnings.length, 11, info.warnings.join('\n'));
+        assert.strictEqual(info.warningEntries.length, 11);
+        assert.ok(!info.warnings.some((w) => /^…/.test(w)), 'no elision element');
+
+        const { lines, total, elided } = renderTerrainWarnings(info);
+        assert.strictEqual(lines.length, TERRAIN_MAX_WARNINGS);
+        assert.strictEqual(total, 11, 'the count a report header prints');
+        assert.strictEqual(elided, 3);
+        assert.ok(!lines.some((w) => /^…/.test(w)), 'the elision is the caller\'s line, not an entry');
+        // the structural half survives the cap — it is what a caller acts on first
+        assert.match(lines[0], /^heights count 1 != 1089/);
+    });
+
+    it('re-words one occurrence of a family and re-renders the rest from a survivor', () => {
+        const data = synthetic({ weightMapSize: 4 });
+        data.layers = [layerRecord(0), layerRecord(1), layerRecord(2)];
+        const info = terrainInfoFromData(data);
+
+        const { lines, total, elided } = renderTerrainWarnings(info, {
+            reword: (entry, subject) => (entry.kind === 'unusedLayer' && subject.slot === 0
+                ? 'slot 0 is mine' : null)
+        });
+        assert.strictEqual(elided, 0);
+        assert.strictEqual(total, 2, 'one reworded occurrence + the aggregate of the other two');
+        assert.deepStrictEqual(lines, [
+            'slot 0 is mine',
+            // NOT "slot 0 …", and NOT "(3 total)": the head is a slot that is actually left
+            `layer slot 1 is defined but no block uses it ${terrainWarningElision(1, 2, 'occurrence')}`,
+        ]);
+
+        // dropping is the other half: the family goes, the rest of the card stays
+        const dropped = renderTerrainWarnings(info, { drop: (e) => e.kind === 'unusedLayer' });
+        assert.deepStrictEqual(dropped, { lines: [], total: 0, elided: 0 });
+    });
+
+    // ONE edit_terrain batch appending 20 slots annotates the 16 retained occurrences per
+    // OCCURRENCE — and the family used to vanish with the other four: `## Warnings (16)` on a file
+    // query_terrain reported 20 problems in. Four real, actionable problems, list AND count.
+    it('keeps the occurrences a per-subject predicate never saw as a counted line', () => {
+        const data = synthetic({ weightMapSize: 4 });
+        data.layers = Array.from({ length: 20 }, (_, n) => layerRecord(n));
+        const info = terrainInfoFromData(data);
+        const entry = info.warningEntries.find((e) => e.kind === 'unusedLayer');
+        assert.strictEqual(entry.count, 20, 'the file really has 20 unused slots');
+        assert.strictEqual(entry.subjects.length, TERRAIN_MAX_WARNING_SUBJECTS);
+
+        const annotated = [];
+        const { lines, total, elided } = renderTerrainWarnings(info, {
+            limit: Infinity,
+            drop: (e, s) => {
+                if (e.kind !== 'unusedLayer') return false;
+                annotated.push(`slot ${s.slot} is mine`);
+                return true;
+            },
+        });
+        assert.strictEqual(annotated.length, TERRAIN_MAX_WARNING_SUBJECTS, 'all retained ones taken');
+        assert.deepStrictEqual(lines, [
+            '4 more "unusedLayer" occurrences past the 16 a card retains — unnamed here, since only ' +
+            'the retained ones carry facts; query_terrain reports the family with its exact count',
+        ]);
+        assert.ok(!/slot \d/.test(lines[0]), 'no occurrence is named — the predicate may have taken it');
+        assert.strictEqual(total, 1, 'the remainder is one counted line, like any aggregate — not zero');
+        assert.strictEqual(elided, 0, 'nothing is hidden by the cap, so nothing to elide');
+
+        // Re-wording every retained occurrence leaves the same remainder: 16 lines + 1, all counted
+        const reworded = renderTerrainWarnings(info, {
+            limit: Infinity, reword: (e, s) => `slot ${s.slot} is mine`,
+        });
+        assert.strictEqual(reworded.lines.length, TERRAIN_MAX_WARNING_SUBJECTS + 1);
+        assert.strictEqual(reworded.total, reworded.lines.length);
+        assert.strictEqual(reworded.lines.at(-1), lines[0]);
+
+        // A drop by KIND is the OTHER intent, told apart by the signature: no `subject` parameter
+        // means the whole family, the occurrences the card never retained included.
+        assert.deepStrictEqual(
+            renderTerrainWarnings(info, { drop: (e) => e.kind === 'unusedLayer' }),
+            { lines: [], total: 0, elided: 0 }
+        );
+
+        // and while ONE retained occurrence is left, the four still ride its aggregate as before
+        const half = renderTerrainWarnings(info, {
+            drop: (e, s) => e.kind === 'unusedLayer' && s.slot < 15,
+        });
+        assert.deepStrictEqual(half.lines, [
+            `layer slot 15 is defined but no block uses it ${terrainWarningElision(4, 5, 'occurrence')}`,
+        ]);
+    });
+
+    it('spells every elision the same way', () => {
+        assert.strictEqual(terrainWarningElision(1, 2, 'occurrence'), '… and 1 more occurrence (2 total)');
+        assert.strictEqual(terrainWarningElision(3, 11, 'warning'), '… and 3 more warnings (11 total)');
+    });
+});
+
+// A card entry means ONE thing: a family's prose comes from the registry and is re-derived on
+// every render; a one-off's `text` is its whole message. A consumer that hand-built an entry
+// carrying an already-aggregated `text` got the elision stamped twice and a dropped subject named.
+describe('terrainBin — warnings a consumer folds in', () => {
+    const layerRecord = (n) => ({
+        slot: n, tileSize: 1, detailMapId: `aaa${n}@6c48a`, normalMapId: '', roughness: 1, metallic: 0,
+    });
+
+    /** A tool's findings about layer textures, the facts an AssetIndex resolved */
+    function unresolvedTextures(...subjects) {
+        const own = new TerrainWarnings();
+        for (const s of subjects) own.family('unresolvedTexture', s);
+        return own;
+    }
+
+    it('renders a consumer family after the card, aggregated by the registered wording', () => {
+        const data = synthetic({ weightMapSize: 4 });
+        data.layers = [layerRecord(0)];
+        const info = terrainInfoFromData(data);
+
+        const own = unresolvedTextures(
+            { slot: 0, field: 'detailMap', id: 'dead@6c48a' },
+            { slot: 0, field: 'normalMap', id: 'beef@6c48a' },
+            { slot: 1, field: 'detailMap', id: 'f00d@6c48a' },
+        );
+        const { lines, total, elided } = renderTerrainWarnings(info, { own });
+        assert.strictEqual(elided, 0);
+        assert.strictEqual(total, 2, 'the card entry + one aggregated consumer family');
+        assert.match(lines[0], /^layer slot 0 is defined but no block uses it$/, 'card entries first');
+        assert.strictEqual(
+            lines[1],
+            `${terrainWarningText('unresolvedTexture', { slot: 0, field: 'detailMap', id: 'dead@6c48a' })} ` +
+            terrainWarningElision(2, 3, 'occurrence')
+        );
+        // the one spelling, wherever it is rendered from
+        assert.match(lines[1], /^layer slot 0: detailMap dead@6c48a does not resolve to a project asset/);
+        assert.match(lines[1], /re-assign it with edit_terrain set_layer/);
+    });
+
+    it('drops one occurrence of a consumer family without naming it or double-eliding', () => {
+        const own = unresolvedTextures(
+            { slot: 0, field: 'detailMap', id: 'dead@6c48a' },
+            { slot: 1, field: 'detailMap', id: 'beef@6c48a' },
+            { slot: 2, field: 'detailMap', id: 'f00d@6c48a' },
+        );
+        const { lines, total } = renderTerrainWarnings(null, {
+            own,
+            drop: (entry, subject) => entry.kind === 'unresolvedTexture' && subject.slot === 0,
+        });
+        assert.strictEqual(total, 1);
+        assert.deepStrictEqual(lines, [
+            `layer slot 1: detailMap beef@6c48a does not resolve to a project asset (deleted texture, ` +
+            'wrong sub-asset id, or a missing .meta) — the layer draws the effect fallback there; ' +
+            `re-assign it with edit_terrain set_layer ${terrainWarningElision(1, 2, 'occurrence')}`,
+        ]);
+        assert.strictEqual(lines[0].match(/… and/g).length, 1, 'one elision, not one per render');
+        assert.ok(!/slot 0/.test(lines[0]), 'the dropped occurrence is not named');
+    });
+
+    it('refuses entries that did not come through TerrainWarnings', () => {
+        // the exact shape a consumer used to hand-build: an aggregate `text` in the entry
+        const handBuilt = [{ kind: 'unresolvedTexture', subjects: [{ slot: 0 }, { slot: 1 }], text: 'mine' }];
+        assert.throws(() => renderTerrainWarnings(null, { own: handBuilt }), {
+            message: /`own` must be a TerrainWarnings instance/,
+        });
+        assert.throws(() => renderTerrainWarnings(null, { own: { entries: handBuilt } }), {
+            message: /`own` must be a TerrainWarnings instance/,
+        });
+        // and the DATA channel is checked the same way, not just `own`: the card's entries must
+        // be ones a collector minted, or the registry is not the only wording after all
+        assert.throws(() => renderTerrainWarnings({ warningEntries: handBuilt }), {
+            message: /must come through TerrainWarnings/,
+        });
+        // a WELL-SHAPED hand-built entry is refused too — this one used to render verbatim
+        assert.throws(
+            () => renderTerrainWarnings({
+                warningEntries: [{ kind: 'zzz', count: 1, subjects: [{}], text: 'HAND BUILT' }],
+            }),
+            { message: /must come through TerrainWarnings/ }
+        );
+        // …and so is a card whose entries a consumer appended its own to (AssetInspector did)
+        const info = terrainInfoFromData(synthetic({ weightMapSize: 4 }));
+        const own = unresolvedTextures({ slot: 0, field: 'detailMap', id: 'dead@6c48a' });
+        assert.throws(
+            () => renderTerrainWarnings({
+                ...info,
+                warningEntries: [...info.warningEntries, ...own.result().entries.map((e) => ({ ...e }))],
+            }),
+            { message: /must come through TerrainWarnings/ }
+        );
+        // the supported fold is withTerrainWarnings, and its card renders
+        const folded = withTerrainWarnings(info, own);
+        assert.deepStrictEqual(renderTerrainWarnings(folded, { limit: Infinity }).lines, folded.warnings);
+        assert.throws(() => withTerrainWarnings(info, own.result().entries), {
+            message: /`own` must be a TerrainWarnings instance/,
+        });
+    });
+
+    it('refuses an unregistered family, a bad subject, and a family pushed as a one-off', () => {
+        const own = new TerrainWarnings();
+        assert.throws(() => own.family('deadTexture', { slot: 0 }), {
+            message: /no registered wording for family "deadTexture"/,
+        });
+        // a fact the wording needs, missing: the message names the whole subject shape
+        assert.throws(() => own.family('unresolvedTexture', { slot: 0, field: 'detailMap' }), {
+            message: /unresolvedTexture subject needs \{slot, field, id\}, missing "id"/,
+        });
+        assert.throws(() => own.family('unresolvedTexture', null), {
+            message: /needs a subject object \{slot, field, id\}/,
+        });
+        // one spelling means one set of field names: the tool cannot invent "detail map"
+        assert.throws(() => own.family('unresolvedTexture', { slot: 0, field: 'detail map', id: 'x' }), {
+            message: /field must be detailMap or normalMap, got "detail map"/,
+        });
+        assert.throws(() => own.push('unusedLayer', 'my own wording for a registered family'), {
+            message: /"unusedLayer" is a registered family — use family\(\)/,
+        });
+        assert.deepStrictEqual(own.entries, [], 'nothing was recorded by any of the refusals');
+    });
+
+    it('never resolves a kind through Object.prototype', () => {
+        assert.throws(() => new TerrainWarnings().family('constructor', {}), {
+            name: 'Error',       // not "spec.keys is not iterable": the table is prototype-less
+            message: /no registered wording for family "constructor"/,
+        });
+        // a card round-trip of such a kind: one occurrence renders its own text…
+        const oneOff = new TerrainWarnings();
+        oneOff.push('toString', 'one-off');
+        assert.deepStrictEqual(
+            renderTerrainWarnings({ warningEntries: oneOff.result().entries }).lines, ['one-off']);
+        // …and the aggregate form of an unregistered kind is unconstructable — a collector gives a
+        // one-off exactly one subject, and the hand-built entry that reached the prose is refused
+        const many = { warningEntries: [{ kind: 'valueOf', count: 2, subjects: [{}, {}], text: 'one-off' }] };
+        assert.throws(() => renderTerrainWarnings(many), {
+            name: 'Error',
+            message: /must come through TerrainWarnings/,
+        });
+    });
+
+    it('keeps a card entry text identical to what a re-render produces', () => {
+        const data = synthetic({ weightMapSize: 4 });
+        data.layers = [layerRecord(0), layerRecord(1)];
+        const info = terrainInfoFromData(data);
+        // `text` is DERIVED — the same convention the renderer applies, never an input
+        assert.deepStrictEqual(renderTerrainWarnings(info, { limit: Infinity }).lines, info.warnings);
+        assert.strictEqual(
+            info.warningEntries[0].text,
+            `${terrainWarningText('unusedLayer', { slot: 0 })} ${terrainWarningElision(1, 2, 'occurrence')}`
+        );
     });
 });
 
@@ -897,6 +1285,16 @@ describe('terrainBin — weightAt', () => {
         assert.deepStrictEqual(weightMapDims(wide), [4, 2]);
     });
 
+    it('refuses a layerBuffer that does not match the geometry, rather than reporting undefined', () => {
+        // The buffer only covered block 0, so block 1's four slots read past its end and
+        // `undefined` landed in the documented number[] `layers`/`dominantLayer`.
+        const wide = synthetic({ blockCount: [2, 1], tileSize: 1, weightMapSize: 2 });
+        assert.ok(weightAt(wide, 40, 0), 'the full-length control samples fine');
+        wide.layerBuffer = Int16Array.from([0, -1, -1, -1]);   // 4 of the 8 slots
+        assert.strictEqual(weightAt(wide, 40, 0), null);
+        assert.strictEqual(weightAt(wide, 0, 0), null, 'the whole file is unusable, not just block 1');
+    });
+
     it('returns null outside the map and on a sentinel', () => {
         assert.strictEqual(weightAt(data, -1, 0), null);
         assert.strictEqual(weightAt(data, 0, -1), null);
@@ -1060,6 +1458,116 @@ describe('terrainBin — pre-V8 reads', () => {
         assert.strictEqual(back.version, TERRAIN_DATA_VERSION8);
         assert.deepStrictEqual([...back.heights], [...data.heights]);
         assert.strictEqual(Buffer.compare(writeTerrain(back), out), 0);
+    });
+});
+
+// `craft()` branches on the same version constants the reader does, so it cannot catch a
+// wrong field guard: moving the normals section from >= V6 to >= V4 leaves every craft-based
+// test green. Here each fixture is spelled out field by field from the engine's documented
+// layout (terrain-asset.ts:486-562) with no version branching anywhere, and the assertion
+// that bites is `payloadLength` — the reader must consume exactly these bytes. The buffers
+// are unpadded and generated in-test; the corpus has no pre-V8 file (every real one is V8).
+describe('terrainBin — pre-V8 layout, written from the format spec', () => {
+    /** Literal little-endian primitives */
+    const LE = {
+        i32: (v) => { const b = Buffer.alloc(4); b.writeInt32LE(v, 0); return b; },
+        i16: (v) => { const b = Buffer.alloc(2); b.writeInt16LE(v, 0); return b; },
+        u16: (v) => { const b = Buffer.alloc(2); b.writeUInt16LE(v, 0); return b; },
+        f32: (v) => { const b = Buffer.alloc(4); b.writeFloatLE(v, 0); return b; },
+        u16Array: (a) => Buffer.concat([LE.i32(a.length), ...a.map(LE.u16)]),
+        f32Array: (a) => Buffer.concat([LE.i32(a.length), ...a.map(LE.f32)]),
+        u8Array: (a) => Buffer.concat([LE.i32(a.length), Buffer.from(a)]),
+        i16Array: (a) => Buffer.concat([LE.i32(a.length), ...a.map(LE.i16)]),
+        str: (s) => Buffer.concat([LE.i32(s.length), Buffer.from(s, 'latin1')]),
+    };
+
+    /** 1089 vertices, one of them 1 m up at the pre-V8 1/512 encoding */
+    const legacyHeights = () => {
+        const h = new Array(33 * 33).fill(32768);
+        h[0] = 32768 + 512;
+        return h;
+    };
+    const legacyWeights = () => new Array(4 * 4 * 4).fill(0).map((_, i) => (i % 4 === 0 ? 255 : 0));
+
+    /** Everything a V4/V5/V6 read must produce, the normals section aside */
+    function assertLegacyPayload(data, payload, version) {
+        assert.strictEqual(data.version, version);
+        assert.strictEqual(data.payloadLength, payload.length, 'consumed exactly the spec bytes');
+        assert.strictEqual(data.tileSize, 0.5);
+        assert.deepStrictEqual(data.blockCount, [1, 1]);
+        assert.strictEqual(data.weightMapSize, 4);
+        assert.strictEqual(data.lightMapSize, 8);
+        assert.strictEqual(data.heights.length, 33 * 33);
+        assert.strictEqual(data.heights[0], 32768 + 128, '1 m at 1/512 migrated to 1/128');
+        assert.strictEqual(data.heights[1], 32768);
+        assert.deepStrictEqual([...data.weights.subarray(0, 4)], [255, 0, 0, 0]);
+        assert.deepStrictEqual([...data.layerBuffer], [0, -1, -1, -1]);
+        // the V4-era layer fields are present from V4 on
+        assert.deepStrictEqual(data.layers, [{
+            slot: 0, tileSize: 2, detailMapId: 'abc@6c48a',
+            normalMapId: 'def@6c48a', roughness: 0.5, metallic: 0.25,
+        }]);
+    }
+
+    for (const [label, version] of [['V4', 0x01010004], ['V5', 0x01010005]]) {
+        it(`reads a ${label} file, which has no normals section at all`, () => {
+            const payload = Buffer.concat([
+                LE.i32(version),
+                LE.f32(0.5),                       // tileSize — f64 only from V7
+                LE.i32(1), LE.i32(1),              // blockCount
+                LE.i16(4), LE.i16(8),              // weightMapSize, lightMapSize
+                LE.u16Array(legacyHeights()),      // heights
+                // no normals section here — it starts at V6
+                LE.u8Array(legacyWeights()),       // weights
+                LE.i16Array([0, -1, -1, -1]),      // layerBuffer — from V2
+                LE.i32(1),                         // layerInfos count — from V3
+                LE.i32(0), LE.f32(2), LE.str('abc@6c48a'),
+                LE.str('def@6c48a'), LE.f32(0.5), LE.f32(0.25),   // V4 fields
+            ]);
+            const data = readTerrain(payload);
+            assert.strictEqual(data.normals.length, 0);
+            assertLegacyPayload(data, payload, version);
+        });
+    }
+
+    it('reads a V6 file, which does have a normals section', () => {
+        const payload = Buffer.concat([
+            LE.i32(0x01010006),
+            LE.f32(0.5),
+            LE.i32(1), LE.i32(1),
+            LE.i16(4), LE.i16(8),
+            LE.u16Array(legacyHeights()),
+            LE.f32Array([0, 1, 0, 0, 1, 0]),       // normals — V6 and up
+            LE.u8Array(legacyWeights()),
+            LE.i16Array([0, -1, -1, -1]),
+            LE.i32(1),
+            LE.i32(0), LE.f32(2), LE.str('abc@6c48a'),
+            LE.str('def@6c48a'), LE.f32(0.5), LE.f32(0.25),
+        ]);
+        const data = readTerrain(payload);
+        assert.deepStrictEqual([...data.normals], [0, 1, 0, 0, 1, 0]);
+        assertLegacyPayload(data, payload, 0x01010006);
+    });
+
+    it('reads a V3 file, which has no normal map / roughness / metallic per layer', () => {
+        const payload = Buffer.concat([
+            LE.i32(0x01010003),
+            LE.f32(0.5),
+            LE.i32(1), LE.i32(1),
+            LE.i16(4), LE.i16(8),
+            LE.u16Array(legacyHeights()),
+            LE.u8Array(legacyWeights()),
+            LE.i16Array([0, -1, -1, -1]),
+            LE.i32(1),
+            LE.i32(0), LE.f32(2), LE.str('abc@6c48a'),   // the whole V3 record
+        ]);
+        const data = readTerrain(payload);
+        assert.strictEqual(data.payloadLength, payload.length, 'consumed exactly the spec bytes');
+        assert.strictEqual(data.normals.length, 0);
+        assert.deepStrictEqual(data.layers, [{
+            slot: 0, tileSize: 2, detailMapId: 'abc@6c48a',
+            normalMapId: '', roughness: 1, metallic: 0,
+        }]);
     });
 });
 
@@ -1460,6 +1968,15 @@ describe('terrainBin — review regressions', () => {
         const materialized = materialize(sentinel);
         materialized.isDefaultSentinel = false;
         assert.strictEqual(writeTerrain(materialized).length, 131072);
+    });
+
+    it('counts normals as payload, so dropping them is never silent', () => {
+        // The emptiness test ignored `normals`, so a normals-only object came back as the
+        // 2048-byte sentinel — writeTerrain drops normals by design, but not in silence.
+        const data = readTerrain(fs.readFileSync(GOLDEN_SENTINEL));
+        data.normals = Float32Array.from([0, 1, 0]);
+        assert.throws(() => writeTerrain(data), /flagged as the empty default sentinel/);
+        assert.throws(() => writeTerrain(data), /3 normal float\(s\)/);
     });
 
     // --- readTerrainInfo cost ------------------------------------------------

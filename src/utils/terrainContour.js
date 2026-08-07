@@ -280,8 +280,10 @@ function contourStats(lines, counts) {
 // --- signed distance to a contour -------------------------------------------
 
 /**
- * Signed distance in metres to an iso-contour: marching-squares segments in a bucket grid, so a
- * query is the TRUE distance, bounded by `reach`. Negative on the HIGH side (`-1..2` = inland..out).
+ * Signed distance in metres to an iso-contour: marching-squares segments in a bucket grid walked
+ * outward ring by ring, so a query is the TRUE distance (brute-force exact) at a cost set by the
+ * contour NEAR the point rather than by its total length, bounded by `reach`. Negative on the HIGH
+ * side (`-1..2` = inland..out).
  */
 export class ContourDistance {
     #data;
@@ -289,29 +291,60 @@ export class ContourDistance {
     // [x0, z0, x1, z1, ux, uz] flattened — `u` is the local UPHILL direction (unnormalized),
     // the only thing that can tell which side a point exactly ON the threshold lies on
     #segments = [];
-    #buckets = new Map();
+    // Flat `j * bw + i` grid of segment-offset lists, holes where a cell holds no segment
+    #buckets = [];
     #cell;
     #reach;
+    #bx0 = 0;
+    #bz0 = 0;
+    #bw = 1;
+    #bh = 1;
+    #tests = 0;
 
     /**
      * @param {object} data - Terrain data object
      * @param {number} threshold - Contour height in metres
      * @param {{region?: object, sampleCount?: number|number[], reach?: number}} [options]
-     *   `reach` (metres, default 1 tile) bounds every query and sizes the lookup buckets
+     *   `reach` (metres, default 1 tile) bounds every query
      */
     constructor(data, threshold, options = {}) {
         this.#data = data;
         this.#threshold = requireThreshold(threshold);
         const ts = data.tileSize > 0 ? data.tileSize : 1;
         this.#reach = Number.isFinite(options.reach) && options.reach > 0 ? options.reach : ts;
-        this.#cell = Math.max(this.#reach, ts);
         const grid = sampleGrid(data, options);
+        // Cell size balances the two costs a query pays — `reach / cell` rings walked against
+        // `cell / spacing` segments per bucket — at their geometric mean, and never goes below the
+        // sample spacing (so there are never more buckets than samples, i.e. CONTOUR_MAX_CELLS of
+        // them). Sizing it by `reach`, as this did, put every segment of a wide band in ONE bucket:
+        // each query then scanned the whole contour, once per weight texel of a paint_layer.
+        const spacing = Math.max(grid.dx, grid.dz);
+        this.#cell = Math.max(spacing, Math.sqrt(this.#reach * spacing));
+        this.#bx0 = grid.region.x;
+        this.#bz0 = grid.region.z;
+        this.#bw = Math.floor(grid.region.width / this.#cell) + 1;
+        this.#bh = Math.floor(grid.region.depth / this.#cell) + 1;
+        this.#buckets = new Array(this.#bw * this.#bh);
         this.#extract(grid);
     }
 
     /** Contour segments found (0 = the region is entirely above, entirely below, or entirely AT it) */
     get segmentCount() {
         return this.#segments.length / SEG;
+    }
+
+    /**
+     * TEST SEAM, no src/ caller: the flattened `[x0, z0, x1, z1, ux, uz]` rows, so a query can be
+     * checked against a brute-force scan over all of them — the only thing that shows `#nearest`'s
+     * ring-walk early-out still answers the TRUE nearest.
+     */
+    get segments() {
+        return [...this.#segments];
+    }
+
+    /** TEST SEAM, no src/ caller: segment-distance tests so far — the cost the bucket grid bounds */
+    get segmentTests() {
+        return this.#tests;
     }
 
     get threshold() {
@@ -349,23 +382,49 @@ export class ContourDistance {
     /**
      * Nearest segment within `reach`: its base offset, its distance and the point on it that is
      * closest — the foot of the perpendicular the sign of a tie is measured from.
+     *
+     * Buckets are walked outward ring by ring. Every bucket of ring `r` lies at least
+     * `(r - 1) * cell` from the query point, so once that floor exceeds the best distance found the
+     * remaining rings cannot improve on it and the walk stops — which is what keeps the answer the
+     * TRUE nearest, bit-identical to a brute-force scan.
+     *
+     * It is not a handful of tests, it is a LOCAL number: measured on the tests' 1808-segment
+     * ripple field (`4·sin(x/1.5)·cos(z/1.5)` over 2x2 blocks, contour 0), 13 tests per query at a
+     * 1 m reach and 219 at 60 m. Reach-sized buckets put that whole contour in the queried
+     * neighbourhood, so the win is the WIDE reach (1808/219 ≈ 8x), not the narrow one, where that
+     * rule already sized a cell at the sample spacing. A wide reach over a SHORT contour can even
+     * exceed the segment count: a segment sits in every bucket it touches.
      * @returns {{s: number, distance: number, px: number, pz: number}|null}
      */
     #nearest(x, z) {
-        const bi = Math.floor(x / this.#cell);
-        const bj = Math.floor(z / this.#cell);
+        const ci = Math.floor((x - this.#bx0) / this.#cell);
+        const cj = Math.floor((z - this.#bz0) / this.#cell);
+        // Neither past the reach nor past the far side of the grid: a reach far larger than the
+        // terrain would otherwise walk ring after ring of out-of-range buckets
+        const maxRing = Math.min(
+            Math.ceil(this.#reach / this.#cell) + 1,
+            Math.max(ci, this.#bw - 1 - ci, cj, this.#bh - 1 - cj)
+        );
         let best = Infinity;
         let found = null;
-        for (let j = bj - 1; j <= bj + 1; j++) {
-            for (let i = bi - 1; i <= bi + 1; i++) {
-                const list = this.#buckets.get(`${i},${j}`);
-                if (!list) continue;
-                for (const s of list) {
-                    const p = closestPointOnSegment(x, z, this.#segments[s], this.#segments[s + 1],
-                        this.#segments[s + 2], this.#segments[s + 3]);
-                    if (p.distance < best) {
-                        best = p.distance;
-                        found = { s, distance: p.distance, px: p.x, pz: p.z };
+        for (let r = 0; r <= maxRing; r++) {
+            if ((r - 1) * this.#cell > Math.min(best, this.#reach)) break;
+            for (let j = cj - r; j <= cj + r; j++) {
+                if (j < 0 || j >= this.#bh) continue;
+                // Only the ring's perimeter: the interior came out of an earlier r
+                const step = (j === cj - r || j === cj + r) ? 1 : 2 * r;
+                for (let i = ci - r; i <= ci + r; i += step) {
+                    if (i < 0 || i >= this.#bw) continue;
+                    const list = this.#buckets[j * this.#bw + i];
+                    if (!list) continue;
+                    for (const s of list) {
+                        this.#tests++;
+                        const p = closestPointOnSegment(x, z, this.#segments[s], this.#segments[s + 1],
+                            this.#segments[s + 2], this.#segments[s + 3]);
+                        if (p.distance < best) {
+                            best = p.distance;
+                            found = { s, distance: p.distance, px: p.x, pz: p.z };
+                        }
                     }
                 }
             }
@@ -439,18 +498,26 @@ export class ContourDistance {
     #addSegment(a, b, uphill) {
         const s = this.#segments.length;
         this.#segments.push(a[0], a[1], b[0], b[1], uphill[0], uphill[1]);
-        const i0 = Math.floor(Math.min(a[0], b[0]) / this.#cell);
-        const i1 = Math.floor(Math.max(a[0], b[0]) / this.#cell);
-        const j0 = Math.floor(Math.min(a[1], b[1]) / this.#cell);
-        const j1 = Math.floor(Math.max(a[1], b[1]) / this.#cell);
+        // Registered in every bucket its AABB overlaps, clamped: a segment sits inside the sampled
+        // region by construction, but rounding can put an endpoint a hair outside it
+        const i0 = this.#bucket(a[0], b[0], this.#bx0, this.#bw, Math.min);
+        const i1 = this.#bucket(a[0], b[0], this.#bx0, this.#bw, Math.max);
+        const j0 = this.#bucket(a[1], b[1], this.#bz0, this.#bh, Math.min);
+        const j1 = this.#bucket(a[1], b[1], this.#bz0, this.#bh, Math.max);
         for (let j = j0; j <= j1; j++) {
             for (let i = i0; i <= i1; i++) {
-                const key = `${i},${j}`;
-                const list = this.#buckets.get(key);
+                const key = j * this.#bw + i;
+                const list = this.#buckets[key];
                 if (list) list.push(s);
-                else this.#buckets.set(key, [s]);
+                else this.#buckets[key] = [s];
             }
         }
+    }
+
+    /** Bucket index of `pick(u, v)` along one axis, clamped into the bucket grid */
+    #bucket(u, v, origin, count, pick) {
+        const n = Math.floor((pick(u, v) - origin) / this.#cell);
+        return n < 0 ? 0 : (n >= count ? count - 1 : n);
     }
 }
 

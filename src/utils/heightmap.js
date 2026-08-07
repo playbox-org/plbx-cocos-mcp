@@ -80,6 +80,10 @@ function checkDimensions(width, height, what) {
  * Deliberately minimal: colour type 0 (grayscale) with bit depth 8 or 16, no interlacing.
  * Everything else throws a {@link HeightmapError} that names what was actually found.
  *
+ * Chunk CRCs are deliberately NOT verified: damage inside the only chunk we decode (IDAT)
+ * already fails loudly at inflate/row count/unfiltering. What IS enforced is the structure the
+ * size bound trusts: signature, IHDR first, exactly one IHDR, declared length vs. bytes left.
+ *
  * @param {Buffer|Uint8Array} buffer - Whole PNG file
  * @param {string} [what='heightmap'] - Label for error messages
  * @returns {{width: number, height: number, bitDepth: number, maxValue: number,
@@ -105,7 +109,17 @@ export function decodePng(buffer, what = 'heightmap') {
                 `only ${Math.max(0, buf.length - dataStart - 4)} left`
             );
         }
+        if (off === 8 && type !== 'IHDR') { // off 8 = the chunk right after the signature
+            throw new HeightmapError(
+                `${what}: malformed PNG — the first chunk is "${type}", the spec requires IHDR`
+            );
+        }
         if (type === 'IHDR') {
+            if (ihdr) {
+                throw new HeightmapError(
+                    `${what}: malformed PNG — a second IHDR chunk at byte ${off} (the header must be unique)`
+                );
+            }
             if (len !== 13) throw new HeightmapError(`${what}: malformed PNG IHDR (${len} bytes, expected 13)`);
             ihdr = {
                 width: buf.readUInt32BE(dataStart),
@@ -599,8 +613,16 @@ export function buildHeightGrid(spec, options) {
             throw new HeightmapError(`heightmap.${name} must be a finite number of metres, got ${v}`);
         }
     }
+    // Both degenerate ranges are noted, not refused — same as min === max: the mapping is
+    // well-defined and an inverted heightmap is a legitimate (if rare) ask.
     if (spec.max === min) {
         notes.push(`heightmap.min === heightmap.max (${min} m) — the result is a flat terrain`);
+    } else if (spec.max < min) {
+        notes.push(
+            `heightmap.min (${min} m) is ABOVE heightmap.max (${spec.max} m) — the height mapping ` +
+            'is inverted: a white sample becomes the lowest point and a black one the highest. ' +
+            'Swap them unless that was intended.'
+        );
     }
 
     const range = spec.max - min;

@@ -386,6 +386,9 @@ function describeRegion(data, r) {
 /**
  * The mask a region + falloff describe: `factorAt(x, z)` is 0..1 inside, `null` outside. The factor
  * is 0 AT the border and 1 `falloff` metres in, so a ramp can never be centred on the edge (= step).
+ * Every consumer BLENDS by it — `current + (target - current) * t`, heights toward their target and
+ * weights toward the requested weight — so factor 0 is a NO-OP rather than a write of 0, which at
+ * the border would ERASE whatever the mask reached instead of tapering into it.
  * A band tapers across its THICKNESS only — its rectangle is a bounding box, and the default box is
  * the whole terrain, so feathering against it would fade the band out along the map border.
  * @param {object} data - Terrain data object
@@ -546,23 +549,27 @@ function renormalizeTexel(data, base, slots) {
 
 /**
  * Set channel `k` of one texel to `value` (0..255) and give the remaining `255 - value` to the
- * block's other assigned channels, in proportion to what they hold. Two edge cases, both
- * reported by `paint_layer`:
+ * block's other assigned channels, in proportion to what they hold. `value` is what the CALLER
+ * already blended through the mask (see {@link paintLayer}), so this function never looks at the
+ * factor — it only redistributes. Two edge cases, both reported by `paint_layer`:
  * - the other assigned channels are all 0 → the remainder is split EQUALLY between them (the
  *   texel had no coverage at all; any split is invented, an equal one at least keeps the sum);
- * - there is no other assigned channel → the requested weight is IGNORED and the channel gets
- *   the full 255. Storing `value` there would look more honest but is a trap: the weight is
- *   provably unobservable while the block assigns one layer (`maxLayerIndex === 0` makes the
- *   shader draw `detailMap0` and never sample the weight map, terrain.ts:879/920-930), and the
- *   moment a LATER op assigns a second layer to that block the map starts being sampled and
- *   every such texel renders at `value/255` brightness — 0 means literally black. 255 is the
- *   only value that stays correct after a second layer arrives, so it is what we store.
+ * - there is no other assigned channel → the requested weight is FORCED to the full 255 (whether
+ *   that ignored the request is the caller's to decide, see `@returns`). Storing `value` there
+ *   would look more honest but is a trap: the weight is provably unobservable while the block
+ *   assigns one layer (`maxLayerIndex === 0` makes the shader draw `detailMap0` and never sample
+ *   the weight map, terrain.ts:879/920-930), and the moment a LATER op assigns a second layer to
+ *   that block the map starts being sampled and every such texel renders at `value/255`
+ *   brightness — 0 means literally black. 255 is the only value that stays correct after a second
+ *   layer arrives, so it is what we store.
  * @param {object} data
  * @param {number} base - `weightTexelIndex(data, i, j)`
  * @param {number[]} slots - The block's four palette slots
  * @param {number} k - Target channel
  * @param {number} value - 0..255
- * @returns {{ignored: boolean, split: boolean}} which edge case was hit
+ * @returns {{forced: boolean, split: boolean}} which edge case was hit. `forced` = 255 was stored
+ *   whatever `value` said; whether that IGNORED the request is the caller's to decide — it knows the
+ *   requested weight, while `value` here is already blended and equals 255 at factor 0 on a full texel.
  */
 function paintTexel(data, base, slots, k, value) {
     const w = data.weights;
@@ -576,7 +583,7 @@ function paintTexel(data, base, slots, k, value) {
     }
     if (others.length === 0) {
         w[base + k] = 255;
-        return { ignored: value !== 255, split: false };
+        return { forced: true, split: false };
     }
     w[base + k] = value;
     const remain = 255 - value;
@@ -585,12 +592,50 @@ function paintTexel(data, base, slots, k, value) {
         : others.map((c) => (w[base + c] * remain) / sum);
     const ints = distribute(shares, remain);
     others.forEach((c, idx) => { w[base + c] = ints[idx]; });
-    return { ignored: false, split: sum === 0 && remain > 0 };
+    return { forced: false, split: sum === 0 && remain > 0 };
 }
 
 /** Block coordinates of a block index (`blockIndex`'s inverse) */
 function blockCoords(b, bc) {
     return [b % bc[0], Math.floor(b / bc[0])];
+}
+
+/**
+ * Move a block's weight bytes so each channel keeps carrying its own LAYER across a slot change:
+ * channel `k` takes the bytes of the layer now assigned to it, wherever that layer sat `before`, and
+ * a channel whose layer the block did not carry starts at 0. Renormalizing is the caller's job.
+ *
+ * Without this the bytes stay where they are and get re-attributed: `[0,1] -> [1]` handed layer 0's
+ * coverage to layer 1 and threw layer 1's own away, and `[0,1] -> [1,0]` swapped the two layers'
+ * coverage. `terrainBin.removeLayer` already moves the weights along; this is the same rule for an
+ * arbitrary re-assignment.
+ * @param {object} data
+ * @param {number} bx
+ * @param {number} by
+ * @param {number[]} before - The block's four slots before the write
+ * @param {number[]} after - Its four slots now
+ * @returns {number} texels whose bytes actually moved
+ */
+function remapBlockWeights(data, bx, by, before, after) {
+    const from = after.map((s) => (s >= 0 ? before.indexOf(s) : -1));
+    const wms = data.weightMapSize;
+    let moved = 0;
+    for (let j = 0; j < wms; j++) {
+        for (let i = 0; i < wms; i++) {
+            const base = weightTexelIndex(data, bx * wms + i, by * wms + j);
+            const old = [
+                data.weights[base], data.weights[base + 1],
+                data.weights[base + 2], data.weights[base + 3],
+            ];
+            let changed = false;
+            for (let k = 0; k < TERRAIN_MAX_BLEND_LAYERS; k++) {
+                const v = from[k] < 0 ? 0 : old[from[k]];
+                if (data.weights[base + k] !== v) { data.weights[base + k] = v; changed = true; }
+            }
+            if (changed) moved++;
+        }
+    }
+    return moved;
 }
 
 /** Renormalize every texel of one block; returns how many changed / fell back to slot 0 */
@@ -1532,9 +1577,16 @@ function isShortTexel(data, base, slots) {
 }
 
 /**
- * `paint_layer` — write one layer's weight over a region, renormalizing the other channels so
+ * `paint_layer` — blend one layer's weight over a region, renormalizing the other channels so
  * every touched texel keeps summing to 255, and auto-assigning the slot into each touched
  * block's `layerBuffer`.
+ *
+ * The mask factor BLENDS, exactly as the height ops do: a texel ends at `current + (weight * 255 -
+ * current) * t`, so `t = 1` sets the requested weight and `t = 0` is a no-op on an already
+ * normalized texel (the others are given back exactly what they held). Writing `weight * t`
+ * instead made every falloff border ERASE the coverage it reached — two overlapping paints left a
+ * bare stripe of the underlying layer down the middle of continuous painting. A texel that was
+ * SHORT is still repaired at factor 0, and counted so the note can say so.
  */
 function paintLayer(data, op, ctx) {
     const slot = requireIntIn(op, 'layer', 0, TERRAIN_MAX_LAYER_COUNT - 1);
@@ -1597,17 +1649,20 @@ function paintLayer(data, op, ctx) {
     }
 
     // Pass 2: assign, then write.
-    // A block that GAINS a channel here may hold texels that do not sum to 255 — either from an
-    // earlier paint into what was then its only assigned layer, or from a hand-made file. While
-    // the block had a single channel that was unobservable (the shader ignored the weight map);
-    // now that it blends two, every such texel would render darkened. Repair the block on
-    // assignment, exactly as `remove_layer` does when it changes a block's channel set.
+    // A block that GAINS a channel here may hold texels that do not sum to 255 — from an earlier
+    // paint into what was then its only assigned layer, or from a hand-made file. Gaining a channel
+    // changes what the block blends (and, from one layer, whether it samples the weight map at all),
+    // so a stale byte ANYWHERE in it becomes visible: repair the whole block on assignment, exactly
+    // as `remove_layer` does when it changes a block's channel set.
     let repaired = 0;
+    let repairedBlocks = 0;
     for (const [bx, by, k] of assigned) {
         const slots = blockLayers(data, bx, by);
         slots[k] = slot;
         setBlockLayers(data, bx, by, slots);
-        repaired += renormalizeBlock(data, bx, by).changed;
+        const moved = renormalizeBlock(data, bx, by).changed;
+        repaired += moved;
+        if (moved) repairedBlocks++;
     }
     const slotsByBlock = new Map();
     for (const b of touched.keys()) {
@@ -1615,10 +1670,12 @@ function paintLayer(data, op, ctx) {
     }
 
     let texels = 0;
-    let ignored = 0;
+    let forced = 0;
     let splitSum = 0;
     let zeroed = 0;
     let short = 0;
+    let rescaled = 0;
+    let idleChanged = 0;
     let vLow = Infinity;
     let vHigh = -Infinity;
     let ti0 = Infinity;
@@ -1626,45 +1683,87 @@ function paintLayer(data, op, ctx) {
     let tj0 = Infinity;
     let tj1 = -Infinity;
     let peak = 0;
+    const target = weight * 255;
     regionTexels(data, r, mask, (bx, by, gi, gj, t) => {
         if (t > peak) peak = t;
         const b = blockIndex(bx, by, data.blockCount);
         const k = channelOf.get(b);
         const slots = slotsByBlock.get(b);
         const base = weightTexelIndex(data, gi, gj);
-        const value = Math.round(weight * t * 255);
+        const current = data.weights[base + k];
+        // Factor 0 asks for no change, but a texel that was already SHORT is still renormalized —
+        // snapshot it (border only) so the note can count the bytes that moved unasked
+        const wasShort = isShortTexel(data, base, slots);
+        const wasBytes = t > 0 ? null : [
+            data.weights[base], data.weights[base + 1],
+            data.weights[base + 2], data.weights[base + 3],
+        ];
+        // BLEND toward the target, never write `weight * t`: the mask edge must leave the coverage
+        // that is already there alone (see the op's doc block)
+        const value = Math.round(t >= 1 ? target : current + (target - current) * t);
         const res = paintTexel(data, base, slots, k, value);
         // The invariant this op advertises, MEASURED rather than asserted — on the texel just
         // written, while its block's slots are at hand
         if (isShortTexel(data, base, slots)) short++;
+        if (wasShort) rescaled++;
+        if (wasBytes && wasBytes.some((v, c) => data.weights[base + c] !== v)) idleChanged++;
         texels++;
-        if (value === 0) zeroed++;
-        if (res.ignored) ignored++;
+        // Statistics read the STORED byte, which `paintTexel` may override (a single-layer block)
+        const stored = data.weights[base + k];
+        if (stored === 0) zeroed++;
+        if (res.forced) forced++;
         if (res.split) splitSum++;
-        if (value < vLow) vLow = value;
-        if (value > vHigh) vHigh = value;
+        if (stored < vLow) vLow = stored;
+        if (stored > vHigh) vHigh = stored;
         ti0 = Math.min(ti0, gi); ti1 = Math.max(ti1, gi);
         tj0 = Math.min(tj0, gj); tj1 = Math.max(tj1, gj);
     });
 
+    // The REQUEST is one number for the region, so it decides "ignored" and the blended value does
+    // not: a forced texel stores 255 at every factor, which IS the request at weight 1, not below it
+    const ignored = weight < 1 ? forced : 0;
+    // The blend means the requested weight is not the whole story: report what was really stored.
+    // A single value is not a range — the summary omits it, so this must never read "1..1" either.
+    const ranged = vLow !== vHigh;
+    const wrote = ranged
+        ? `weights written ${fmt((vLow < 0 ? 0 : vLow) / 255)}..${fmt((vHigh < 0 ? 0 : vHigh) / 255)}`
+        : `every touched texel at weight ${fmt((vHigh < 0 ? 0 : vHigh) / 255)}`;
     const notes = [];
-    if (peakFactor < 1 - 1e-9) {
+    // Both branches make the same claim about the same mask; only where the peak comes from and
+    // what to do about it differ (a band has no half-extent, so its peak is MEASURED). For a
+    // rect/ellipse the analytic branch is exact about the region, so a measured shortfall there is
+    // just the texel grid missing the peak and the band advice does not apply (region.inner/outer
+    // are rejected outside a band).
+    const wide = peakFactor < 1 - 1e-9
+        ? {
+            than: `the region's ${fmt(halfExtent)} m half-extent`,
+            peak: fmt(peakFactor) + (fmt(peak) === fmt(peakFactor) ? '' : ` (${fmt(peak)} on the texel grid)`),
+            fix: `Use a falloff of at most ${fmt(halfExtent)} m, or a larger region`,
+        }
+        : (r.shape === 'band' && falloff > 0 && peak < 1 - 1e-6 ? {
+            than: 'the band is thick',
+            peak: fmt(peak),
+            fix: 'Use a smaller falloff, or a wider band (a larger inner/outer spread)',
+        } : null);
+    if (wide) {
+        // `1 - peak` is what the DEEPEST texel keeps, a floor and not the amount every texel keeps —
+        // so state the MOVE. A texel whose block assigns this layer alone escapes the bound
+        // entirely: `paintTexel` stores 255 there whatever the factor. That count is `forced`, not
+        // `ignored` (at weight 1 nothing is ignored and they still escape), so "bounds nothing here"
+        // holds for any region wholly inside such blocks — whatever those texels happened to hold.
+        const seeBelow = ignored ? ' — see below' : '';
+        const bounded = forced === texels
+            ? `but that bounds nothing here: every texel it covers (${texels}) sits in a block ` +
+              `assigning layer ${slot} alone, so each was set to weight 1 regardless of its factor ` +
+              `(${wrote})${seeBelow}`
+            : `so the requested weight ${fmt(weight)} is reached NOWHERE that did not already hold ` +
+              `it${forced ? `, EXCEPT the ${plural(forced, 'texel')} whose block assigns layer ${slot} ` +
+                  `alone (set to weight 1 whatever the factor${seeBelow})` : ''}: a paint ` +
+              `BLENDS, so no texel moves more than ${fmt(peak)} of the way from what it held toward ` +
+              `${fmt(weight)}, and every texel at a lower factor moves less (${wrote})`;
         notes.push(
-            `falloff ${fmt(falloff)} m is wider than the region's ${fmt(halfExtent)} m half-extent, ` +
-            `so the requested weight ${fmt(weight)} is reached NOWHERE — the ramp peaks at ` +
-            `${fmt(peakFactor)} of it and the strongest texel got ${fmt((vHigh < 0 ? 0 : vHigh) / 255)}. ` +
-            `Use a falloff of at most ${fmt(halfExtent)} m, or a larger region`
-        );
-    } else if (r.shape === 'band' && falloff > 0 && peak < 1 - 1e-6) {
-        // Only a band gets the MEASURED verdict: it has no half-extent for the analytic branch
-        // above, whereas for a rect/ellipse that branch is exact about the region — a measured
-        // shortfall there is the texel grid missing the peak, and the band advice does not apply
-        // to it at all (region.inner/outer are rejected outside a band).
-        notes.push(
-            `falloff ${fmt(falloff)} m is wider than the band is thick, so the requested weight ` +
-            `${fmt(weight)} is reached NOWHERE — the ramp peaks at ${fmt(peak)} of it and the ` +
-            `strongest texel got ${fmt((vHigh < 0 ? 0 : vHigh) / 255)}. Use a smaller falloff, or ` +
-            'a wider band (a larger inner/outer spread)'
+            `falloff ${fmt(falloff)} m is wider than ${wide.than} — the mask peaks at ${wide.peak}, ` +
+            `${bounded}. ${wide.fix}`
         );
     }
     if (assigned.length) {
@@ -1692,17 +1791,12 @@ function paintLayer(data, op, ctx) {
             'paint the neighbour deliberately'
         );
     }
-    if (repaired) {
-        notes.push(
-            `${plural(repaired, 'texel')} of the newly-multi-layer block(s) did not sum to 255 ` +
-            '(left over from when the block assigned a single layer, where the shader ignores the ' +
-            'weight map) and were rescaled to 255 before painting — otherwise they would now render ' +
-            'darkened'
-        );
-    }
+    // Nothing to report at weight 1: 255 IS the request there, and that those texels also escaped
+    // the mask is what the wide-falloff note above states, from `forced`
     if (ignored) {
         notes.push(
-            `${plural(ignored, 'texel')} got weight 1 instead of the requested ${fmt(weight)}: ` +
+            `${plural(ignored, 'texel')} got weight 1 instead of the requested ${fmt(weight)}, ` +
+            'whatever the mask factor there: ' +
             `layer ${slot} is the only layer their block assigns, so there is no other channel to ` +
             'carry the remaining weight and the shader ignores the weight map for such a block ' +
             'anyway. Storing the requested value would render correctly now but turn into a dark ' +
@@ -1711,8 +1805,46 @@ function paintLayer(data, op, ctx) {
     }
     if (splitSum) {
         notes.push(
-            `${plural(splitSum, 'texel')} had no weight on any other layer, so the remaining ` +
-            `${fmt(1 - weight)} was split equally between the block's other assigned layers`
+            `${plural(splitSum, 'texel')} had no weight on any other layer, so whatever was left ` +
+            'over this layer\'s share was split equally between the block\'s other assigned layers'
+        );
+    }
+    // ONE account of short-texel repair over its two DISJOINT sources: the sweep of a block that
+    // gained the layer (which leaves nothing short behind, so `rescaled` cannot re-count its texels)
+    // and the writes themselves — of which only the sweep and the factor-0 ones are UNASKED bytes,
+    // since a texel at factor 1 was asked to be written.
+    const wasShortCount = repaired + rescaled;
+    if (wasShortCount || idleChanged) {
+        const sources = [];
+        if (repaired) {
+            sources.push([repaired, `in ${plural(repairedBlocks, 'block')} that gained layer ${slot}, ` +
+                'swept WHOLE before painting (region or not: gaining a channel changes what the block ' +
+                'blends, so a stale byte anywhere in it becomes visible)']);
+        }
+        if (rescaled) {
+            sources.push([rescaled, `as ${rescaled === 1 ? 'it was' : 'they were'} written`]);
+        }
+        // One count per source, and only the total when there are two of them to add up
+        const where = sources
+            .map(([n, text]) => `${sources.length > 1 ? `${n} ` : ''}${text}`)
+            .join('; ');
+        const unasked = [
+            repaired ? 'the sweep reaches beyond the region' : null,
+            idleChanged ? 'a factor-0 texel asked for no change at all' : null,
+        ].filter(Boolean).join('; ');
+        notes.push(
+            (wasShortCount
+                ? `${plural(wasShortCount, 'texel')} did not sum to 255 before this op and ` +
+                  `${wasShortCount === 1 ? 'was' : 'were'} rescaled to it, ${where}. `
+                : '') +
+            (idleChanged
+                ? `${plural(idleChanged, 'texel')} changed where the mask factor is 0 — a blend by 0 ` +
+                  `keeps layer ${slot}'s own byte, but the other channels are still renormalized and ` +
+                  'a byte under an un-assigned channel is zeroed. '
+                : '') +
+            'The sum-255 convention is deliberate (a short texel renders darkened as soon as its ' +
+            'block blends a second layer), so these are repairs and not overwritten edits' +
+            (unasked ? ` — and bytes moved outside what this op was asked to write: ${unasked}` : '')
         );
     }
     if (short) {
@@ -1722,14 +1854,14 @@ function paintLayer(data, op, ctx) {
         );
     }
 
-    const ranged = vLow !== vHigh;
     return {
         op: 'paint_layer',
         summary: `Painted layer ${slot} (${label(ctx, data.layers[slot]?.detailMapId)}) at weight ` +
             `${fmt(weight)} over ${plural(texels, 'texel')} in ${plural(touched.size, 'block')} ` +
             `(${describeRegion(data, r)}${describeMask(mask)}` +
             `; global texels ${ti0}..${ti1} x ${tj0}..${tj1}` +
-            (ranged ? `, weights written ${fmt(vLow / 255)}..${fmt(vHigh / 255)}` : '') +
+            // The mask BLENDS, so what a texel ended at also depends on what it held
+            (ranged ? `, ${wrote}` : '') +
             `${zeroed ? `, ${zeroed} of them at weight 0` : ''})` +
             (short ? '' : '; every touched texel sums to 255'),
         notes,
@@ -1737,8 +1869,9 @@ function paintLayer(data, op, ctx) {
 }
 
 /**
- * `set_block_layers` — low-level `layerBuffer` write. Weights are NOT touched: use
- * `paint_layer` for that.
+ * `set_block_layers` — low-level `layerBuffer` write. No weight is PAINTED (use `paint_layer`), but
+ * the stored bytes follow their LAYER through the change and are renormalized — see
+ * {@link remapBlockWeights}.
  */
 function setBlockLayersOp(data, op, ctx) {
     if (op.block === undefined) {
@@ -1821,20 +1954,20 @@ function setBlockLayersOp(data, op, ctx) {
         }
         if (before.some((v, k) => v !== slots[k])) {
             changed++;
-            changedBlocks.push([bx, by]);
+            changedBlocks.push([bx, by, before]);
         }
     }
 
-    // A channel that just LOST its layer keeps its weight byte, and that byte is not inert: while
-    // the block still blends two or more layers the four channels no longer sum to 255, so the
-    // shader (a plain weighted sum) darkens the whole block; and the moment that channel gains a
-    // layer again the stale byte reappears as coverage nobody painted — `renormalizeBlock` would
-    // then see a sum of 255 already and report nothing. So repair the blocks whose channel SET
-    // changed, exactly as `remove_layer` and `paint_layer`'s auto-assignment do.
+    // A weight byte belongs to its LAYER, not to its channel position, so the bytes follow the
+    // layers through the slot change — the same thing `terrainBin.removeLayer` does. Then
+    // renormalize: a channel whose layer the block did not carry starts at 0, so the four channels
+    // no longer sum to 255 and the shader (a plain weighted sum) would darken the whole block.
     let renormalized = 0;
+    let remapped = 0;
     let filled = 0;
     let fallbackSlot = -1;
-    for (const [bx, by] of changedBlocks) {
+    for (const [bx, by, before] of changedBlocks) {
+        remapped += remapBlockWeights(data, bx, by, before, slots);
         const res = renormalizeBlock(data, bx, by);
         renormalized += res.changed;
         filled += res.filled;
@@ -1850,16 +1983,23 @@ function setBlockLayersOp(data, op, ctx) {
         );
     }
     notes.push(
-        'weights are not PAINTED by this op: a channel that just gained a layer keeps whatever ' +
-        'weight was stored there (a freshly built terrain has R = 255, G/B/A = 0). Use paint_layer ' +
+        'weights are not PAINTED by this op: a channel whose layer the block did not carry before ' +
+        'starts at 0 coverage (a freshly built terrain has R = 255, G/B/A = 0). Use paint_layer ' +
         'to set them'
     );
+    if (remapped) {
+        notes.push(
+            `the weights of ${plural(remapped, 'texel')} FOLLOWED their layer: each channel now ` +
+            'carries the bytes of the layer assigned to it, wherever that layer sat before, and a ' +
+            'channel whose layer the block did not carry was zeroed — a weight belongs to its layer, ' +
+            'not to its channel position'
+        );
+    }
     if (renormalized) {
         notes.push(
-            `${plural(renormalized, 'texel')} were renormalized: the channels of layers this op ` +
-            'un-assigned were zeroed and the remaining ones rescaled back to a sum of 255, so the ' +
-            'block does not render darkened and no stale byte resurfaces if that channel gains a ' +
-            'layer again'
+            `${plural(renormalized, 'texel')} were renormalized: the surviving channels were ` +
+            'rescaled back to a sum of 255 after that remap, so the block does not render darkened ' +
+            'and no stale byte resurfaces if a channel gains a layer again'
         );
     }
     if (filled) {

@@ -21,7 +21,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { QueryTerrain } from '../../src/tools/QueryTerrain.js';
+import { QueryTerrain, JSON_MAX_CHARS } from '../../src/tools/QueryTerrain.js';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
 import {
     materialize,
@@ -33,7 +33,8 @@ import {
     heightAt,
     readTerrain,
     readTerrainInfo,
-    vertexCounts
+    vertexCounts,
+    terrainWarningText
 } from '../../src/utils/terrainBin.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -238,11 +239,23 @@ describe('QueryTerrain — the card (golden terrain)', () => {
         assert.match(text, /^0 +e7f590b3-.*1 +- +1 +0 +1 +91\.6% +0\.868$/m);
     });
 
-    it('warns about texture ids that do not resolve in this project', () => {
-        const unresolved = model.warnings.filter((w) => /does not resolve to an asset/.test(w));
-        assert.strictEqual(unresolved.length, 2);
-        assert.match(unresolved[0], /layer slot 0: detailMap e7f590b3-/);
-        assert.match(text, /## Warnings \(2\)/);
+    // Both layer detailMaps are unresolvable here, and they are ONE aggregated warning: the
+    // head names the first slot and the elision states how many occurrences it stands for.
+    // The head is terrainBin's registered wording verbatim — this tool does not spell the
+    // finding, it supplies {slot, field, id}. It counts as a warning about the FILE, the same
+    // classification get_asset_info gives the identical line: the dangling id is stored in the
+    // binary and edit_terrain set_layer is the fix — the AssetIndex only makes it visible.
+    it('warns about texture ids that do not resolve, in terrainBin\'s wording', () => {
+        const unresolved = model.warnings.filter((w) => /does not resolve to a project asset/.test(w));
+        assert.strictEqual(unresolved.length, 1);
+        const head = terrainWarningText('unresolvedTexture', {
+            slot: 0, field: 'detailMap', id: 'e7f590b3-ddfc-4d45-a66b-4958d57f1652@6c48a'
+        });
+        assert.match(head, /^layer slot 0: detailMap e7f590b3-/);
+        assert.strictEqual(unresolved[0], `${head} … and 1 more occurrence (2 total)`);
+        assert.strictEqual(model.warningsFromFile, 1, 'the defect is in the binary');
+        assert.match(text, /## Warnings \(1 — all in the file\)/);
+        assert.doesNotMatch(text, /cross-file/);
     });
 
     it('carries the editing hazard notes', () => {
@@ -580,6 +593,55 @@ describe('QueryTerrain — synthetic terrains', () => {
         assert.strictEqual(model.layers[0].normalMapName, 'panel.png@6c48a');
     });
 
+    // Those two lines are ONE each by construction, so the count cap never touches them —
+    // their LENGTH is the axis: a palette may hold TERRAIN_MAX_LAYER_COUNT slots.
+    it('names a few slots and counts the rest when a whole palette trips both checks', async () => {
+        const detail = '35b97cf8-601e-4835-8a3e-0d29568af652@6c48a';
+        const normal = '11112222-3333-4444-8555-666677778888@6c48a';
+        const layers = [];
+        for (let slot = 0; slot < 12; slot++) {
+            layers.push({ slot, tileSize: 1, roughness: 0.5, metallic: 0.25,
+                detailMapId: detail, normalMapId: normal });
+        }
+        const data = materialize({
+            blockCount: [1, 1], tileSize: 1, weightMapSize: 8, lightMapSize: 8, layers
+        });
+        setBlockLayers(data, 0, 0, [0, 1, 2, 3]);
+        const model = await json({ terrainPath: put('WidePalette', data) }, project);
+
+        for (const re of [/carry normal maps/, /_usePBR: true/]) {
+            const line = model.warnings.find((w) => re.test(w));
+            assert.ok(line, model.warnings.join('\n'));
+            assert.match(line, /^12 layer slots \(0, 1, 2, 3, 4, 5, 6, 7, … and 4 more\)/);
+            // the elided slots are counted, never spelled: no 8th..12th number on the line
+            assert.doesNotMatch(line.slice(0, line.indexOf(')')), /\b(8|9|10|11)\b/);
+        }
+    });
+
+    // The finding is spelled by terrainBin for BOTH fields, in the binary's own spelling minus the
+    // Id suffix: three tools wording it themselves is how 'detail map'/'detailMap'/'detailMapId'
+    // became three ways to read one problem. Here it is a single occurrence, so no elision either.
+    it('reports an unresolvable normalMap in the registry\'s wording, field spelling included', async () => {
+        const dead = 'dead0000-0000-4000-8000-000000000000@6c48a';
+        const data = materialize({
+            blockCount: [1, 1], tileSize: 1, weightMapSize: 4, lightMapSize: 4,
+            layers: [{
+                slot: 0, tileSize: 1, roughness: 1, metallic: 0,
+                detailMapId: '35b97cf8-601e-4835-8a3e-0d29568af652@6c48a', normalMapId: dead
+            }]
+        });
+        setBlockLayers(data, 0, 0, [0]);
+        const rel = put('DeadNormal', data);
+
+        const model = await json({ terrainPath: rel }, project);
+        const unresolved = model.warnings.filter((w) => /does not resolve to a project asset/.test(w));
+        assert.deepStrictEqual(unresolved,
+            [terrainWarningText('unresolvedTexture', { slot: 0, field: 'normalMap', id: dead })],
+            model.warnings.join('\n'));
+        assert.match(unresolved[0], /^layer slot 0: normalMap dead0000-/);
+        assert.doesNotMatch(unresolved[0], /more occurrence/);
+    });
+
     it('surfaces the binary layer warnings (slot with no layer record, zero coverage)', async () => {
         const data = materialize({
             blockCount: [1, 1], tileSize: 1, weightMapSize: 4, lightMapSize: 4,
@@ -598,9 +660,92 @@ describe('QueryTerrain — synthetic terrains', () => {
             model.warnings.join('\n'));
         assert.ok(model.warnings.some((w) => /zero\s+weight coverage/.test(w)), model.warnings.join('\n'));
 
+        // Nothing here needed the project, and the header says which set its count is over — the
+        // question build/edit_terrain's identical-looking `## Warnings (N)` cannot answer.
+        assert.strictEqual(model.warningsFromFile, model.warnings.length);
+        const report = await ok({ terrainPath: rel, sections: ['samples'] }, project);
+        assert.match(report,
+            new RegExp(`^## Warnings \\(${model.warnings.length} — all in the file\\)$`, 'm'));
+
         const sample = await json({ terrainPath: rel, weightAt: [[16, 16]] }, project);
         assert.strictEqual(sample.weightSamples[0].channels[1].slot, 3);
         assert.strictEqual(sample.weightSamples[0].channels[1].layer, 'slot 3 (no layer record)');
+    });
+
+    // The cap was inherited for the FILE's warnings only: this tool appended its own in a
+    // per-layer loop with no aggregation and no cap — up to 2 lines per palette layer, ~512 at
+    // TERRAIN_MAX_LAYER_COUNT, right after the capped ones. Measured on 64 dead-texture layers.
+    it('aggregates and caps its own per-layer warnings, not just the file\'s', async () => {
+        const layers = Array.from({ length: 64 }, (_, i) => ({
+            slot: i, tileSize: 1, roughness: 1, metallic: 0,
+            detailMapId: `dead${String(i).padStart(4, '0')}-0000-4000-8000-000000000000@6c48a`,
+            normalMapId: `beef${String(i).padStart(4, '0')}-0000-4000-8000-000000000000@6c48a`
+        }));
+        const data = materialize({
+            blockCount: [1, 1], tileSize: 1, weightMapSize: 4, lightMapSize: 4, layers
+        });
+        setBlockLayers(data, 0, 0, [0, 1]);
+        const rel = put('DeadTextures', data);
+
+        const model = await json({ terrainPath: rel }, project);
+        const unresolved = model.warnings.filter((w) => /does not resolve to a project asset/.test(w));
+        assert.strictEqual(unresolved.length, 1, model.warnings.join('\n'));
+        // 64 layers x 2 texture fields, every one of them counted in the one line they collapse into
+        assert.match(unresolved[0], /^layer slot 0: detailMap dead0000-/);
+        assert.match(unresolved[0], /… and 127 more occurrences \(128 total\)$/);
+
+        // sections: ['samples'] leaves the header + the Warnings section and nothing else, so
+        // the bullets below are warnings and the measurement covers the whole section.
+        const text = await ok({ terrainPath: rel, sections: ['samples'] }, project);
+        const section = text.slice(text.indexOf('## Warnings'));
+        const fromTool = model.warnings.length - model.warningsFromFile;
+        assert.match(section, new RegExp(`^## Warnings \\(${model.warnings.length} — ` +
+            `${model.warningsFromFile} in the file, ${fromTool} from this tool's cross-file checks\\)$`, 'm'));
+        const bullets = section.split('\n').filter((l) => l.startsWith('- '));
+        assert.strictEqual(bullets.length, model.warnings.length);
+        assert.ok(bullets.length <= 8, `${bullets.length} warning bullets`);
+        // 128 unaggregated lines were ~24 KB of report on a file with one real problem class
+        assert.ok(section.length < 3000, `warnings section is ${section.length} chars`);
+    });
+
+    // Nine distinct problems: seven in the file (four structural ones from the patched header, a
+    // layer with no detailMap, the unused slots, the dead texture ids) and this tool's own two
+    // cross-file pairing checks, which are about the SCENE. Eight are printed; the ninth is a
+    // continuation line, never a bullet — and header, split and elision all count the same
+    // UNION, which is what tells this tool's pair apart from build/edit_terrain's.
+    it('caps the printed warnings at eight, counting both sources in the header and the elision', async () => {
+        const dead = (n) => `dead${n}-0000-4000-8000-000000000000@6c48a`;
+        const data = materialize({
+            blockCount: [1, 1], tileSize: 1, weightMapSize: 4, lightMapSize: 4,
+            layers: [
+                { slot: 0, tileSize: 1, roughness: 1, metallic: 0, detailMapId: dead('0000'), normalMapId: dead('0001') },
+                { slot: 1, tileSize: 1, roughness: 0.5, metallic: 0, detailMapId: dead('0002'), normalMapId: '' },
+                { slot: 2, tileSize: 1, roughness: 1, metallic: 0, detailMapId: '', normalMapId: '' }
+            ]
+        });
+        setBlockLayers(data, 0, 0, [0, 1]);
+        // header patch: tileSize that does not survive the loader's snap, and a blockCount every
+        // stored buffer is now the wrong size for (writeTerrain would refuse to produce either)
+        const bytes = Buffer.from(writeTerrain(data));
+        bytes.writeDoubleLE(1.234, 4);
+        bytes.writeInt32LE(2, 12);
+        bytes.writeInt32LE(2, 16);
+        fs.writeFileSync(join(project, 'assets/Maps/Broken.terrain'), bytes);
+        const rel = 'assets/Maps/Broken.terrain';
+
+        const model = await json({ terrainPath: rel }, project);
+        assert.strictEqual(model.warnings.length, 9, model.warnings.join('\n'));
+        assert.strictEqual(model.warningsFromFile, 7, model.warnings.join('\n'));
+        // the dead texture ids are counted with the file's, right after the structural ones
+        assert.match(model.warnings[6], /does not resolve to a project asset/);
+        const text = await ok({ terrainPath: rel, sections: ['samples'] }, project);
+        const section = text.slice(text.indexOf('## Warnings'));
+        assert.match(section, /^## Warnings \(9 — 7 in the file, 2 from this tool's cross-file checks\)$/m);
+        assert.strictEqual(section.split('\n').filter((l) => l.startsWith('- ')).length, 8);
+        assert.match(section, /^… and 1 more warning \(9 total\)$/m);
+        // the cap spans the union: what it drops here is one of THIS tool's, not one of the file's,
+        // and it is still data on the model rather than a lost finding
+        assert.match(model.warnings[8], /_usePBR: true/);
     });
 
     it('reports a block that uses channel R only as ignoring the weight map', async () => {
@@ -1002,6 +1147,55 @@ describe('QueryTerrain — review regressions', () => {
         }
     });
 
+    // weightAt() refuses a mis-sized layerBuffer too (a texel's channels cannot be attributed to
+    // palette slots), and that reason is NOT the weight map's: here the weight buffer is intact,
+    // the Warnings say "layerBuffer count 15 != 16" and the sample used to send the caller after
+    // the buffer that is fine.
+    it('names the layerBuffer, not the weight map, when only the assignments are broken', async () => {
+        const dir = fs.mkdtempSync(join(os.tmpdir(), 'qt-short-lb-'));
+        try {
+            const data = materialize({
+                blockCount: [2, 2], tileSize: 1, weightMapSize: 4, lightMapSize: 4,
+                layers: [{
+                    slot: 0, tileSize: 1, roughness: 1, metallic: 0,
+                    detailMapId: '35b97cf8-601e-4835-8a3e-0d29568af652@6c48a', normalMapId: ''
+                }]
+            });
+            setBlockLayers(data, 0, 0, [0]);
+            const bytes = Buffer.from(writeTerrain(data));
+            // Header 24 B, then every payload array is an i32 count + its values. The palette sits
+            // BEHIND the layerBuffer, so dropping one entry means rebuilding the bytes around it.
+            const at = 24 + 4 + data.heights.length * 2 + 4 + 4 + data.weights.length;
+            assert.strictEqual(bytes.readInt32LE(at), 16, 'layerBuffer count offset');
+            const short = Buffer.concat([
+                bytes.subarray(0, at), Buffer.alloc(4),
+                bytes.subarray(at + 4, at + 4 + 15 * 2), bytes.subarray(at + 4 + 16 * 2)
+            ]);
+            short.writeInt32LE(15, at);
+            fs.writeFileSync(join(dir, 'short-lb.terrain'), short);
+
+            const model = await json({
+                terrainPath: 'short-lb.terrain', heightAt: [[0.5, 0.5]], weightAt: [[0.5, 0.5]]
+            }, dir);
+            // everything but the assignments survived the surgery: the palette parsed, the height
+            // grid answers, and no buffer other than the layerBuffer is reported mis-sized
+            assert.strictEqual(model.layers.length, 1);
+            assert.strictEqual(model.heightSamples[0].height, 0);
+            assert.ok(model.warnings.some((w) => /layerBuffer count 15 != 16 expected/.test(w)),
+                model.warnings.join('\n'));
+            assert.ok(!model.warnings.some((w) => /weights count|heights count/.test(w)),
+                model.warnings.join('\n'));
+
+            const [w] = model.weightSamples;
+            assert.strictEqual(w.weights, null);
+            assert.match(w.reason, /^in bounds — the stored layerBuffer does not match blockCount/);
+            assert.doesNotMatch(w.reason, /no usable weight map/);
+            assert.match(w.reason, /see Warnings/);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     // `blocks: true` used to be answered with silence inside the very section it asked for:
     // usableBlockCount() is 0 for a mis-sized layerBuffer, which collapsed blockCountTotal to 0,
     // which made blocksOmitted null, which rendered neither a table nor a reason.
@@ -1313,6 +1507,39 @@ describe('QueryTerrain — contourAt / slope budgets', () => {
         assert.ok(text.length < 10000, `report is ${text.length} chars`);
     });
 
+    // The note claimed the 65 536-sample budget whichever cap bit. A 1057 x 33 vertex grid is
+    // 34 881 samples — well inside it — and is downsampled purely by the 513-per-axis cap, so the
+    // reader was told to shrink a region against a constraint that was never the binding one.
+    it('names the cap that actually bit — per-axis, not the total budget', async () => {
+        const wide = put('Wide', [33, 1], (i) => i / 100);      // 1057 x 33 vertices
+        const cells = put('Cells', [16, 4], (i) => i / 100);    // 513 x 129 = 66 177 samples
+
+        const axis = await json({ terrainPath: wide, contourAt: 0.5, slope: true }, dir);
+        assert.deepStrictEqual(axis.contours[0].vertexSamples, [1057, 33]);
+        assert.ok(1057 * 33 < 65536, 'the total budget is not the constraint here');
+        assert.strictEqual(axis.contours[0].sampleLimit, 'axis');
+        assert.strictEqual(axis.slope.sampleLimit, 'axis');
+        const axisText = await ok(
+            { terrainPath: wide, contourAt: 0.5, slope: true, sections: ['samples'] }, dir
+        );
+        assert.match(axisText, /DOWNSAMPLED 1:4 from the region's 1057 x 33 vertex grid to stay inside the 513-samples-per-axis limit/);
+        assert.doesNotMatch(axisText, /65536-sample budget/);
+
+        // and the total-budget case still names the total budget
+        const total = await json({ terrainPath: cells, contourAt: 0.5, slope: true }, dir);
+        assert.deepStrictEqual(total.contours[0].vertexSamples, [513, 129]);
+        assert.strictEqual(total.contours[0].sampleLimit, 'cells');
+        assert.match(
+            await ok({ terrainPath: cells, contourAt: 0.5, sections: ['samples'] }, dir),
+            /to stay inside the 65536-sample budget/
+        );
+
+        assert.match(tool.inputSchema.properties.contourAt.description,
+            /would exceed 513 samples on an axis or 65536 in total/);
+        assert.match(tool.inputSchema.properties.slope.description,
+            /513-per-axis \/ 65536-sample budget/);
+    });
+
     // tileSize 0 made every default resolution NaN, and the failure surfaced from exportHeights
     // as "sampleCount cols must be an integer in 1..8192, got NaN" — an argument nobody passed.
     it('blames the file, not the caller, for a non-positive stored tileSize', async () => {
@@ -1339,5 +1566,173 @@ describe('QueryTerrain — contourAt / slope budgets', () => {
         // an explicit resolution still reads what there is
         const model = await json({ terrainPath: rel, exportHeights: { region, sampleCount: 3 } }, dir);
         assert.deepStrictEqual(model.heightGrid.samples, [3, 3]);
+    });
+});
+
+describe('QueryTerrain — json obeys the same budgets as the text report', () => {
+    let dir;
+
+    /** a `blockCount`-block terrain at 1 m tiles whose heights come from `fn(x, z)` */
+    function put(name, blockCount, fn = () => 0) {
+        const data = materialize({
+            blockCount, tileSize: 1, weightMapSize: 4, lightMapSize: 4, layers: []
+        });
+        const [vx, vz] = vertexCounts(blockCount);
+        for (let j = 0; j < vz; j++) {
+            for (let i = 0; i < vx; i++) setVertexHeight(data, i, j, fn(i, j), true);
+        }
+        fs.writeFileSync(join(dir, `${name}.terrain`), writeTerrain(data));
+        return `${name}.terrain`;
+    }
+
+    before(() => {
+        dir = fs.mkdtempSync(join(os.tmpdir(), 'qt-json-'));
+    });
+
+    after(() => {
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    // The budgets count grid CELLS, but `JSON.stringify(model, null, 2)` spends a line and ~17
+    // characters on every number: the reviewer's exportHeights {sampleCount: [513, 127]} was
+    // 460 KB as text and 1.80 MB as json — 1.5x its own whitespace-free size, and 3.3x the
+    // pathology the budgets were introduced for. Both figures are asserted below.
+    it('does not multiply the payload it budgets by pretty-printing it', async () => {
+        const rel = put('Ramp', [16, 4], (i, j) => (i - 2.5 * j) / 10);
+        // blocks: false keeps this on the grid alone — the block table is measured below
+        const args = { terrainPath: rel, blocks: false, exportHeights: { sampleCount: [513, 127] } };
+        const text = await ok(args, dir);
+        const raw = await ok({ ...args, format: 'json' }, dir);
+        const model = JSON.parse(raw);
+        const compact = JSON.stringify(model);
+
+        assert.ok(raw.length < compact.length * 1.1,
+            `json ${raw.length} chars vs ${compact.length} without whitespace`);
+        // the shape this renderer exists to avoid, so the size quoted for it stays a measurement
+        const naive = JSON.stringify(model, null, 2).length;
+        assert.ok(naive > 1_750_000 && naive < 1_850_000, `naive pretty-print is ${naive} chars`);
+        assert.ok(naive > compact.length * 1.4, `${(naive / compact.length).toFixed(2)}x compact`);
+        // "2.74x the text shape" is not a budget: the shape has a ceiling of its own now, and
+        // this request — which text answers at ~450 KB — has to stay inside it
+        assert.ok(raw.length <= JSON_MAX_CHARS,
+            `json ${raw.length} chars vs the ${JSON_MAX_CHARS} ceiling (text ${text.length})`);
+        // the numbers are not one per line: 65 151 cells, a few hundred lines
+        const cells = model.heightGrid.rows.length * model.heightGrid.rows[0].length;
+        assert.strictEqual(cells, 513 * 127);
+        assert.ok(raw.split('\n').length < cells / 100,
+            `${raw.split('\n').length} lines for ${cells} cells`);
+
+        // and compact does not mean rounded — the text shape is the one that prints 3 decimals
+        const data = readTerrain(fs.readFileSync(join(dir, rel)));
+        assert.strictEqual(model.heightGrid.rows[0][7], heightAt(data, 7, 0));
+        assert.strictEqual(raw, await ok({ ...args, format: 'json' }, dir), 'byte-stable');
+    });
+
+    // The ceiling is NOT "everything text answers", and this is the gap it deliberately leaves:
+    // sections STACKED on a full-budget grid are refused in json (1.58 MB) while text answers the
+    // same request (0.52 MB). That is the trade — a refusal naming both a request that fits and
+    // `format`, rather than a silent 1.6 MB response — so the message has to name that way out.
+    it('refuses sections stacked on a full-budget grid, naming a request that fits and format', async () => {
+        const rel = put('Dunes', [8, 8], (i, j) => Math.sin(i / 3) * 4 + Math.sin(j / 5) * 3);
+        const points = Array.from({ length: 256 }, (_, k) => [(k % 16) + 0.31, Math.floor(k / 16) + 0.77]);
+        const args = {
+            terrainPath: rel, blocks: true, weightAt: points,
+            exportHeights: { sampleCount: [513, 127] },
+            contourAt: [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5]
+        };
+        // text answers this request, so `format` is a real way out and the message must say so
+        const text = await ok(args, dir);
+        assert.ok(text.length < JSON_MAX_CHARS, `text ${text.length} chars`);
+
+        const err = await fails({ ...args, format: 'json' }, dir);
+        assert.match(err, new RegExp(`over the ${JSON_MAX_CHARS}-character ceiling`));
+        assert.match(err, /the biggest section is exportHeights \(\d+ chars\)/);
+        assert.match(err, /read the same request as format: "text", which answers it/);
+        const measured = Number(/would be (\d+) characters/.exec(err)[1]);
+        assert.ok(measured > JSON_MAX_CHARS, `claimed ${measured} chars`);
+
+        // the sampleCount it names has to actually fit — an unusable suggestion is a dead end
+        const fit = /sampleCount: \[(\d+), (\d+)\]/.exec(err);
+        assert.ok(fit, err);
+        const retry = await ok({
+            ...args, format: 'json',
+            exportHeights: { sampleCount: [Number(fit[1]), Number(fit[2])] }
+        }, dir);
+        assert.ok(retry.length <= JSON_MAX_CHARS, `suggested request is ${retry.length} chars`);
+        assert.ok(retry.length > JSON_MAX_CHARS / 2, `${retry.length} chars gives up too much`);
+    });
+
+    // THE guarantee of the ceiling, and the whole of it: a height grid at the full GRID_MAX_CELLS
+    // budget is never refused for carrying doubles where the text shape prints 3 decimals. The
+    // test above is the other half — sections stacked on such a grid can be refused — and the
+    // margin below is why: 65 536 cells of doubles already spend most of the ceiling.
+    it('never refuses a grid at the full cell budget, whatever it costs as doubles', async () => {
+        const rel = put('Full', [8, 8], (i, j) => Math.sin(i / 3) * 4 + Math.sin(j / 5) * 3);
+        const raw = await ok(
+            { terrainPath: rel, blocks: false, exportHeights: { sampleCount: [256, 256] }, format: 'json' },
+            dir
+        );
+        const model = JSON.parse(raw);
+        assert.strictEqual(model.heightGrid.rows.length * model.heightGrid.rows[0].length, 65536);
+        assert.ok(raw.length <= JSON_MAX_CHARS, `${raw.length} chars for 65536 cells`);
+        // ~20 chars per cell, measured: the guarantee holds with under 15% of the ceiling to spare
+        assert.ok(raw.length > JSON_MAX_CHARS * 0.8, `${raw.length} chars — the ceiling got roomy`);
+    });
+
+    // MAX_CONTOUR_LINES strides the printed lines. It lives in buildModel, so json gets the same
+    // table the text report does — and the elided counts with it.
+    it('strides the crossing table in the model, so json shows the same lines as text', async () => {
+        const rel = put('Lines', [1, 8], (i) => (i - 16) / 10);   // 257 scan lines, one crossing each
+        const model = await json({ terrainPath: rel, contourAt: 0 }, dir);
+        const c = model.contours[0];
+        assert.strictEqual(c.stats.lines, 257, 'the statistics cover every scan line');
+        assert.strictEqual(c.stats.crossings, 257);
+        assert.strictEqual(c.stride, 3);
+        assert.ok(c.lines.length <= 128, `${c.lines.length} lines in the json model`);
+
+        const text = await ok({ terrainPath: rel, contourAt: 0, sections: ['samples'] }, dir);
+        assert.strictEqual(text.split('\n').filter((l) => /^\d+ +16$/.test(l)).length, c.lines.length);
+        assert.match(text, /Every 3th line shown \(257 in total\)/);
+    });
+
+    // Same for the per-line crossing cap: the elision counts are model fields the text renderer
+    // prints, not numbers the renderer invents.
+    it('caps the crossings per line in the model, elision counts included', async () => {
+        const rel = put('Corrugated', [1, 1], (i) => (i % 2 ? 1 : -1));  // 32 crossings per line
+        const model = await json({ terrainPath: rel, contourAt: 0 }, dir);
+        const c = model.contours[0];
+        assert.strictEqual(c.stats.crossings, 33 * 32);
+        assert.strictEqual(c.lines[0].crossings.length, 8);
+        assert.strictEqual(c.lines[0].elided, 24);
+        assert.strictEqual(c.crossingsElided, 33 * 24);
+        assert.ok(JSON.stringify(model).length < 60000, 'the json model is bounded too');
+    });
+
+    // BLOCK_TABLE_MAX_ROWS, the third cap: 1089 blocks, 1024 rows, 65 stated as elided.
+    it('caps the per-block table in the model, with the count it dropped', async () => {
+        const rel = put('Many', [33, 33]);
+        const model = await json({ terrainPath: rel, blocks: true }, dir);
+        assert.strictEqual(model.blockCountTotal, 1089);
+        assert.strictEqual(model.blocks.length, 1024);
+        assert.strictEqual(model.blocksTruncated, 65);
+
+        const text = await ok({ terrainPath: rel, blocks: true }, dir);
+        assert.strictEqual(text.split('\n').filter((l) => /^\[\d+,\d+\] /.test(l)).length, 1024);
+        assert.match(text, /## Blocks \(1024 of 1089\)/);
+        assert.match(text, /… 65 more block\(s\) not shown\./);
+    });
+
+    // Valid JSON, and the model's own key order — a caller diffing two reports reads the diff
+    it('stays strictly valid JSON in the model\'s key order', async () => {
+        const raw = await ok({
+            terrainPath: 'Ramp.terrain', format: 'json',
+            heightAt: [[1, 1], [40, 40]], weightAt: [[1, 1]],
+            exportHeights: { sampleCount: 4 }, contourAt: [0, 1], slope: true, blocks: true
+        }, dir);
+        const model = JSON.parse(raw);
+        assert.deepStrictEqual(Object.keys(model).slice(0, 4), ['path', 'uuid', 'importer', 'file']);
+        assert.deepStrictEqual(Object.keys(model.terrain.height),
+            ['min', 'max', 'mean', 'minRaw', 'maxRaw', 'flat', 'quantum']);
+        assert.ok(!/\bundefined\b|\bNaN\b/.test(raw), 'non-JSON literal in the output');
     });
 });

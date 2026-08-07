@@ -52,6 +52,57 @@ describe('op dispatch', () => {
     });
 });
 
+describe('lookup tables are prototype-less at every level', () => {
+    // Keys are JSON/user-sourced at BOTH levels: __type__ first, then the property
+    // spelling — so an inner table needs the same `__proto__: null` as its container.
+    // Prototype pollution is how the leak is observed; the tables must not see it.
+    function withPollutedPrototype(key, value, fn) {
+        Object.defineProperty(Object.prototype, key, { value, configurable: true });
+        try {
+            fn();
+        } finally {
+            delete Object.prototype[key];
+        }
+    }
+
+    test('PROPERTY_ALIASES aliases nothing it did not declare', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Ground' },
+            { op: 'add_component', node: 'Ground', type: 'cc.Terrain' }
+        ]);
+        const comp = doc.getObject(doc.componentIndices(doc.resolveNode('Ground'))[0]);
+        // "hp" names nothing on cc.Terrain, yet the inner table resolved it through the
+        // prototype and aliased the write onto the terrain's __asset field.
+        withPollutedPrototype('hp', '__asset', () => {
+            assert.throws(() => applyOperations(doc, [{
+                op: 'set_component_property', node: 'Ground', component: 'cc.Terrain',
+                property: 'hp', value: 7
+            }]), /Component cc\.Terrain has no property "hp"/);
+        });
+        assert.strictEqual(comp.__asset, null);
+    });
+
+    test('PAIRED_FIELDS mirrors nothing it did not declare', () => {
+        const doc = loadScene();
+        applyOperations(doc, [
+            { op: 'add_node', parent: '/', name: 'Skeleton' },
+            { op: 'add_component', node: 'Skeleton', type: 'AnimationController' }
+        ]);
+        const comp = doc.getObject(doc.componentIndices(doc.resolveNode('Skeleton'))[0]);
+        // `_enabled` is a real field of the controller with no twin — a prototype-sourced
+        // "twin" would silently overwrite the graph reference with `false`.
+        withPollutedPrototype('_enabled', '_graph', () => {
+            applyOperations(doc, [{
+                op: 'set_component_property', node: 'Skeleton', component: 'AnimationController',
+                property: '_enabled', value: false
+            }]);
+        });
+        assert.strictEqual(comp._enabled, false);
+        assert.strictEqual(comp._graph, null);
+    });
+});
+
 describe('set_node_property', () => {
     test('position merges partial vectors', () => {
         const doc = loadPrefab();
@@ -96,6 +147,20 @@ describe('set_node_property', () => {
             { op: 'set_node_property', node: 'Table', property: 'layer', value: 1 << 30 }
         ]);
         assert.strictEqual(doc.getObject(doc.resolveNode('Table'))._layer, 1 << 30);
+    });
+
+    test('a layer named after an Object.prototype member is invalid', () => {
+        // LAYERS.constructor resolved to a function, which passed resolveLayer's
+        // `!== undefined` guard and serialized as `"_layer": null`.
+        const doc = loadPrefab();
+        const layerOf = () => doc.getObject(doc.resolveNode('Table'))._layer;
+        const original = layerOf();
+        for (const value of ['constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+            assert.throws(() => applyOperations(doc, [
+                { op: 'set_node_property', node: 'Table', property: 'layer', value }
+            ]), /Invalid layer/, value);
+            assert.strictEqual(layerOf(), original, value);
+        }
     });
 
     test('rejects unknown properties and bad values', () => {
@@ -505,6 +570,30 @@ describe('set_component_property / set_asset_ref', () => {
                 component: 'MeshRenderer', property: name, value: 42
             }]), /has no property/, name);
             assert.ok(!Object.hasOwn(doc.getObject(compIdx), name), name);
+        }
+    });
+
+    test('a script may gain a field, but never a prototype-named one', () => {
+        // Script components serialize sparsely, so an unknown top-level field is
+        // CREATED (allowCreate) — except a name that resolves through
+        // Object.prototype, which as an own key shadows the real member on load.
+        const doc = loadPrefab();
+        applyOperations(doc, [
+            { op: 'add_component', node: 'Table', type: 'PlayerController' }
+        ], { assetIndex });
+        const compIdx = doc.componentIndices(doc.resolveNode('Table')).at(-1);
+        applyOperations(doc, [{
+            op: 'set_component_property', node: 'Table',
+            component: 'PlayerController', property: 'speed', value: 4.5
+        }], { assetIndex });
+        assert.strictEqual(doc.getObject(compIdx).speed, 4.5);
+
+        for (const property of ['toString', 'constructor', 'valueOf', 'hasOwnProperty']) {
+            assert.throws(() => applyOperations(doc, [{
+                op: 'set_component_property', node: 'Table',
+                component: 'PlayerController', property, value: 42
+            }], { assetIndex }), /has no property/, property);
+            assert.ok(!Object.hasOwn(doc.getObject(compIdx), property), property);
         }
     });
 

@@ -163,6 +163,24 @@ describe('Validator targetOverride checks', () => {
     const firstOverride = (doc) =>
         doc.objects.find(o => o.__type__ === 'cc.TargetOverrideInfo');
 
+    // A sourceInfo (B2) override needs a SCRIPT component inside the instance:
+    // @property reference fields live on scripts, and set_instance_property
+    // shares set_component_property's resolver, so a property the source
+    // component does not have is rejected instead of written as a dead
+    // override. The mock prefabs carry no script — add one to a throwaway copy.
+    let scriptProject;
+    before(() => {
+        scriptProject = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-validator-overrides-'));
+        fs.cpSync(MOCK_PROJECT, scriptProject, { recursive: true });
+        const srcPath = path.join(scriptProject, 'assets/Prefabs/TableCash.prefab');
+        const src = SceneDocument.load(srcPath);
+        applyOperations(src, [{ op: 'add_component', node: 'Table', type: 'PlayerController' }],
+            { assetIndex: new AssetIndex(scriptProject), projectRoot: scriptProject });
+        src.renumber();
+        src.save(srcPath);
+    });
+    after(() => fs.rmSync(scriptProject, { recursive: true, force: true }));
+
     // Structurally-dead records (broken propertyPath/targetInfo/source/target)
     // are ones the engine skips on load, so they are warnings, not blocking
     // errors — the editor even regenerates some of them on save.
@@ -237,32 +255,30 @@ describe('Validator targetOverride checks', () => {
         assert.ok(warnings.some(w => /does not resolve in the source prefab/.test(w)));
     });
 
-    test('sourceInfo on a non-instance source is a warning; bad sourceInfo localID too', async () => {
-        const { AssetIndex } = await import('../../src/core/AssetIndex.js');
-        const { applyOperations } = await import('../../src/document/operations.js');
-        const ctx = { assetIndex: new AssetIndex(MOCK_PROJECT), projectRoot: MOCK_PROJECT };
+    test('sourceInfo on a non-instance source is a warning; bad sourceInfo localID too', () => {
+        const ctx = { assetIndex: new AssetIndex(scriptProject), projectRoot: scriptProject };
         const doc = load('Main.scene_V2.scene');
         applyOperations(doc, [
             { op: 'instantiate_prefab', parent: '/', prefab: 'Prefabs/TableCash.prefab', name: 'Desk' },
             {
                 op: 'set_instance_property', node: 'Desk', target: 'Table',
-                component: 'cc.MeshRenderer', property: 'anchorNode',
+                component: 'PlayerController', property: 'anchorNode',
                 value: { $node: 'Desk/Table/CashRegister' }
             }
         ], ctx);
         const override = doc.objects.filter(o => o.__type__ === 'cc.TargetOverrideInfo').at(-1);
 
-        const clean = new Validator(doc, ctx.assetIndex, { projectRoot: MOCK_PROJECT }).validate();
+        const clean = new Validator(doc, ctx.assetIndex, { projectRoot: scriptProject }).validate();
         assert.deepStrictEqual(clean.errors, []);
         assert.ok(!clean.warnings.some(w => /sourceInfo/.test(w)));
 
         doc.getObject(override.sourceInfo.__id__).localID = ['bogusFileId0000000000'];
-        const bad = new Validator(doc, ctx.assetIndex, { projectRoot: MOCK_PROJECT }).validate();
+        const bad = new Validator(doc, ctx.assetIndex, { projectRoot: scriptProject }).validate();
         assert.deepStrictEqual(bad.errors, []);
         assert.ok(bad.warnings.some(w => /sourceInfo localID .* does not resolve/.test(w)));
 
         override.source = { __id__: doc.resolveNode('Main Light') }; // plain node, no instance
-        const worse = new Validator(doc, ctx.assetIndex, { projectRoot: MOCK_PROJECT }).validate();
+        const worse = new Validator(doc, ctx.assetIndex, { projectRoot: scriptProject }).validate();
         assert.deepStrictEqual(worse.errors, []);
         assert.ok(worse.warnings.some(w => /source .* is not a prefab instance/.test(w)));
     });

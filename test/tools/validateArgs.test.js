@@ -6,6 +6,7 @@ import { QueryPrefabGraph } from '../../src/tools/QueryPrefabGraph.js';
 import { GetNodeBounds } from '../../src/tools/GetNodeBounds.js';
 import { ListAssets } from '../../src/tools/ListAssets.js';
 import { ApplyEdits } from '../../src/tools/ApplyEdits.js';
+import { BaseTool } from '../../src/tools/BaseTool.js';
 
 const SCHEMA = {
     type: 'object',
@@ -136,6 +137,35 @@ describe('normalizeArgs', () => {
         assert.strictEqual(args.format, 'text');
     });
 
+    // Regression: the alias loop used `alias in normalized`, true for every call when
+    // the alias is named after an Object.prototype member — the canonical parameter got
+    // filled with that function, so a bare call read as "got function" instead of missing.
+    it('ignores an alias named after an Object.prototype member', () => {
+        const aliases = { toString: 'scenePath', constructor: 'format' };
+        const { args, error } = normalizeArgs({}, SCHEMA, aliases);
+        assert.match(error, /missing required parameter "scenePath"/);
+        assert.doesNotMatch(error, /got function/);
+        assert.ok(!Object.hasOwn(args, 'scenePath'));
+        assert.ok(!Object.hasOwn(args, 'format'));
+
+        // ... while the alias still maps when the caller actually passes it
+        const passed = normalizeArgs({ toString: 'a.scene' }, SCHEMA, aliases);
+        assert.strictEqual(passed.error, null);
+        assert.strictEqual(passed.args.scenePath, 'a.scene');
+        assert.ok(!Object.hasOwn(passed.args, 'toString'));
+    });
+
+    it('reports a required parameter named after an Object.prototype member', () => {
+        // `normalized[key] === undefined` read the inherited function and stayed silent
+        const schema = {
+            type: 'object',
+            properties: { toString: { type: 'string' } },
+            required: ['toString']
+        };
+        const { error } = normalizeArgs({}, schema);
+        assert.match(error, /missing required parameter "toString"/);
+    });
+
     it('collects multiple problems in one error', () => {
         const { error } = normalizeArgs({ prefab: 'x', format: 'yaml' }, SCHEMA);
         assert.match(error, /unknown parameter "prefab"/);
@@ -143,6 +173,15 @@ describe('normalizeArgs', () => {
         assert.match(error, /"format" must be one of/);
     });
 });
+
+/** Throwaway tool: the alias name is the point, execute echoes what got through */
+class ProtoAliasTool extends BaseTool {
+    get name() { return 'proto_alias_tool'; }
+    get description() { return 'test double'; }
+    get inputSchema() { return SCHEMA; }
+    get aliases() { return { toString: 'scenePath' }; }
+    async execute(args) { return this.success(JSON.stringify(args)); }
+}
 
 describe('BaseTool.run', () => {
     it('returns a validation error instead of a paths[1] crash', async () => {
@@ -184,6 +223,19 @@ describe('BaseTool.run', () => {
             assert.ok(result.isError, `"${key}" was accepted`);
             assert.match(result.content[0].text, new RegExp(`unknown parameter "${key}"`));
         }
+    });
+
+    // Same defect one layer up: a tool declaring such an alias (none does today)
+    // saw it "present" on every call, so its own required parameter was overwritten.
+    it('runs a tool whose alias is named after an Object.prototype member', async () => {
+        const tool = new ProtoAliasTool();
+        const bare = await tool.run({}, '/tmp');
+        assert.ok(bare.isError);
+        assert.match(bare.content[0].text, /missing required parameter "scenePath"/);
+
+        const aliased = await tool.run({ toString: 'a.scene' }, '/tmp');
+        assert.ok(!aliased.isError);
+        assert.deepStrictEqual(JSON.parse(aliased.content[0].text), { scenePath: 'a.scene' });
     });
 
     it('does not pollute Object.prototype through a __proto__ argument', async () => {

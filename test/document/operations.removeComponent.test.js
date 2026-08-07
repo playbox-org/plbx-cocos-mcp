@@ -213,6 +213,30 @@ function removedLocalIds(doc, instance) {
 }
 
 describe('remove_component on a prefab instance (removedComponents)', () => {
+    // Disposable project whose TableCash.prefab carries a PlayerController on
+    // "Table" — the mock prefabs hold no script, and only a script has the
+    // @property fields an override/reference test needs.
+    let scriptProject;
+    const scriptCtx = () => ({ assetIndex: new AssetIndex(scriptProject), projectRoot: scriptProject });
+    const scriptFileId = (nodeRef) => {
+        const src = SceneDocument.load(path.join(scriptProject, 'assets/Prefabs/TableCash.prefab'));
+        const idx = src.componentIndices(src.resolveNode(nodeRef))
+            .find(i => !src.getObject(i).__type__.startsWith('cc.'));
+        return src.getObject(src.getObject(idx).__prefab.__id__).fileId;
+    };
+
+    before(() => {
+        scriptProject = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-remove-component-script-'));
+        fs.cpSync(MOCK_PROJECT, scriptProject, { recursive: true });
+        const srcPath = path.join(scriptProject, 'assets/Prefabs/TableCash.prefab');
+        const src = SceneDocument.load(srcPath);
+        applyOperations(src, [{ op: 'add_component', node: 'Table', type: 'PlayerController' }], scriptCtx());
+        src.renumber();
+        src.save(srcPath);
+    });
+
+    after(() => fs.rmSync(scriptProject, { recursive: true, force: true }));
+
     test('records a cc.TargetInfo with the CompPrefabInfo fileId', () => {
         const ctx = makeCtx();
         const doc = sceneWithDesk(ctx);
@@ -260,21 +284,24 @@ describe('remove_component on a prefab instance (removedComponents)', () => {
     });
 
     test('drops the dying component\'s property overrides and outgoing references', () => {
-        const ctx = makeCtx();
+        // The dying component is the SCRIPT: the reference override needs a
+        // @property field, and set_instance_property (like set_component_property)
+        // refuses a property the source component does not have.
+        const ctx = scriptCtx();
         const doc = sceneWithDesk(ctx);
         applyOperations(doc, [
             {
                 op: 'set_instance_property', node: 'Desk', target: 'Table',
-                component: 'cc.MeshRenderer', property: 'enabled', value: false
+                component: 'PlayerController', property: 'enabled', value: false
             },
             {
                 op: 'set_instance_property', node: 'Desk', target: 'Table',
-                component: 'cc.MeshRenderer', property: 'buddy',
+                component: 'PlayerController', property: 'buddy',
                 value: { $node: 'Desk/Table/CashRegister' }
             }
         ], ctx);
         const { instance } = deskInstance(doc);
-        const localId = tableCashComponentFileId('Table', 'cc.MeshRenderer');
+        const localId = scriptFileId('Table');
         const overridesFor = () => instance.propertyOverrides
             .filter(isRef)
             .map(r => doc.getObject(r.__id__))
@@ -282,7 +309,7 @@ describe('remove_component on a prefab instance (removedComponents)', () => {
         assert.strictEqual(overridesFor().length, 1); // _enabled (the reference lives in the registry)
 
         const [result] = applyOperations(doc, [
-            { op: 'remove_component', node: 'Desk', target: 'Table', component: 'cc.MeshRenderer' }
+            { op: 'remove_component', node: 'Desk', target: 'Table', component: 'PlayerController' }
         ], ctx);
         assert.match(result.summary, /dropped 1 stale override/);
         assert.strictEqual(overridesFor().length, 0);

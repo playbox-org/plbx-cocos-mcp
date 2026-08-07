@@ -11,6 +11,13 @@ import { compressUuid } from '../utils/uuid.js';
 
 const MAX_RESULTS = 300;
 
+// Per-format uuid default, the schema's `uuid` description states it: grouped drops the uuid,
+// while an explicit flat/text call keeps the pre-grouped contract
+const DEFAULT_UUID_FORM = {
+    __proto__: null, // user-sourced key (list_assets format): no Object.prototype hits
+    grouped: 'none', flat: 'full', text: 'full'
+};
+
 // a full uuid is 25 o200k tokens, its compressed form 16, the path it sits next to 5
 function uuidSuffix(entry, form) {
     if (form === 'full') return ` ${entry.uuid}`;
@@ -36,7 +43,7 @@ export class ListAssets extends BaseTool {
 
     get description() {
         return 'List assets of a Cocos Creator project with optional filters. ' +
-               'Paths are accepted wherever a UUID is, so uuid is off by default — ask for it with uuid:"compressed"/"full". ' +
+               'Paths are accepted wherever a UUID is, so the default shape prints no uuid — ask for it with uuid:"compressed"/"full". ' +
                'Use format:"summary" for "what is in this project" (counts per type and folder, no enumeration). ' +
                'Types: sprite, image, model, prefab, scene, material, script, audio, font, animation, ' +
                'effect, terrain, directory (or a raw importer name like fbx, gltf, typescript). ' +
@@ -71,10 +78,11 @@ export class ListAssets extends BaseTool {
                     default: 'grouped'
                 },
                 uuid: {
+                    // no `default`: it is per-format (see the description), and one value here
+                    // would be a lie for the other formats
                     type: 'string',
                     enum: ['none', 'compressed', 'full'],
-                    description: "Include the asset UUID per row: 'none' (default — paths resolve everywhere a uuid does), 'compressed' (the form scene files store), 'full'",
-                    default: 'none'
+                    description: "Include the asset UUID per row: 'none' (paths resolve everywhere a uuid does), 'compressed' (the form scene files store), 'full'. Defaults per format: grouped='none', flat='full', text='full' (an explicit flat call keeps its pre-grouped contract); 'summary' has no rows and 'json' always carries the full uuid"
                 }
             }
         };
@@ -128,8 +136,7 @@ export class ListAssets extends BaseTool {
                 return this.success(this.#renderSummary(matches, args));
             }
 
-            // an explicit flat call keeps the pre-grouped contract, uuid included
-            const uuidForm = args?.uuid ?? (format === 'grouped' ? 'none' : 'full');
+            const uuidForm = args?.uuid ?? DEFAULT_UUID_FORM[format];
             return this.success(format === 'grouped'
                 ? this.#renderGrouped(matches, uuidForm)
                 : this.#renderFlat(matches, uuidForm));

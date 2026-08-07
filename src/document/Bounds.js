@@ -95,25 +95,30 @@ export class BoundsCalculator {
      * list naming all of them. Those are marked `inPrefab` — their paths are relative to the prefab
      * root, not scene addresses. Mounted children are the other half: real nodes of THIS document
      * added on top of the instance, marked `mounted` (and named so, since the row prints its name).
+     *
+     * An unreadable source costs the prefab half only, and `skipped` carries the REASON (the same
+     * records `computeSubtree` reports) beside the rows — "no children" and "children we could not
+     * read" are different answers, so the caller must not be able to drop it: a property on the
+     * rows ARRAY would not survive the caller's own `slice`.
      * @param {import('./SceneDocument.js').SceneDocument} doc
      * @param {number} nodeIdx
      * @param {{skipUI?: boolean}} [options]
-     * @returns {Array<{name: string, path: string|null, inPrefab: boolean, mounted: boolean,
-     *   active: boolean, world: object|null, position: object|null}>}
+     * @returns {{rows: Array<{name: string, path: string|null, inPrefab: boolean, mounted: boolean,
+     *   active: boolean, world: object|null, position: object|null}>,
+     *   skipped: Array<{path: string, reason: string}>}}
      */
     computeChildren(doc, nodeIdx, options = {}) {
+        const rows = [];
+        const skipped = [];
         if (!doc.isInstanceStub(nodeIdx)) {
-            return doc.childIndices(nodeIdx).map(childIdx => this.#childRow(doc, childIdx, options));
+            for (const childIdx of doc.childIndices(nodeIdx)) {
+                rows.push(this.#childRow(doc, childIdx, options));
+            }
+            return { rows, skipped };
         }
 
-        const info = doc.getObject(doc.getObject(nodeIdx)._prefab.__id__);
-        let source = null;
-        try {
-            source = loadSourcePrefabByUuid(this.#ctx, info.asset?.__uuid__);
-        } catch {
-            // Source unreadable — the mounted children below are still knowable
-        }
-        const rows = [];
+        const label = doc.nodePath(nodeIdx) ?? '/';
+        const { source } = this.#stubSource(doc, nodeIdx, label, skipped);
         if (source) {
             const stubWorld = this.#worldMatrix(doc, nodeIdx);
             for (const childIdx of source.doc.childIndices(source.doc.root.idx)) {
@@ -142,7 +147,7 @@ export class BoundsCalculator {
                 rows.push(this.#childRow(doc, childIdx, options, true));
             }
         }
-        return rows;
+        return { rows, skipped };
     }
 
     /** One computeChildren row for a node of THIS document (`#worldMatrix` does the mount hop) */
@@ -206,6 +211,28 @@ export class BoundsCalculator {
     }
 
     /**
+     * A stub's `cc.PrefabInfo` plus its loaded source prefab (`null` when it cannot be read —
+     * then ONE skip record lands in `skipped`). Shared by `#enterStub` and `computeChildren` so
+     * both halves of get_node_bounds report the SAME reason: duplicating the strings made the
+     * agreement a coincidence that the next wording edit would break.
+     * @returns {{info: object, source: object|null}}
+     */
+    #stubSource(doc, stubIdx, label, skipped) {
+        const info = doc.getObject(doc.getObject(stubIdx)._prefab.__id__);
+        const assetUuid = info.asset?.__uuid__;
+        if (typeof assetUuid !== 'string') {
+            skipped.push({ path: label, reason: 'instance has no asset uuid' });
+            return { info, source: null };
+        }
+        try {
+            return { info, source: loadSourcePrefabByUuid(this.#ctx, assetUuid) };
+        } catch (err) {
+            skipped.push({ path: label, reason: `source prefab unavailable: ${err.message}` });
+            return { info, source: null };
+        }
+    }
+
+    /**
      * Collapsed instance: recurse into the source prefab with overrides applied, then into the
      * nodes MOUNTED on the instance. An unreadable source only costs the prefab half — the mounted
      * children are real nodes of this document and stay measurable at the instance origin.
@@ -215,18 +242,7 @@ export class BoundsCalculator {
             out.skipped.push({ path: label, reason: 'prefab nesting too deep' });
             return;
         }
-        const info = doc.getObject(doc.getObject(stubIdx)._prefab.__id__);
-        const assetUuid = info.asset?.__uuid__;
-        let source = null;
-        if (typeof assetUuid !== 'string') {
-            out.skipped.push({ path: label, reason: 'instance has no asset uuid' });
-        } else {
-            try {
-                source = loadSourcePrefabByUuid(this.#ctx, assetUuid);
-            } catch (err) {
-                out.skipped.push({ path: label, reason: `source prefab unavailable: ${err.message}` });
-            }
-        }
+        const { info, source } = this.#stubSource(doc, stubIdx, label, out.skipped);
         const rootNode = source ? source.doc.getObject(source.doc.root.idx) : null;
 
         // The stub's transform = source root TRS overridden per propertyOverrides

@@ -6,7 +6,9 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
 import { AssetInspector } from '../../src/core/AssetInspector.js';
-import { materialize, writeTerrain, defaultSentinel } from '../../src/utils/terrainBin.js';
+import {
+    materialize, writeTerrain, defaultSentinel, terrainWarningText, renderTerrainWarnings
+} from '../../src/utils/terrainBin.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = join(__dirname, '../fixtures/mock-project');
@@ -190,6 +192,37 @@ describe('AssetInspector terrain edge cases', () => {
         assert.strictEqual(t.layers[0].detailMapName, null);
         assert.ok(t.warnings.some(w => /does not resolve to a project asset/.test(w)),
             `expected an unresolvable-texture warning, got ${JSON.stringify(t.warnings)}`);
+    });
+
+    // This card was the fourth terrain-warning printer: one line per (layer, field), worded
+    // here and not in terrainBin — 32 lines against query_terrain's one for the same file.
+    it('should aggregate unresolvable layer textures into one entry, both views', () => {
+        const layers = Array.from({ length: 16 }, (_, i) => ({
+            slot: i, tileSize: 1, roughness: 1, metallic: 0,
+            detailMapId: `dead${String(i).padStart(4, '0')}-0000-4000-8000-000000000000@6c48a`,
+            normalMapId: `beef${String(i).padStart(4, '0')}-0000-4000-8000-000000000000@6c48a`
+        }));
+        rewrite(writeTerrain(materialize({
+            blockCount: [1, 1], tileSize: 1, weightMapSize: 4, lightMapSize: 4, layers
+        })));
+
+        const t = inspector.inspect(TERRAIN).terrain;
+        const unresolved = t.warnings.filter(w => /does not resolve to a project asset/.test(w));
+        assert.strictEqual(unresolved.length, 1, t.warnings.join('\n'));
+        // 16 layers x 2 fields, every one of them counted in the one line they collapse into
+        assert.ok(unresolved[0].startsWith(terrainWarningText('unresolvedTexture',
+            { slot: 0, field: 'detailMap', id: layers[0].detailMapId })), unresolved[0]);
+        assert.match(unresolved[0], /… and 31 more occurrences \(32 total\)$/);
+
+        // Two views of ONE list: the tool's findings are entries, not appended strings
+        const entry = t.warningEntries.find(e => e.kind === 'unresolvedTexture');
+        assert.strictEqual(entry.count, 32);
+        assert.strictEqual(entry.subjects.length, 16, 'the retention cap, count still exact');
+        assert.deepStrictEqual(t.warnings, t.warningEntries.map(e => e.text));
+        // …and they came from a collector, so the card renders: this list used to be hand-built,
+        // which every report path is now required to refuse
+        assert.deepStrictEqual(
+            renderTerrainWarnings(t, { limit: Infinity }).lines, t.warnings);
     });
 
     it('should surface the sentinel flag of a never-sculpted terrain', () => {

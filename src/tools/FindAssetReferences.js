@@ -34,6 +34,13 @@ const SHALLOW_EXTENSIONS = ['.mtl', '.material', '.anim', '.animgraph', '.effect
  */
 const BINARY_EXTENSIONS = ['.terrain'];
 
+/**
+ * Output cap on the skipped list. One entry carries a full errno message with an absolute path
+ * (~230 chars), so a read-protected subtree under `assets/` would print one per file; the
+ * section header keeps the true total either way.
+ */
+const MAX_SKIPPED_LINES = 20;
+
 export class FindAssetReferences extends BaseTool {
     get name() {
         return 'find_asset_references';
@@ -91,50 +98,65 @@ export class FindAssetReferences extends BaseTool {
             const deep = [];
             const shallow = [];
             const binary = [];
+            const unreadable = [];
             let scanned = 0;
+            const relPath = (p) => path.relative(projectRoot, p).replaceAll(path.sep, '/');
+            // A directory we cannot list is the same kind of gap as a file we cannot read
+            const unlistable = (dir, err) => unreadable.push({
+                file: `${relPath(dir)}/`, reason: `unlistable directory — ${err.message}`
+            });
 
             for (const root of roots) {
-                for (const file of walkFiles(root)) {
+                for (const file of walkFiles(root, unlistable)) {
                     const ext = path.extname(file).toLowerCase();
                     const isDeep = DEEP_EXTENSIONS.includes(ext);
                     // A script is referenced only as a component's __type__, which no
                     // binary asset can hold — skip the structural pass for script targets.
                     const isBinary = !target.scriptType && BINARY_EXTENSIONS.includes(ext);
                     if (!isDeep && !isBinary && !SHALLOW_EXTENSIONS.includes(ext)) continue;
-                    scanned++;
+                    const rel = relPath(file);
                     if (isBinary) {
                         // Structural pass — the utf-8 read and its substring pre-filter
                         // below are skipped entirely for binaries (see BINARY_EXTENSIONS).
-                        const hits = terrainHits(file, target);
-                        if (hits.length > 0) {
-                            binary.push({
-                                file: path.relative(projectRoot, file).replaceAll(path.sep, '/'),
-                                hits
-                            });
+                        const { hits, reason } = terrainHits(file, target);
+                        if (reason) {
+                            // Never searched: counting it as scanned would claim coverage we lack
+                            unreadable.push({ file: rel, reason });
+                            continue;
                         }
+                        scanned++;
+                        if (hits.length > 0) binary.push({ file: rel, hits });
                         continue;
                     }
-                    const content = fs.readFileSync(file, 'utf-8');
+                    // Text assets get the same treatment as an unparsable binary: one
+                    // chmod-000 or truncated scene must not abort the whole query.
+                    const read = readText(file);
+                    if (read.reason) {
+                        unreadable.push({ file: rel, reason: read.reason });
+                        continue;
+                    }
                     // Scripts are referenced only as a component's __type__
                     // (compressed uuid), never via __uuid__ — search that form.
                     const contentNeedle = target.scriptType ?? needle;
-                    if (!content.includes(contentNeedle)) continue;
-
-                    const rel = path.relative(projectRoot, file).replaceAll(path.sep, '/');
-                    if (isDeep) {
-                        // Reuse the content already read for the pre-filter — no
-                        // second disk read of the same (potentially 1MB+) file.
-                        deep.push({
-                            file: rel,
-                            hits: attributeMatches(content, file, target, scriptNames)
-                        });
-                    } else {
-                        shallow.push({ file: rel, count: countOccurrences(content, contentNeedle) });
+                    if (read.content.includes(contentNeedle)) {
+                        if (isDeep) {
+                            // Reuse the content already read for the pre-filter — no
+                            // second disk read of the same (potentially 1MB+) file.
+                            const { hits, reason } = deepHits(read.content, file, target, scriptNames);
+                            if (reason) {
+                                unreadable.push({ file: rel, reason });
+                                continue;
+                            }
+                            deep.push({ file: rel, hits });
+                        } else {
+                            shallow.push({ file: rel, count: countOccurrences(read.content, contentNeedle) });
+                        }
                     }
+                    scanned++;
                 }
             }
 
-            return this.success(render(args, target, deep, shallow, binary, scanned));
+            return this.success(render(args, target, deep, shallow, binary, scanned, unreadable));
         } catch (err) {
             return this.error(err.message);
         }
@@ -203,16 +225,20 @@ function matchesTarget(uuid, target) {
  * Structural hits inside a `.terrain`: the layer table's `detailMapId` /
  * `normalMapId`, which are ASCII `<uuid>@<subId>` strings and therefore invisible
  * to the JSON walk every other asset kind goes through.
+ * @returns {{hits: Array<object>, reason: string|null}} `reason` = the file was never
+ *   searched, so the answer is incomplete and says so (it is NOT counted as scanned)
  */
 function terrainHits(file, target) {
     let data;
     try {
         // layout only: the palette sits behind the payload, but nothing here decodes it
         data = readTerrainLayout(file);
-    } catch {
-        return []; // unreadable/corrupt binary — query_terrain reports the details
+    } catch (err) {
+        return { hits: [], reason: `unreadable .terrain binary — ${err.message}` };
     }
-    if (!data) return []; // not a terrain (unrecognized version magic)
+    if (!data) {
+        return { hits: [], reason: 'not a recognized .terrain (unknown version magic)' };
+    }
 
     const hits = [];
     data.layers.forEach((layer, i) => {
@@ -222,7 +248,33 @@ function terrainHits(file, target) {
             }
         }
     });
-    return hits;
+    return { hits, reason: null };
+}
+
+/**
+ * Read a serialized text asset — same `reason` contract as `terrainHits`: set means the
+ * file was never searched, so it is NOT counted as scanned and the answer is a lower bound.
+ * @returns {{content: string|null, reason: string|null}}
+ */
+function readText(file) {
+    try {
+        return { content: fs.readFileSync(file, 'utf-8'), reason: null };
+    } catch (err) {
+        return { content: null, reason: `unreadable file — ${err.message}` };
+    }
+}
+
+/**
+ * Deep attribution guarded like the read: a scene whose JSON is truncated holds the needle
+ * (the pre-filter said so) but cannot be walked, which is an incomplete answer, not a failed one.
+ * @returns {{hits: Array<object>, reason: string|null}}
+ */
+function deepHits(content, file, target, scriptNames) {
+    try {
+        return { hits: attributeMatches(content, file, target, scriptNames), reason: null };
+    } catch (err) {
+        return { hits: [], reason: `unparsable ${path.extname(file)} — ${err.message}` };
+    }
 }
 
 /** Count non-overlapping occurrences of `needle` without allocating a split array */
@@ -254,11 +306,19 @@ function scanRoots(projectRoot, folder) {
     return [];
 }
 
-function* walkFiles(dir) {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
+/** `onUnlistable(dir, err)`: a directory we cannot read is reported, never thrown — the
+ *  files under it are simply not searched (same lower-bound contract as an unreadable file) */
+function* walkFiles(dir, onUnlistable) {
+    let entries;
+    try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+        onUnlistable(dir, err);
+        return;
+    }
     for (const entry of entries) {
         const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) yield* walkFiles(full);
+        if (entry.isDirectory()) yield* walkFiles(full, onUnlistable);
         else yield full;
     }
 }
@@ -351,7 +411,7 @@ function climbToOwner(doc, idx, trail, owners, scriptNames) {
     return { node: null, component: '?', property };
 }
 
-function render(args, target, deep, shallow, binary, scanned) {
+function render(args, target, deep, shallow, binary, scanned, unreadable) {
     const lines = [`# References to ${target.label}`, ''];
     switch (target.kind) {
         case 'project':
@@ -371,7 +431,18 @@ function render(args, target, deep, shallow, binary, scanned) {
         binary.reduce((n, b) => n + b.hits.length, 0);
     const files = deep.length + shallow.length + binary.length;
     lines.push('', `Found ${total} reference(s) in ${files} file(s) ` +
-        `(scanned ${scanned} serialized asset files${args.folder ? ` under ${args.folder}` : ''}).`);
+        `(scanned ${scanned} serialized asset files${args.folder ? ` under ${args.folder}` : ''}` +
+        `${unreadable.length ? `, ${unreadable.length} skipped` : ''}).`);
+
+    if (unreadable.length > 0) {
+        lines.push('', `## Skipped — not searched (${unreadable.length})`,
+            'These could not be read or parsed, so the count above is a LOWER bound.');
+        for (const u of unreadable.slice(0, MAX_SKIPPED_LINES)) {
+            lines.push(`- ${u.file}: ${u.reason}`);
+        }
+        const elided = unreadable.length - MAX_SKIPPED_LINES;
+        if (elided > 0) lines.push(`… and ${elided} more not shown — the header counts every one.`);
+    }
 
     for (const d of deep) {
         lines.push('', `## ${d.file} (${d.hits.length})`);
@@ -414,7 +485,10 @@ function render(args, target, deep, shallow, binary, scanned) {
         }
     }
     if (total === 0) {
-        lines.push('', 'No references — the asset is unused in serialized files ' +
+        const scope = unreadable.length
+            ? 'the serialized files that could be read (see Skipped above)'
+            : 'serialized files';
+        lines.push('', `No references — the asset is unused in ${scope} ` +
             '(code may still load it dynamically by path/uuid).');
     }
     return lines.join('\n');

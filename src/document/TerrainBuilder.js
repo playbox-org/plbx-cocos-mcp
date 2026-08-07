@@ -285,8 +285,9 @@ export class TerrainBuilder {
      * ```
      *
      * @param {object} spec
-     * @returns {{data: object, buffer: Buffer, notes: string[]}} `buffer` is the padded V8
-     *   file; `data` is the in-memory struct (same shape `readTerrain` returns)
+     * @returns {{data: object, buffer: Buffer, notes: string[], fillLayer: number}} `buffer` is
+     *   the padded V8 file; `data` is the in-memory struct (same shape `readTerrain` returns);
+     *   `fillLayer` is the slot painted into every block, -1 when no block references any layer
      * @throws {TerrainBuildError} on any invalid spec — nothing is written by this class
      */
     compile(spec) {
@@ -326,7 +327,7 @@ export class TerrainBuilder {
         });
 
         this.#applyHeights(data, spec, notes);
-        this.#applyLayers(data, spec, notes);
+        const fillLayer = this.#applyLayers(data, spec, notes);
 
         try {
             validateTerrainData(data);
@@ -339,7 +340,7 @@ export class TerrainBuilder {
         } catch (err) {
             throw new TerrainBuildError(err.message);
         }
-        return { data, buffer, notes };
+        return { data, buffer, notes, fillLayer };
     }
 
     // --- geometry ----------------------------------------------------------
@@ -446,6 +447,7 @@ export class TerrainBuilder {
 
     // --- layers -------------------------------------------------------------
 
+    /** @returns {number} the slot painted into every block, -1 when nothing is painted */
     #applyLayers(data, spec, notes) {
         const specLayers = spec.layers ?? [];
         if (!Array.isArray(specLayers)) {
@@ -471,7 +473,7 @@ export class TerrainBuilder {
                 'no layers defined — every block keeps an empty palette and the terrain renders ' +
                 'the effect\'s flat grey fallback; add a layer with a detailMap to see textures'
             );
-            return;
+            return -1;
         }
 
         const fill = this.#fillLayer(spec, data.layers.length);
@@ -480,7 +482,7 @@ export class TerrainBuilder {
                 `fillLayer is off — the ${data.layers.length} palette layer(s) are defined but no ` +
                 'block references them yet (paint them in the editor)'
             );
-            return;
+            return -1;
         }
 
         // Assign the slot to channel 0 of every block. materialize() already filled the
@@ -502,6 +504,7 @@ export class TerrainBuilder {
                 '(fillLayer defaults to 0 when layers are defined — pass fillLayer: -1 to leave blocks unpainted)'
             );
         }
+        return fill;
     }
 
     #fillLayer(spec, layerCount) {

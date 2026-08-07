@@ -240,6 +240,148 @@ describe('find_asset_references', () => {
             `${data.weights.length}-byte payload is being decoded`);
     });
 
+    test('an unsearchable .terrain is reported as skipped, never counted as scanned', async (t) => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-refs-broken-'));
+        t.after(() => {
+            AssetIndex.invalidate(root);
+            fs.rmSync(root, { recursive: true, force: true });
+        });
+        fs.mkdirSync(path.join(root, 'assets'));
+        const uuid = 'deadbeef-1111-4222-8333-444455556666';
+        const data = materialize({
+            blockCount: [1, 1], tileSize: 1, weightMapSize: 128, lightMapSize: 128,
+            layers: [{ slot: 0, tileSize: 1, detailMapId: `${uuid}@6c48a`, normalMapId: '', roughness: 1, metallic: 0 }],
+        });
+        const bytes = writeTerrain(data);
+        fs.writeFileSync(path.join(root, 'assets', 'Good.terrain'), bytes);
+        fs.writeFileSync(path.join(root, 'assets', 'Truncated.terrain'), bytes.subarray(0, 40));
+        fs.writeFileSync(path.join(root, 'assets', 'Alien.terrain'), Buffer.from('not a terrain at all'));
+
+        const text = (await tool.execute({ asset: uuid }, root)).content[0].text;
+        // exactly one file was searched; the two that could not be parsed are named instead
+        assert.match(text, /scanned 1 serialized asset files, 2 skipped\)/);
+        assert.match(text, /## Skipped — not searched \(2\)/);
+        assert.match(text, /LOWER bound/);
+        assert.match(text, /- assets\/Truncated\.terrain: unreadable \.terrain binary — terrain: /);
+        assert.match(text, /- assets\/Alien\.terrain: not a recognized \.terrain \(unknown version magic\)/);
+        // the readable one still answers
+        assert.match(text, /Found 1 reference\(s\) in 1 file\(s\)/);
+        assert.match(text, /## assets\/Good\.terrain \(1\)/);
+    });
+
+    test('an all-unreadable scan does not claim the asset is unused', async (t) => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-refs-blind-'));
+        t.after(() => {
+            AssetIndex.invalidate(root);
+            fs.rmSync(root, { recursive: true, force: true });
+        });
+        fs.mkdirSync(path.join(root, 'assets'));
+        fs.writeFileSync(path.join(root, 'assets', 'Alien.terrain'), Buffer.from('not a terrain at all'));
+
+        const text = (await tool.execute(
+            { asset: '99999999-9999-9999-9999-999999999999' }, root)).content[0].text;
+        assert.match(text, /scanned 0 serialized asset files, 1 skipped\)/);
+        assert.match(text, /No references — the asset is unused in the serialized files that could be read/);
+    });
+
+    /** Throwaway project holding assets/Good.scene (a golden copy that references PRIMITIVES_UUID) */
+    function projectWithGoodScene(t, prefix) {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+        t.after(() => {
+            AssetIndex.invalidate(root);
+            fs.rmSync(root, { recursive: true, force: true });
+        });
+        fs.mkdirSync(path.join(root, 'assets'));
+        fs.copyFileSync(GOLDEN_SCENE, path.join(root, 'assets', 'Good.scene'));
+        return root;
+    }
+
+    test('an unreadable scene is skipped, never fatal for the whole query', async (t) => {
+        // The binary branch got this bucket first; a chmod-000 .scene used to throw out of
+        // readFileSync into the outer catch and lose every hit in every OTHER file.
+        const root = projectWithGoodScene(t, 'cocos-refs-locked-');
+        const locked = path.join(root, 'assets', 'Locked.scene');
+        fs.copyFileSync(GOLDEN_SCENE, locked);
+        fs.chmodSync(locked, 0);
+        try {
+            fs.readFileSync(locked, 'utf-8');
+            return t.skip('mode 000 is still readable here'); // root, or a mode-ignoring fs
+        } catch { /* expected: EACCES */ }
+
+        const result = await tool.execute({ asset: PRIMITIVES_UUID }, root);
+        const text = result.content[0].text;
+        assert.ok(!result.isError, text);
+        assert.match(text, /scanned 1 serialized asset files, 1 skipped\)/);
+        assert.match(text, /## Skipped — not searched \(1\)/);
+        assert.match(text, /- assets\/Locked\.scene: unreadable file — EACCES/);
+        assert.match(text, /## assets\/Good\.scene \(\d+\)/); // the readable half still answers
+    });
+
+    test('a scene whose JSON is truncated is skipped, never fatal', async (t) => {
+        const root = projectWithGoodScene(t, 'cocos-refs-cut-');
+        // Cut AFTER the first hit: the pre-filter finds the needle, the JSON walk cannot run
+        const golden = fs.readFileSync(GOLDEN_SCENE, 'utf-8');
+        const cut = golden.indexOf(PRIMITIVES_UUID) + PRIMITIVES_UUID.length + 4;
+        assert.ok(cut > PRIMITIVES_UUID.length, 'the golden scene must reference the primitives fbx');
+        fs.writeFileSync(path.join(root, 'assets', 'Broken.scene'), golden.slice(0, cut));
+
+        const result = await tool.execute({ asset: PRIMITIVES_UUID }, root);
+        const text = result.content[0].text;
+        assert.ok(!result.isError, text);
+        assert.match(text, /scanned 1 serialized asset files, 1 skipped\)/);
+        assert.match(text, /- assets\/Broken\.scene: unparsable \.scene — /);
+        assert.match(text, /## assets\/Good\.scene \(\d+\)/);
+    });
+
+    test('a directory that cannot be listed is reported, not fatal', async (t) => {
+        const root = projectWithGoodScene(t, 'cocos-refs-dir-');
+        const locked = path.join(root, 'assets', 'Locked');
+        fs.mkdirSync(locked);
+        fs.copyFileSync(GOLDEN_SCENE, path.join(locked, 'Hidden.scene'));
+        // Warm the shared index BEFORE the chmod (5 s TTL): the tool's own tree walk is then
+        // what meets the locked directory, exactly as it would in a long-lived server.
+        AssetIndex.shared(root);
+        fs.chmodSync(locked, 0);
+        try {
+            fs.readdirSync(locked);
+            return t.skip('mode 000 is still listable here');
+        } catch { /* expected: EACCES */ }
+
+        let result;
+        try {
+            result = await tool.execute({ asset: PRIMITIVES_UUID }, root);
+        } finally {
+            fs.chmodSync(locked, 0o755); // or the cleanup rm cannot descend
+        }
+        const text = result.content[0].text;
+        assert.ok(!result.isError, text);
+        assert.match(text, /scanned 1 serialized asset files, 1 skipped\)/);
+        assert.match(text, /- assets\/Locked\/: unlistable directory — EACCES/);
+        assert.match(text, /## assets\/Good\.scene \(\d+\)/);
+    });
+
+    test('the skipped list is capped, and the header still counts every one', async (t) => {
+        // One line carries a full errno message with an absolute path, so a whole
+        // unreadable subtree would otherwise print one per file.
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-refs-many-'));
+        t.after(() => {
+            AssetIndex.invalidate(root);
+            fs.rmSync(root, { recursive: true, force: true });
+        });
+        fs.mkdirSync(path.join(root, 'assets'));
+        for (let i = 0; i < 25; i++) {
+            fs.writeFileSync(path.join(root, 'assets', `Alien${i}.terrain`),
+                Buffer.from('not a terrain at all'));
+        }
+
+        const text = (await tool.execute({ asset: PRIMITIVES_UUID }, root)).content[0].text;
+        assert.match(text, /scanned 0 serialized asset files, 25 skipped\)/);
+        assert.match(text, /## Skipped — not searched \(25\)/);
+        const listed = text.split('\n').filter((l) => /^- assets\/Alien\d+\.terrain: /.test(l));
+        assert.strictEqual(listed.length, 20);
+        assert.match(text, /^… and 5 more not shown — the header counts every one\.$/m);
+    });
+
     test('folder filter narrows the scan', async (t) => {
         const root = projectWithScene(t);
 

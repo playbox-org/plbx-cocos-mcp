@@ -36,8 +36,10 @@ export function normalizeArgs(args, schema, aliases = {}) {
     // different values are a conflict — neither outranks the other.
     const mergedFrom = new Map(); // canonical → alias that filled it
     for (const [alias, canonical] of Object.entries(aliases)) {
-        if (!(alias in normalized)) continue;
-        if (!(canonical in normalized)) {
+        // Object.hasOwn for the same reason as below: `in` sees Object.prototype
+        // members as arguments the caller never passed.
+        if (!Object.hasOwn(normalized, alias)) continue;
+        if (!Object.hasOwn(normalized, canonical)) {
             normalized[canonical] = normalized[alias];
             mergedFrom.set(canonical, alias);
         } else if (mergedFrom.has(canonical) &&
@@ -69,7 +71,9 @@ export function normalizeArgs(args, schema, aliases = {}) {
     }
 
     for (const key of required) {
-        if (normalized[key] === undefined) {
+        // hasOwn first: a required name like "toString" reads back off
+        // Object.prototype, so an argument nobody passed looked present.
+        if (!Object.hasOwn(normalized, key) || normalized[key] === undefined) {
             problems.push(`missing required parameter "${key}"`);
         }
     }
@@ -106,18 +110,19 @@ function coerceScalar(value, prop) {
             typeof e === 'string' && e.toLowerCase() === value.toLowerCase());
         if (relaxed !== undefined) return relaxed;
 
-        const synonym = ENUM_SYNONYMS[value.toLowerCase()];
+        const synonym = ENUM_SYNONYMS.get(value.toLowerCase());
         if (synonym !== undefined && prop.enum.includes(synonym)) return synonym;
     }
     return value;
 }
 
 // Values callers habitually carry over from other tools ("format: compact"
-// on a text|json enum) — mapped instead of bounced when unambiguous
-const ENUM_SYNONYMS = {
-    compact: 'text',
-    plain: 'text'
-};
+// on a text|json enum) — mapped instead of bounced when unambiguous.
+// A Map, so a value named after an Object.prototype member cannot look up.
+const ENUM_SYNONYMS = new Map([
+    ['compact', 'text'],
+    ['plain', 'text']
+]);
 
 function checkValue(key, value, prop) {
     const check = TYPE_OK[prop.type];

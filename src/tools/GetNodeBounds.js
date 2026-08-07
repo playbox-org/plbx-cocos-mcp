@@ -89,14 +89,16 @@ export class GetNodeBounds extends BaseTool {
 
 /**
  * World AABB per direct child, falling back to its world POSITION when nothing in it is
- * measurable — for a placement question the position is still an answer.
+ * measurable — for a placement question the position is still an answer. `skipped` says which
+ * children could not be enumerated at all, so a short list is never read as a complete one.
  */
 function perChildBoxes(calculator, doc, nodeIdx) {
-    const all = calculator.computeChildren(doc, nodeIdx);
+    const { rows, skipped } = calculator.computeChildren(doc, nodeIdx);
     return {
-        rows: all.slice(0, MAX_PER_CHILD),
-        total: all.length,
-        omitted: Math.max(0, all.length - MAX_PER_CHILD),
+        rows: rows.slice(0, MAX_PER_CHILD),
+        total: rows.length,
+        omitted: Math.max(0, rows.length - MAX_PER_CHILD),
+        skipped,
         inPrefab: doc.isInstanceStub(nodeIdx)
     };
 }
@@ -127,6 +129,11 @@ function renderBoundsReport(nodePath, result, children) {
                 'placed by the instance transform. Their names address nodes inside the prefab, not ' +
                 'the scene — edit them in the prefab, or override them via set_instance_property.'
             );
+        }
+        // Named where the missing rows would have been: a count with children unread must not
+        // be read as "this node has none"
+        for (const s of children.skipped) {
+            lines.push(`- ! ${s.path}: children NOT listed — ${s.reason}; the count above is a lower bound`);
         }
         for (const c of children.rows) {
             const marker = c.active ? '●' : '○';

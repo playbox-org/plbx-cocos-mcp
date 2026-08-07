@@ -404,6 +404,20 @@ describe('TerrainBuilder: fillLayer', () => {
         }
     });
 
+    // The resolved slot is DATA on the result: build_terrain drops the duplicate
+    // "no block uses it" card warning off this field, and used to read the note's prose instead.
+    it('reports the resolved slot as a field, painted or not', () => {
+        assert.strictEqual(builder().compile({ layers: [oneLayer] }).fillLayer, 0);
+        assert.strictEqual(builder().compile({
+            layers: [oneLayer, { detailMap: 'Sprites/panel.png' }], fillLayer: 1,
+        }).fillLayer, 1);
+        for (const fillLayer of [-1, null]) {
+            assert.strictEqual(builder().compile({ layers: [oneLayer], fillLayer }).fillLayer, -1);
+        }
+        // no palette at all: nothing references a layer either
+        assert.strictEqual(builder().compile({}).fillLayer, -1);
+    });
+
     it('rejects an out-of-range or layerless fillLayer', () => {
         assert.throws(() => builder().compile({ layers: [oneLayer], fillLayer: 1 }),
             /fillLayer = 1 must be a layer index in 0\.\.0/);

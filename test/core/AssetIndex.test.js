@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
+import { ListAssets } from '../../src/tools/ListAssets.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = join(__dirname, '../fixtures/mock-project');
@@ -113,6 +114,22 @@ describe('AssetIndex', () => {
         assert.ok(index.isKnownType('spriteFrame'));
         assert.ok(index.isKnownType('fbx')); // raw importer present in the project
         assert.ok(!index.isKnownType('bogusType'));
+    });
+
+    it('should reject an Object.prototype name as an asset type', async () => {
+        // `normalizeType(type) in TYPE_ALIASES` made "constructor" a known type, and
+        // list() then used the Object constructor as its importer array:
+        // list_assets {type:'constructor'} died with "importers.includes is not a function".
+        for (const type of ['constructor', 'toString', 'hasOwnProperty', 'valueOf']) {
+            assert.ok(!index.isKnownType(type), type);
+            assert.deepStrictEqual(index.list({ type }), [], type);
+
+            // through the tool boundary: the normal did-you-mean answer, not a crash
+            const result = await new ListAssets().run({ type }, PROJECT);
+            assert.ok(result.isError, type);
+            assert.match(result.content[0].text, new RegExp(`Unknown asset type "${type}"`));
+            assert.match(result.content[0].text, /Known types: .*\bsprite\b/);
+        }
     });
 
     it('should list terrains and know the type even without one', () => {

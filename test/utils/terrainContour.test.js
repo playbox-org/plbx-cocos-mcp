@@ -31,6 +31,35 @@ const near = (actual, expected, tol, what) =>
     assert.ok(Math.abs(actual - expected) <= tol,
         `${what ?? 'value'}: ${actual} is not within ${tol} of ${expected}`);
 
+/** Independent nearest-segment scan over flattened `[x0,z0,x1,z1,ux,uz]` rows: no buckets */
+function bruteNearest(segments, x, z) {
+    let best = Infinity;
+    for (let s = 0; s < segments.length; s += 6) {
+        const [ax, az, bx, bz] = segments.slice(s, s + 4);
+        const vx = bx - ax;
+        const vz = bz - az;
+        const len2 = vx * vx + vz * vz;
+        let t = len2 === 0 ? 0 : ((x - ax) * vx + (z - az) * vz) / len2;
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        const dx = x - (ax + vx * t);
+        const dz = z - (az + vz * t);
+        const d = Math.sqrt(dx * dx + dz * dz);
+        if (d < best) best = d;
+    }
+    return best;
+}
+
+/** mulberry32 — a seeded PRNG so a sweep over random points is reproducible */
+function rng(seed) {
+    let a = seed;
+    return () => {
+        a = (a + 0x6d2b79f5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
 describe('contourCrossings', () => {
     it('interpolates the crossing of a linear ramp exactly', () => {
         // h = x / 10, so the 1.05 m contour is the line x = 10.5
@@ -189,6 +218,119 @@ describe('ContourDistance', () => {
         assert.strictEqual(cd.signedDistanceAt(22, 16).high, true);
         near(cd.signedDistanceAt(18, 16).distance, 2, 0.05, '2 m down the ramp');
         assert.strictEqual(cd.signedDistanceAt(18, 16).high, false);
+    });
+
+    // The bucket grid is a spatial INDEX, not a bookkeeping detail: `paint_layer` issues one query
+    // per weight texel of every touched block, so a query that scans the whole contour is tens of
+    // millions of segment tests in a single edit. These two pin both halves — the answer is still
+    // the true nearest segment, and getting it costs a fraction of the contour.
+    it('answers exactly what a brute-force scan over the segments does', () => {
+        // A saddle plus a plateau exactly AT the threshold: two contour branches that cross, ties on
+        // both of them, and points equidistant from several segments near the centre
+        const data = terrainFrom((x, z) => Math.min(((x - 16) ** 2 - (z - 16) ** 2) / 40, 3));
+        const cd = new ContourDistance(data, 0, { reach: 12 });
+        const segments = cd.segments;
+        assert.ok(cd.segmentCount > 40, `expected a rich contour, got ${cd.segmentCount}`);
+        const brute = (x, z) => bruteNearest(segments, x, z);
+
+        let checked = 0;
+        for (let z = 0; z <= 32; z += 0.5) {
+            for (let x = 0; x <= 32; x += 0.5) {
+                const sd = cd.signedDistanceAt(x, z);
+                const expected = brute(x, z);
+                if (expected > 12) {
+                    assert.strictEqual(sd, null, `(${x},${z}) is ${expected} m out, past the reach`);
+                    continue;
+                }
+                assert.ok(sd, `(${x},${z}) is ${expected} m from the contour but answered null`);
+                // Bit-for-bit, not "close": the ring walk must not settle for a nearer bucket
+                assert.strictEqual(sd.distance, expected, `distance at (${x},${z})`);
+                checked++;
+            }
+        }
+        assert.ok(checked > 500, `expected the reach to cover most of the grid, got ${checked}`);
+    });
+
+    // Same claim swept wide, because the ring walk's early-out is where an "almost nearest" answer
+    // would hide: 4 fields (ties on two of them) x 4 reach values x 250 seeded random points.
+    it('matches a brute-force scan across every field and reach', () => {
+        const fields = [
+            ['cone', terrainFrom((x, z) => 5 - Math.hypot(x - 16, z - 16)), 2, 32],
+            ['saddle+plateau', terrainFrom((x, z) => Math.min(((x - 16) ** 2 - (z - 16) ** 2) / 40, 3)), 0, 32],
+            ['flat-topped ramp', terrainFrom((x) => Math.min(x / 4, 5)), 5, 32],
+            ['dunes', terrainFrom((x, z) => 4 * Math.sin(x / 3) * Math.cos(z / 3), { blockCount: [2, 2] }), 0, 64],
+        ];
+        let checked = 0;
+        for (const [name, data, threshold, span] of fields) {
+            for (const reach of [1, 4, 20, 60]) {
+                const cd = new ContourDistance(data, threshold, { reach });
+                const segments = cd.segments;
+                const random = rng(0x5eed);
+                for (let n = 0; n < 250; n++) {
+                    const x = random() * span;
+                    const z = random() * span;
+                    const expected = bruteNearest(segments, x, z);
+                    const sd = cd.signedDistanceAt(x, z);
+                    if (expected > reach) {
+                        assert.strictEqual(sd, null, `${name} reach ${reach}: (${x},${z}) is ${expected} m out`);
+                        continue;
+                    }
+                    assert.ok(sd, `${name} reach ${reach}: (${x},${z}) is ${expected} m away, answered null`);
+                    assert.strictEqual(sd.distance, expected, `${name} reach ${reach} at (${x},${z})`);
+                    checked++;
+                }
+            }
+        }
+        assert.ok(checked > 2000, `expected most of the 4000 points inside a reach, got ${checked}`);
+    });
+
+    // The class doc quotes these two, since "a handful of segment tests" was measurably wrong.
+    // The field is the RIPPLE below (1808 segments), not the dune field of the next test (922):
+    // the doc named the dune one while quoting these numbers.
+    it('costs a LOCAL number of segment tests, quoted by the doc', () => {
+        const data = terrainFrom(
+            (x, z) => 4 * Math.sin(x / 1.5) * Math.cos(z / 1.5), { blockCount: [2, 2] });
+        const perQuery = (reach) => {
+            const cd = new ContourDistance(data, 0, { reach });
+            let queries = 0;
+            for (let z = 0; z <= 64; z += 1) {
+                for (let x = 0; x <= 64; x += 1) { cd.signedDistanceAt(x, z); queries++; }
+            }
+            return { segments: cd.segmentCount, per: cd.segmentTests / queries };
+        };
+        const tight = perQuery(1);
+        const wide = perQuery(60);
+        assert.strictEqual(tight.segments, 1808, 'the field the doc quotes');
+        // 13.4 and 218.8 measured — a 60x wider reach costs 16x, never the whole contour
+        assert.ok(tight.per > 8 && tight.per < 18, `1 m reach: ${tight.per.toFixed(1)} tests/query`);
+        assert.ok(wide.per > 150 && wide.per < 260, `60 m reach: ${wide.per.toFixed(1)} tests/query`);
+        assert.ok(wide.per / wide.segments < 0.15,
+            `${wide.per.toFixed(1)} of ${wide.segments} segments at a whole-terrain reach`);
+        // ...which is the doc's "1808/219 ≈ 8x" over reach-sized cells, where a 60 m reach put the
+        // whole contour in the queried neighbourhood (8.3x measured)
+        assert.ok(wide.segments / wide.per > 7,
+            `${(wide.segments / wide.per).toFixed(1)}x, doc claims ~8x`);
+    });
+
+    it('tests a fraction of the contour per query even when the reach is wide', () => {
+        // A dune field: 900+ segments over 4 blocks. Sizing the buckets by `reach` (the old rule)
+        // dropped most of them into the queried 3x3 neighbourhood — 496 tests per query, 54% of the
+        // whole contour, for every weight texel of a paint_layer.
+        const data = terrainFrom((x, z) => 4 * Math.sin(x / 3) * Math.cos(z / 3), { blockCount: [2, 2] });
+        const cd = new ContourDistance(data, 0, { reach: 20 });
+        assert.ok(cd.segmentCount > 500, `expected a dense contour, got ${cd.segmentCount}`);
+
+        let queries = 0;
+        for (let z = 0; z <= 64; z += 1) {
+            for (let x = 0; x <= 64; x += 1) {
+                cd.signedDistanceAt(x, z);
+                queries++;
+            }
+        }
+        // Cost must follow the LOCAL contour density, not the contour's total length
+        const perQuery = cd.segmentTests / queries;
+        assert.ok(perQuery < cd.segmentCount / 10,
+            `${perQuery.toFixed(1)} segment tests per query out of ${cd.segmentCount} segments`);
     });
 
     it('measures the true distance to a curved contour, not a grid-quantized one', () => {

@@ -17,7 +17,9 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { LintAssets } from '../../src/tools/LintAssets.js';
 import { ApplyEdits } from '../../src/tools/ApplyEdits.js';
-import { readTerrain, writeTerrain, readTerrainInfo } from '../../src/utils/terrainBin.js';
+import {
+    readTerrain, writeTerrain, readTerrainInfo, terrainWarningText
+} from '../../src/utils/terrainBin.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = join(__dirname, '../fixtures/mock-project');
@@ -147,21 +149,26 @@ describe('LintAssets tool', () => {
         });
 
         it('flags a detail map whose uuid no longer resolves', async () => {
+            const id = 'deadbeef-1111-4222-8333-444455556666@6c48a';
             const { text } = await lintMutatedTerrain((data) => {
-                data.layers[0].detailMapId = 'deadbeef-1111-4222-8333-444455556666@6c48a';
+                data.layers[0].detailMapId = id;
             });
             assert.ok(text.includes('Terrain layers (1)'), text);
-            assert.ok(text.includes(`${TERRAIN_REL} — layer slot 0: detail map ` +
-                'deadbeef-1111-4222-8333-444455556666@6c48a does not resolve'), text);
+            // Whole line: our per-file prefix + terrainBin's registered wording, character for
+            // character what query_terrain and get_asset_info print for the same defect
+            assert.ok(text.split('\n').includes(`- ${TERRAIN_REL} — ` +
+                terrainWarningText('unresolvedTexture', { slot: 0, field: 'detailMap', id })), text);
             assert.ok(text.includes('edit_terrain set_layer'), text);
         });
 
         it('flags a normal map whose uuid no longer resolves', async () => {
+            const id = 'deadbeef-2222-4222-8333-444455556666@6c48a';
             const { text } = await lintMutatedTerrain((data) => {
-                data.layers[1].normalMapId = 'deadbeef-2222-4222-8333-444455556666@6c48a';
+                data.layers[1].normalMapId = id;
             });
             assert.ok(text.includes('Terrain layers (1)'), text);
-            assert.ok(text.includes('layer slot 1: normal map deadbeef-2222'), text);
+            assert.ok(text.split('\n').includes(`- ${TERRAIN_REL} — ` +
+                terrainWarningText('unresolvedTexture', { slot: 1, field: 'normalMap', id })), text);
         });
 
         it('keeps a detail map that resolves to a real mock-project image quiet', async () => {

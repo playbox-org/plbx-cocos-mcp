@@ -543,7 +543,9 @@ export function listTargetOverrides(doc) {
  * fileId → {target, component} over a source prefab document: node
  * PrefabInfo.fileId and component CompPrefabInfo.fileId, keyed the way
  * cc.TargetInfo.localID references them (single-hop). `target` is the
- * node path relative to the prefab root ("/" = root).
+ * node path relative to the prefab root ("/" = root); `component` is the RAW
+ * serialized `__type__` — a script's is its compressed uuid, so a display path
+ * must resolve it through AssetIndex.scriptClassNames().
  */
 export function fileIdTargets(sourceDoc) {
     const map = new Map();

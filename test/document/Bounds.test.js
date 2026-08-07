@@ -193,7 +193,7 @@ describe('BoundsCalculator', () => {
         near(zones.world.min.x, -2, 1e-9); // without the icon the group starts at x 1.25
 
         // perChild: a real node of THIS document, so not `inPrefab`
-        const rows = calc.computeChildren(doc, stubIdx);
+        const { rows } = calc.computeChildren(doc, stubIdx);
         assert.strictEqual(rows.length, 1);
         assert.strictEqual(rows[0].mounted, true);
         assert.strictEqual(rows[0].inPrefab, false);
@@ -220,10 +220,64 @@ describe('BoundsCalculator', () => {
         near(world.size.x, 8, 1e-9);
         near(world.size.y, 4, 1e-9);
         // The perChild walk resolves the same chain through its own mount hop
-        const row = calc.computeChildren(doc, stubIdx).find(r => r.mounted);
+        const row = calc.computeChildren(doc, stubIdx).rows.find(r => r.mounted);
         near(row.world.center.x, 12, 1e-9);
         near(row.world.center.y, 0.5, 1e-9);
         near(row.world.size.x, 8, 1e-9);
+    });
+
+    test('perChild states WHY a stub\'s prefab half is missing instead of showing zero rows', () => {
+        // GoldStackZone's source prefab is not in the mock project: "no children" and "children
+        // we could not read" are different answers, and the merged AABB path already says which.
+        const ctx = makeCtx();
+        const doc = SceneDocument.load(GOLDEN('Main.scene_V2.scene'));
+        const calc = new BoundsCalculator(ctx);
+        const stubIdx = doc.resolveNode('[WORLD]/Zones/GoldStackZone');
+
+        const out = calc.computeChildren(doc, stubIdx);
+        // the reason is a field of the RESULT, never a property of the rows array: the caller caps
+        // the rows, and slice/spread/JSON.stringify all drop what rides along on an array
+        assert.deepStrictEqual(Object.keys(out).sort(), ['rows', 'skipped']);
+        assert.strictEqual(out.rows.skipped, undefined);
+        assert.strictEqual(out.rows.filter(r => r.mounted).length, 1, 'the mounted half stays reported');
+        assert.match(out.skipped[0]?.reason ?? '', /^source prefab unavailable: /);
+        assert.strictEqual(out.skipped[0].path, '[WORLD]/Zones/GoldStackZone');
+        // both halves of get_node_bounds must give the same reason for the same stub
+        assert.deepStrictEqual(out.skipped, calc.computeSubtree(doc, stubIdx).skipped);
+
+        // and a readable source reports nothing skipped (no false alarm)
+        applyOperations(doc, [{
+            op: 'instantiate_prefab', parent: '/', prefab: 'Prefabs/Crate.prefab', name: 'Box'
+        }], ctx);
+        const ok = calc.computeChildren(doc, doc.resolveNode('Box'));
+        assert.deepStrictEqual(ok.rows.map(r => r.name), ['Visual']);
+        assert.deepStrictEqual(ok.skipped, []);
+        assert.deepStrictEqual(calc.computeChildren(doc, doc.resolveNode('[WORLD]/Zones')).skipped, []);
+    });
+
+    test('both halves report the SAME reason for the same unreadable stub', () => {
+        // The two reason strings used to be written out twice (#enterStub and computeChildren),
+        // so the stated agreement was a coincidence the next wording edit would break. Asserted
+        // per CAUSE, and never against the text.
+        const ctx = makeCtx();
+        const doc = SceneDocument.load(GOLDEN('Main.scene_V2.scene'));
+        applyOperations(doc, [{
+            op: 'instantiate_prefab', parent: '/', prefab: 'Prefabs/Crate.prefab', name: 'Box'
+        }], ctx);
+        const calc = new BoundsCalculator(ctx);
+        const stubIdx = doc.resolveNode('Box');
+        const info = doc.getObject(doc.getObject(stubIdx)._prefab.__id__);
+
+        info.asset = null; // the instance carries no asset uuid at all
+        const noUuid = calc.computeChildren(doc, stubIdx).skipped;
+        assert.strictEqual(noUuid.length, 1, JSON.stringify(noUuid));
+        assert.deepStrictEqual(noUuid, calc.computeSubtree(doc, stubIdx).skipped);
+
+        info.asset = { __uuid__: '99999999-9999-4999-8999-999999999999' }; // resolves to nothing
+        const unreadable = calc.computeChildren(doc, stubIdx).skipped;
+        assert.strictEqual(unreadable.length, 1, JSON.stringify(unreadable));
+        assert.deepStrictEqual(unreadable, calc.computeSubtree(doc, stubIdx).skipped);
+        assert.notDeepStrictEqual(unreadable, noUuid, 'two causes, two reasons');
     });
 
     test('mounted children are dropped by skipUI like any other UITransform', () => {

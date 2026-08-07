@@ -204,6 +204,41 @@ describe('heightmap: PNG decoding', () => {
             /heightmap\.source "Art\/hills\.png": unknown PNG filter type 9 on row 0/);
     });
 
+    // The inflate bound is read out of the IHDR, so "the header" must be unambiguous: exactly
+    // one, and the first chunk. Both variants used to decode as if nothing were wrong.
+    it('refuses a duplicate IHDR and an IHDR that is not the first chunk', () => {
+        const good = makePng({ width: 2, height: 2, samples: new Uint8Array(4) });
+        const ihdr = good.subarray(8, 33); // len(4) + "IHDR" + 13 + crc(4)
+        assert.strictEqual(ihdr.toString('latin1', 4, 8), 'IHDR', 'fixture starts with IHDR');
+
+        assert.throws(
+            () => decodePng(Buffer.concat([good.subarray(0, 33), ihdr, good.subarray(33)])),
+            (err) => err instanceof HeightmapError &&
+                /a second IHDR chunk at byte 33/.test(err.message));
+        assert.throws(
+            () => decodePng(Buffer.concat([
+                good.subarray(0, 8), chunk('tEXt', Buffer.from('k\0v')), good.subarray(8)])),
+            (err) => err instanceof HeightmapError &&
+                /first chunk is "tEXt", the spec requires IHDR/.test(err.message));
+
+        // An ancillary chunk AFTER the header is legal and still decodes
+        const trailing = Buffer.concat([
+            good.subarray(0, 33), chunk('tEXt', Buffer.from('k\0v')), good.subarray(33)]);
+        assert.strictEqual(decodePng(trailing).width, 2);
+    });
+
+    // CRCs are deliberately unchecked (see decodePng): a wrong one must not turn a
+    // decodable file into an error, while damage that matters still fails.
+    it('decodes a PNG with wrong chunk CRCs and still catches damaged IDAT', () => {
+        const good = makePng({ width: 2, height: 2, samples: Uint8Array.from([1, 2, 3, 4]) });
+        const clobbered = Buffer.from(good);
+        clobbered.writeUInt32BE(0xdeadbeef, 29); // IHDR crc
+        assert.deepStrictEqual([...decodePng(clobbered).data], [1, 2, 3, 4]);
+        assert.throws(
+            () => decodePng(makePng({ width: 2, height: 2, idat: Buffer.alloc(3) })),
+            /pixel data is 3 bytes, expected 6/);
+    });
+
     it('refuses absurd dimensions before allocating', () => {
         assert.throws(
             () => decodePng(makePng({ width: MAX_HEIGHTMAP_AXIS + 1, height: 1, idat: Buffer.alloc(0) })),
@@ -402,6 +437,32 @@ describe('heightmap: buildHeightGrid', () => {
         const { notes } = buildHeightGrid(
             { rows: [[0, 1, 2], [3, 4, 5], [6, 7, 8]], min: 0, max: 10 }, gridOpts);
         assert.match(notes.join('\n'), /min\/max are ignored for inline rows/);
+    });
+
+    // Both degenerate ranges are legal mappings, so both are NOTED (min === max already was);
+    // an inverted range used to flip the whole heightmap without a word.
+    it('notes both degenerate min/max ranges instead of applying them silently', () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hm-'));
+        try {
+            fs.writeFileSync(path.join(dir, 'h.raw'),
+                Buffer.from([0, 128, 255, 0, 128, 255, 0, 128, 255]));
+            const source = { source: 'h.raw', width: 3, height: 3, bitDepth: 8 };
+            const opts = { ...gridOpts, projectRoot: dir };
+
+            const inverted = buildHeightGrid({ ...source, min: 20, max: 10 }, opts);
+            assert.strictEqual(inverted.heights[0], 20); // black sample → the HIGH metre value
+            assert.strictEqual(inverted.heights[2], 10); // white sample → the low one
+            assert.match(inverted.notes.join('\n'),
+                /heightmap\.min \(20 m\) is ABOVE heightmap\.max \(10 m\)/);
+            assert.match(inverted.notes.join('\n'), /inverted/);
+            assert.doesNotMatch(inverted.notes.join('\n'), /flat terrain/);
+
+            const flat = buildHeightGrid({ ...source, min: 7, max: 7 }, opts);
+            assert.deepStrictEqual([...flat.heights], new Array(9).fill(7));
+            assert.match(flat.notes.join('\n'), /min === heightmap\.max \(7 m\) — .*flat terrain/);
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     it('rejects unknown keys, missing sources and source+rows together', () => {

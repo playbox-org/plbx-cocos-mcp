@@ -27,7 +27,7 @@ import { loadSourcePrefabByUuid } from '../document/instances.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 import { AssetInspector } from '../core/AssetInspector.js';
 import { VISUAL_ROOT_TYPES, MESH_RENDERERS } from '../document/componentTypes.js';
-import { maxLayerIndex } from '../utils/terrainBin.js';
+import { maxLayerIndex, terrainWarningText } from '../utils/terrainBin.js';
 
 const CHECKS = ['names', 'scales', 'wrappers', 'materials', 'terrain'];
 const NAMED_TYPES = ['fbx', 'gltf', 'image', 'prefab', 'material', 'audio-clip', 'scene'];
@@ -371,17 +371,15 @@ export class LintAssets extends BaseTool {
             }
 
             for (const layer of card.layers ?? []) {
-                for (const [what, id, name] of [
-                    ['detail map', layer.detailMapId, layer.detailMapName],
-                    ['normal map', layer.normalMapId, layer.normalMapName]
+                for (const [field, id, name] of [
+                    ['detailMap', layer.detailMapId, layer.detailMapName],
+                    ['normalMap', layer.normalMapId, layer.normalMapName]
                 ]) {
                     if (!id || name !== null) continue;
-                    lines.push(
-                        `- ${entry.path} — layer slot ${layer.slot}: ${what} ${id} does not resolve ` +
-                        'to a project asset (deleted texture, wrong sub-asset id, or a missing ' +
-                        '.meta); the terrain draws the effect fallback there. Re-assign it with ' +
-                        'edit_terrain set_layer'
-                    );
+                    // terrainBin's registered wording, so query_terrain and get_asset_info
+                    // spell this finding identically; only the per-file prefix is ours
+                    lines.push(`- ${entry.path} — ` +
+                        terrainWarningText('unresolvedTexture', { slot: layer.slot, field, id }));
                 }
             }
 

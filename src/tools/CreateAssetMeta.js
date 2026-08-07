@@ -91,28 +91,37 @@ export class CreateAssetMeta extends BaseTool {
         const created = [];
         const skipped = [];
         const refused = [];
-        // Ancestors first: every folder on the way needs a meta before its content
-        for (const { dir, meta } of ensureParentDirMetas(abs, assetsRoot)) {
-            created.push({ path: dir, uuid: meta.uuid, dir: true });
+        const rel = p => path.relative(projectRoot, p).replaceAll('\\', '/');
+        // Ancestors first: every folder on the way needs a meta before its content. A refused
+        // folder meta is that FOLDER's entry, not the run's — escaping execute() cost the
+        // per-target list, the ## Refused section AND every remaining target. Reported through
+        // the callback, so the metas already written up the chain are still listed as created.
+        try {
+            ensureParentDirMetas(abs, assetsRoot, {
+                onCreated: ({ dir, meta }) => created.push({ path: dir, uuid: meta.uuid, dir: true }),
+            });
+        } catch (err) {
+            refused.push({ path: rel(err.assetPath ?? abs), reason: err.message });
         }
         for (const target of targets) {
-            const rel = path.relative(projectRoot, target).replaceAll('\\', '/');
             try {
                 const { meta, created: isNew } = writeMetaFile(target, { imageType: args.imageType });
                 if (isNew) created.push({ path: target, uuid: meta.uuid });
-                else skipped.push(rel);
+                else skipped.push(rel(target));
             } catch (err) {
                 // Any per-target failure (broken symlink → ENOENT, EACCES,
                 // ERR_FS_FILE_TOO_LARGE) is that target's problem, not the run's.
-                refused.push({ path: rel, reason: err.message });
+                refused.push({ path: rel(target), reason: err.message });
             }
         }
 
         if (created.length > 0) AssetIndex.invalidate(projectRoot);
 
         // A single explicitly named file that cannot get a meta is a plain error
-        // (parent-folder metas created above are idempotent and stay — harmless)
-        if (!isDir && refused.length === 1) {
+        // (parent-folder metas created above are idempotent and stay — harmless). A refusal in
+        // the FOLDER chain is not: the file's own meta may well have landed, and only the
+        // report says so — hence the identity test rather than a bare count.
+        if (!isDir && refused.length === 1 && refused[0].path === rel(abs)) {
             return this.error(refused[0].reason);
         }
 

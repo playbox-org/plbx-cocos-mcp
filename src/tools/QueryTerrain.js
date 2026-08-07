@@ -32,8 +32,12 @@ import {
     heightToRaw,
     expectedCounts,
     terrainSize,
+    renderTerrainWarnings,
+    terrainWarningElision,
+    TerrainWarnings,
     TERRAIN_BLOCK_TILE_COMPLEXITY,
-    TERRAIN_HEIGHT_FACTOR
+    TERRAIN_HEIGHT_FACTOR,
+    TERRAIN_MAX_WARNINGS
 } from '../utils/terrainBin.js';
 import {
     contourCrossings,
@@ -179,7 +183,8 @@ export class QueryTerrain extends BaseTool {
                                  '(constant z for axis "x", the default) the crossing is linearly interpolated ' +
                                  'between the straddling vertex pair, at the region\'s VERTEX resolution unless ' +
                                  'sampleCount says otherwise — downsampled by a power-of-two stride when that ' +
-                                 `would exceed ${GRID_MAX_CELLS} samples, which the report states (pass a region ` +
+                                 `would exceed ${GRID_MAX_AXIS} samples on an axis or ${GRID_MAX_CELLS} in ` +
+                                 'total, which the report states, naming the limit that applied (pass a region ' +
                                  'around the edit to keep full resolution). Reported with the checks a blend edit needs: how ' +
                                  'many lines have exactly one crossing, how many have none and how many ' +
                                  'several, whether the crossing list is monotone, and the largest jump ' +
@@ -191,7 +196,8 @@ export class QueryTerrain extends BaseTool {
                 slope: {
                     description: 'Gradient magnitude in degrees over the region: true for the whole terrain, ' +
                                  'or {region?, sampleCount?} (same vertex-resolution default and ' +
-                                 `${GRID_MAX_CELLS}-sample budget as contourAt). Reports max (with its location), mean, the ` +
+                                 `${GRID_MAX_AXIS}-per-axis / ${GRID_MAX_CELLS}-sample budget as contourAt). ` +
+                                 'Reports max (with its location), mean, the ' +
                                  'distribution over DISJOINT bands (0-15°, 15-30°, 30-45°, >45°) plus a ' +
                                  'separate cumulative row for the "how much of this is walkable" reading, ' +
                                  'and maxStep — the largest height difference between adjacent samples, ' +
@@ -214,7 +220,11 @@ export class QueryTerrain extends BaseTool {
                 format: {
                     type: 'string',
                     enum: ['text', 'json'],
-                    description: 'Output format of the report itself (not the height encoding — that is exportHeights.format)',
+                    description: 'Output format of the report itself (not the height encoding — that is ' +
+                                 'exportHeights.format). "json" carries every section as data at full ' +
+                                 `precision and is refused past ${JSON_MAX_CHARS} characters, naming the ` +
+                                 'smaller sampleCount that fits: a full-budget height grid always ' +
+                                 'fits, sections stacked on one may not, and "text" has no such ceiling',
                     default: 'text'
                 }
             },
@@ -279,7 +289,9 @@ export class QueryTerrain extends BaseTool {
             const model = buildModel({ title, uuid, data, info, assetIndex, args });
 
             if (args.format === 'json') {
-                return this.success(JSON.stringify(model, null, 2));
+                const out = renderJson(model);
+                if (out.length > JSON_MAX_CHARS) throw jsonBudgetError(model, out.length);
+                return this.success(out);
             }
             return this.success(renderReport(model, sections));
         } catch (err) {
@@ -293,13 +305,25 @@ export class QueryTerrain extends BaseTool {
 // --- Model ------------------------------------------------------------------
 
 /**
+ * Slots a cross-file check found: named up to this many, the rest counted — a palette may hold
+ * TERRAIN_MAX_LAYER_COUNT layers, and naming all of them puts ~1.3 KB on one line.
+ */
+const MAX_NAMED_SLOTS = 8;
+
+function slotList(slots) {
+    const named = slots.slice(0, MAX_NAMED_SLOTS).join(', ');
+    return slots.length > MAX_NAMED_SLOTS
+        ? `${slots.length} layer slots (${named}, … and ${slots.length - MAX_NAMED_SLOTS} more)`
+        : `layer slot(s) ${named}`;
+}
+
+/**
  * Everything the renderers need, computed once. Deterministic ordering
  * throughout: layers by palette slot, blocks row-major, samples in input order,
  * format warnings before tool warnings.
  */
 function buildModel({ title, uuid, data, info, assetIndex, args }) {
     const sentinel = Boolean(info.isDefaultSentinel);
-    const warnings = [...info.warnings];
 
     const layers = info.layers.map((layer) => {
         const usage = info.layerUsage.find((u) => u.slot === layer.slot) ?? null;
@@ -319,29 +343,33 @@ function buildModel({ title, uuid, data, info, assetIndex, args }) {
         };
     });
 
-    // Texture ids the index cannot resolve — the layer renders as the effect's
-    // fallback in the editor, so this is a silent-invisible class of bug.
+    // Both collectors are terrainBin's, so a registered family is spelled there and not by this
+    // tool. They differ in WHERE the defect is — the split the header counts: `fileOwn` is a
+    // defect in the binary that only an AssetIndex can see, `toolOwn` one about the scene.
+    const fileOwn = new TerrainWarnings();
+    const toolOwn = new TerrainWarnings();
+
+    // Texture ids the index cannot resolve — the layer renders as the effect's fallback in the
+    // editor, so this is a silent-invisible class of bug. One occurrence per (layer, field): a
+    // family, or a palette of dead textures is 2 lines per layer, 512 at the layer limit. A FILE
+    // finding, the same classification get_asset_info gives the identical line: the dangling id
+    // is stored in the binary and edit_terrain set_layer is the fix.
     for (const layer of layers) {
-        for (const [key, id, name] of [
+        for (const [field, id, name] of [
             ['detailMap', layer.detailMapId, layer.detailMapName],
             ['normalMap', layer.normalMapId, layer.normalMapName]
         ]) {
-            if (id && name === null) {
-                warnings.push(
-                    `layer slot ${layer.slot}: ${key} ${id} does not resolve to an asset in this ` +
-                    'project (deleted texture, wrong sub-asset id, or a missing .meta) — the layer ' +
-                    'will not render'
-                );
-            }
+            if (id && name === null) fileOwn.family('unresolvedTexture', { slot: layer.slot, field, id });
         }
     }
 
     // Cross-file pairing: the binary carries the maps, the scene component
-    // carries the switches that make the engine sample them.
+    // carries the switches that make the engine sample them. One line each by
+    // construction, and slotList bounds that line's LENGTH too.
     const withNormalMap = layers.filter((l) => l.normalMapId).map((l) => l.slot);
     if (withNormalMap.length) {
-        warnings.push(
-            `layer slot(s) ${withNormalMap.join(', ')} carry normal maps, but the scene's cc.Terrain ` +
+        toolOwn.push('normalMapSwitch',
+            `${slotList(withNormalMap)} carry normal maps, but the scene's cc.Terrain ` +
             'component would need `_useNormalmap: true` for the engine to sample them ' +
             '(apply_edits set_component_property) — otherwise they are dead weight in the binary'
         );
@@ -350,11 +378,19 @@ function buildModel({ title, uuid, data, info, assetIndex, args }) {
         .filter((l) => l.roughness !== 1 || l.metallic !== 0)
         .map((l) => l.slot);
     if (withPbr.length) {
-        warnings.push(
-            `layer slot(s) ${withPbr.join(', ')} use non-default roughness/metallic, which only ` +
+        toolOwn.push('pbrSwitch',
+            `${slotList(withPbr)} use non-default roughness/metallic, which only ` +
             'take effect with `_usePBR: true` on the scene\'s cc.Terrain component'
         );
     }
+
+    // ONE list, the shared renderer wording every part of it, the file's own findings first (the
+    // order the render gives `own` anyway) — two calls only so the header can name the split.
+    // Uncapped here because the model is DATA; renderReport applies the single
+    // TERRAIN_MAX_WARNINGS cap to what it prints.
+    const fileWarnings = renderTerrainWarnings(info, { own: fileOwn, limit: Infinity }).lines;
+    const toolWarnings = renderTerrainWarnings(null, { own: toolOwn, limit: Infinity }).lines;
+    const warnings = [...fileWarnings, ...toolWarnings];
 
     // The rows come off the card's single weight sweep (terrainBin's `weightUsage`, the
     // same one `layerUsage` is summed from); the budget below only decides what to print.
@@ -432,6 +468,9 @@ function buildModel({ title, uuid, data, info, assetIndex, args }) {
         slope: args.slope === undefined || args.slope === false
             ? null
             : buildSlope(data, parseSlope(args.slope), sentinel),
+        // How many of `warnings` (which lists them first) are defects in the FILE — including the
+        // dead texture ids only an AssetIndex can spot; the rest are about the scene next to it.
+        warningsFromFile: fileWarnings.length,
         warnings
     };
 }
@@ -480,6 +519,7 @@ function buildContours(data, spec, sentinel) {
             samples: result.samples,
             spacing: result.spacing,
             sampleStride: grid.stride,
+            sampleLimit: grid.limit,
             vertexSamples: grid.vertex,
             stats: result.stats,
             stride,
@@ -499,6 +539,7 @@ function buildSlope(data, spec, sentinel) {
         return {
             ...slopeStats(data, { region: spec.region, sampleCount: grid.sampleCount }),
             sampleStride: grid.stride,
+            sampleLimit: grid.limit,
             vertexSamples: grid.vertex,
             note: null
         };
@@ -520,6 +561,11 @@ function usableBlockCount(data) {
     const expected = expectedCounts(data.blockCount, data.weightMapSize);
     if ((data.layerBuffer?.length ?? 0) !== expected.layerBuffer) return 0;
     return data.blockCount[0] * data.blockCount[1];
+}
+
+/** The other half of `weightAt`'s refusal: is the weight buffer itself the declared size? */
+function weightsSized(data) {
+    return (data.weights?.length ?? 0) === expectedCounts(data.blockCount, data.weightMapSize).weights;
 }
 
 function sampleHeights(data, points, sentinel) {
@@ -559,7 +605,12 @@ function sampleWeights(data, points, layers, sentinel) {
             if (sentinel) {
                 reason = 'empty default terrain — no weight data yet';
             } else if (inside) {
-                reason = 'in bounds — the file has no usable weight map (see Warnings)';
+                // weightAt() refuses a mis-sized layerBuffer too, with the weight map itself
+                // intact: naming the weight map then sends the caller after the wrong buffer.
+                reason = weightsSized(data) && usableBlockCount(data) === 0
+                    ? 'in bounds — the stored layerBuffer does not match blockCount, so no texel ' +
+                      'can be attributed to a layer (see Warnings)'
+                    : 'in bounds — the file has no usable weight map (see Warnings)';
             }
             return { x, z, weights: null, reason };
         }
@@ -835,25 +886,33 @@ function parseSampleCount(raw, what, data, region) {
  * one blurs the very edge being measured — but held to the SAME budget an explicit sampleCount
  * gets, downsampled by a power-of-two stride (an exact multiple of the tile size): omitting the
  * argument must not buy what the number it stands for is refused.
- * @returns {{sampleCount: number[], stride: number, vertex: number[]|null}}
+ *
+ * `limit` is which of the two caps forced the last halving — a 1057 x 33 vertex grid is 34 881
+ * samples, well inside the total budget, and is downsampled purely by the per-axis one.
+ * @returns {{sampleCount: number[], stride: number, vertex: number[]|null, limit: string|null}}
  */
 function resolveGridSampleCount(raw, what, data, region) {
     if (raw !== undefined && raw !== null) {
-        return { sampleCount: parseSampleCount(raw, what, data, region), stride: 1, vertex: null };
+        return {
+            sampleCount: parseSampleCount(raw, what, data, region),
+            stride: 1, vertex: null, limit: null
+        };
     }
     requireTileSize(data, what);
     const vertex = vertexSampleCount(data, region);
     let stride = 1;
     let pair = vertex;
+    let limit = null;
     while (pair[0] > GRID_MAX_AXIS || pair[1] > GRID_MAX_AXIS
            || pair[0] * pair[1] > GRID_MAX_CELLS) {
+        limit = pair[0] > GRID_MAX_AXIS || pair[1] > GRID_MAX_AXIS ? 'axis' : 'cells';
         stride *= 2;
         pair = [
             Math.max(2, Math.floor((vertex[0] - 1) / stride) + 1),
             Math.max(2, Math.floor((vertex[1] - 1) / stride) + 1)
         ];
     }
-    return { sampleCount: pair, stride, vertex };
+    return { sampleCount: pair, stride, vertex, limit };
 }
 
 function parseExportHeights(raw, data) {
@@ -977,6 +1036,94 @@ function parseSlope(raw) {
 
 // --- Rendering ---------------------------------------------------------------
 
+/** A leaf object (a table row, a crossing line) stays on one line up to this width */
+const JSON_INLINE_WIDTH = 96;
+
+/**
+ * Pretty JSON that keeps numeric arrays — a grid row, a crossing list, a `[cols, rows]` pair —
+ * and short leaf objects on ONE line. `JSON.stringify(model, null, 2)` spends a line and ~17
+ * characters per number while the budgets here count grid CELLS: the 513x127 dump that costs
+ * 460 KB as text cost 1.80 MB as json, 1.5x its own whitespace-free size. Key order is the
+ * model's own, as stringify's is.
+ */
+function renderJson(value, indent = '') {
+    const next = `${indent}  `;
+    if (Array.isArray(value)) {
+        if (value.length === 0) return '[]';
+        if (value.every(isInlineScalar)) return `[${value.map(scalarJson).join(', ')}]`;
+        return `[\n${value.map((v) => next + renderJson(v, next)).join(',\n')}\n${indent}]`;
+    }
+    if (value !== null && typeof value === 'object') {
+        const keys = Object.keys(value).filter((k) => value[k] !== undefined);
+        if (keys.length === 0) return '{}';
+        const parts = keys.map((k) => `${JSON.stringify(k)}: ${renderJson(value[k], next)}`);
+        const oneLine = `{ ${parts.join(', ')} }`;
+        if (oneLine.length <= JSON_INLINE_WIDTH && !oneLine.includes('\n')) return oneLine;
+        return `{\n${parts.map((p) => next + p).join(',\n')}\n${indent}}`;
+    }
+    return scalarJson(value);
+}
+
+/**
+ * Hard ceiling on the json report, and the ONE thing it guarantees: a height grid at the full
+ * GRID_MAX_CELLS budget is never refused for carrying doubles where the text shape prints 3
+ * decimals — 65 536 cells measure 20.1 chars each here (1.32 MB) against 6.5 as text (0.43 MB).
+ * It is NOT "everything text answers": the block table and the sampling sections STACKED on such
+ * a grid measure 1.58 MB (0.52 MB as text) and ARE refused, with the message naming the smaller
+ * request and `format: "text"` — which answers it — instead of truncating the answer.
+ */
+export const JSON_MAX_CHARS = 1_500_000;
+
+/** Sections a json report can be big enough to blame, with the argument that shrinks each */
+const JSON_COST_SECTIONS = [
+    ['heightGrid', 'exportHeights'],
+    ['contours', 'contourAt'],
+    ['blocks', 'blocks'],
+    ['weightSamples', 'weightAt'],
+    ['heightSamples', 'heightAt']
+];
+
+/** Over the ceiling: name the costliest section, what it measured, and the number that fits */
+function jsonBudgetError(model, chars) {
+    const worst = JSON_COST_SECTIONS
+        .filter(([key]) => model[key])
+        .map(([key, arg]) => ({ key, arg, size: renderJson(model[key]).length }))
+        .sort((a, b) => b.size - a.size)[0];
+    // What is left for that section once the rest of the report is paid for, aimed a little
+    // under so the suggested number actually fits.
+    const room = Math.max(0, JSON_MAX_CHARS - (chars - (worst?.size ?? 0))) * 0.9;
+    let advice = 'a smaller request';
+    if (worst?.key === 'heightGrid') {
+        const scale = Math.sqrt(room / worst.size);
+        const [cols, rows] = model.heightGrid.samples;
+        advice = `exportHeights {sampleCount: [${Math.max(2, Math.floor(cols * scale))}, ` +
+                 `${Math.max(2, Math.floor(rows * scale))}]}, or the same resolution over a region ` +
+                 'narrower by that factor';
+    } else if (worst?.key === 'contours') {
+        advice = `fewer contourAt thresholds (${model.contours.length} here) or a smaller contourAt.region`;
+    } else if (worst?.key === 'blocks') {
+        advice = `blocks: false (the ${model.blocks.length}-row block table is the cost here)`;
+    } else if (worst) {
+        advice = `fewer ${worst.arg} points (${model[worst.key].length} here)`;
+    }
+    return new ArgError(
+        `format: "json" would be ${chars} characters, over the ${JSON_MAX_CHARS}-character ceiling` +
+        (worst ? ` — the biggest section is ${worst.arg} (${worst.size} chars)` : '') +
+        `. Ask for ${advice}, or read the same request as format: "text", which answers it: heights ` +
+        'come rounded to 3 decimals there, for a fraction of the characters.'
+    );
+}
+
+/** Strings stay one per line: a warning is a sentence, not a datum in a row */
+function isInlineScalar(v) {
+    return v === null || typeof v === 'number' || typeof v === 'boolean';
+}
+
+/** `undefined` renders as stringify prints an absent array element: null */
+function scalarJson(v) {
+    return JSON.stringify(v) ?? 'null';
+}
+
 /** Trim trailing zeros without scientific notation surprises; `n/a` for null */
 function fmt(v, digits = 4) {
     if (v === null || v === undefined || Number.isNaN(v)) return 'n/a';
@@ -991,9 +1138,12 @@ function pct(v) {
  * The one thing a contour/slope reader must not miss silently: it was measured on a COARSER grid
  * than the vertex one, so anything narrower than the spacing is invisible in these numbers.
  */
-function downsampleNote(stride, vertex) {
+function downsampleNote(stride, vertex, limit) {
+    const cap = limit === 'axis'
+        ? `${GRID_MAX_AXIS}-samples-per-axis limit`
+        : `${GRID_MAX_CELLS}-sample budget`;
     return `DOWNSAMPLED 1:${stride} from the region's ${vertex[0]} x ${vertex[1]} vertex grid to ` +
-           `stay inside the ${GRID_MAX_CELLS}-sample budget — measured on THAT grid, so a feature ` +
+           `stay inside the ${cap} — measured on THAT grid, so a feature ` +
            'narrower than the spacing above is not in these numbers. Pass a region around the ' +
            'edit (or an explicit sampleCount) to measure at vertex resolution.';
 }
@@ -1222,7 +1372,9 @@ function renderReport(m, sections = new Set(SECTIONS)) {
                 `z ${fmt(c.region.z)}..${fmt(c.region.z + c.region.depth)} m; ` +
                 `${c.samples[0]} x ${c.samples[1]} samples, spacing ${fmt(c.spacing[0], 6)} x ${fmt(c.spacing[1], 6)} m`
             );
-            if (c.sampleStride > 1) lines.push(downsampleNote(c.sampleStride, c.vertexSamples));
+            if (c.sampleStride > 1) {
+                lines.push(downsampleNote(c.sampleStride, c.vertexSamples, c.sampleLimit));
+            }
             lines.push(
                 `Scanned along ${c.axis} — one line per ${scanned}, crossings are ${c.axis} coordinates ` +
                 'linearly interpolated between the straddling sample pair.'
@@ -1296,7 +1448,9 @@ function renderReport(m, sections = new Set(SECTIONS)) {
                 `z ${fmt(s.region.z)}..${fmt(s.region.z + s.region.depth)} m; ` +
                 `${s.samples[0]} x ${s.samples[1]} samples, spacing ${fmt(s.spacing[0], 6)} x ${fmt(s.spacing[1], 6)} m`
             );
-            if (s.sampleStride > 1) lines.push(downsampleNote(s.sampleStride, s.vertexSamples));
+            if (s.sampleStride > 1) {
+                lines.push(downsampleNote(s.sampleStride, s.vertexSamples, s.sampleLimit));
+            }
             lines.push(
                 s.max
                     ? `Max ${fmt(s.max.degrees, 2)}° at x ${fmt(s.max.x)}, z ${fmt(s.max.z)}; ` +
@@ -1325,8 +1479,19 @@ function renderReport(m, sections = new Set(SECTIONS)) {
     }
 
     if (m.warnings.length) {
-        lines.push('', `## Warnings (${m.warnings.length})`);
-        for (const w of m.warnings) lines.push(`- ${w}`);
+        // Real problems from BOTH sources, split by WHERE the defect is (the binary vs. the scene
+        // next to it) — the cap and the elision span the union, which build/edit_terrain's do not.
+        const fromFile = m.warningsFromFile;
+        const fromTool = m.warnings.length - fromFile;
+        const split = fromFile && fromTool
+            ? `${fromFile} in the file, ${fromTool} from this tool's cross-file checks`
+            : (fromTool ? 'all from this tool\'s cross-file checks' : 'all in the file');
+        lines.push('', `## Warnings (${m.warnings.length} — ${split})`);
+        // Every family is already one line; the cap is on the RENDER and the elision a
+        // continuation line, so nobody has to subtract it back out of the header.
+        for (const w of m.warnings.slice(0, TERRAIN_MAX_WARNINGS)) lines.push(`- ${w}`);
+        const elided = m.warnings.length - TERRAIN_MAX_WARNINGS;
+        if (elided > 0) lines.push(terrainWarningElision(elided, m.warnings.length, 'warning'));
     }
 
     if (sections.has('notes')) {

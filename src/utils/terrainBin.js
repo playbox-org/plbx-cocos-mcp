@@ -120,6 +120,40 @@ export const TERRAIN_MAX_BLOCKS = 4096;
  */
 export const TERRAIN_MAX_WEIGHT_TEXELS = 4096 * 4096;
 
+/**
+ * Output guard on the RENDERED warning list ({@link renderTerrainWarnings}); the card's own
+ * `warnings`/`warningEntries` data is bounded on both of ITS axes instead — one entry per
+ * distinct check, {@link TERRAIN_MAX_WARNING_SUBJECTS} occurrences retained per entry. Past
+ * eight lines the file is broken wholesale and the tail is noise a caller does not act on (it
+ * comes back after the first eight are fixed).
+ */
+export const TERRAIN_MAX_WARNINGS = 8;
+
+/**
+ * Retention cap on ONE card entry's `subjects` — the per-occurrence DATA, which the entry count
+ * does not bound: a 32x32-block terrain with a hole in every block is 2 entries and 2050
+ * occurrences, 410 KB of `get_asset_info format:"json"` against 1.5 KB of text (1.6 MB at 4096
+ * blocks). `count` stays EXACT, so every rendered number is the true one; what the cap costs is
+ * addressability past the sixteenth occurrence, which only a per-subject `drop`/`reword` uses —
+ * and that re-words the handful a batch just created ({@link renderTerrainWarnings}).
+ */
+export const TERRAIN_MAX_WARNING_SUBJECTS = 16;
+
+/**
+ * THE elision spelling for every terrain warning path — an aggregated family (`noun` =
+ * "occurrence") and a capped list (`noun` = "warning") read the same way. Never an array
+ * element and never a bullet: it is a continuation line, so a printed count stays the count
+ * of real problems. `total` is what the CALLER's header says, so a consumer folding in
+ * warnings of its own passes its own total, not the card's.
+ * @param {number} more - How many are not shown
+ * @param {number} total - How many there are in all
+ * @param {string} noun - Singular noun; an `s` is appended unless `more` is 1
+ * @returns {string}
+ */
+export function terrainWarningElision(more, total, noun) {
+    return `… and ${more} more ${noun}${more === 1 ? '' : 's'} (${total} total)`;
+}
+
 const KNOWN_VERSIONS = new Set([
     TERRAIN_DATA_VERSION,
     TERRAIN_DATA_VERSION2,
@@ -1114,12 +1148,17 @@ export function weightTexelAt(data, x, z) {
  * @param {number} z - Local Z in metres
  * @returns {object|null} `{weights: [r,g,b,a], layers: [4 palette slots], dominantLayer,
  *   dominantWeight, texel: [i,j] (global), block: [bx,by], blockIgnoresWeights}`, or null
- *   when out of range. `layers`/`dominantLayer` are palette indices — see the module header.
+ *   when out of range or when `weights`/`layerBuffer` do not match the declared geometry (the
+ *   engine resets such buffers on load — same refusal as {@link weightUsage}, and it keeps
+ *   `undefined` out of the documented `number[]` slots).
+ *   `layers`/`dominantLayer` are palette indices — see the module header.
  */
 export function weightAt(data, x, z) {
     const [uWC, vWC] = weightMapDims(data);
     if (uWC <= 0 || vWC <= 0) return null;
     if (!data.weights || data.weights.length !== uWC * vWC * 4) return null;
+    const expected = expectedCounts(data.blockCount, data.weightMapSize);
+    if ((data.layerBuffer?.length ?? 0) !== expected.layerBuffer) return null;
 
     const at = weightTexelAt(data, x, z);
     if (!at) return null;
@@ -1509,12 +1548,14 @@ function isSentinelFlagged(data) {
 /**
  * Does the payload actually carry nothing, i.e. is the sentinel flag telling the truth?
  * The sentinel encodes "header only, all class defaults" (terrain-asset.ts:264-276): no
- * heights, no weights, no layers, and a layerBuffer that is empty or all `-1`.
+ * heights, no normals, no weights, no layers, and a layerBuffer that is empty or all `-1`.
  * @param {object} data
  * @returns {boolean}
  */
 function isEmptyPayload(data) {
     if ((data.heights?.length ?? 0) !== 0) return false;
+    // normals count too: writeTerrain drops them by design, but never SILENTLY
+    if ((data.normals?.length ?? 0) !== 0) return false;
     if ((data.weights?.length ?? 0) !== 0) return false;
     if ((data.layers?.length ?? 0) !== 0) return false;
     const lb = data.layerBuffer ?? [];
@@ -1569,8 +1610,8 @@ export function defaultSentinel() {
  *
  * A sentinel data object (`isDefaultSentinel`, or `version` = the sentinel word) round-trips
  * to {@link defaultSentinel} — but only when its payload really is empty. A flag left over
- * on an object that carries heights/weights/layers is an ERROR, never a silent 2 KB empty
- * file: the editor's "Create → Terrain" ships the sentinel, so the first edit of a
+ * on an object that carries heights/normals/weights/layers is an ERROR, never a silent 2 KB
+ * empty file: the editor's "Create → Terrain" ships the sentinel, so the first edit of a
  * user-created terrain runs on a sentinel-flagged object and dropping its data would destroy
  * the asset. Call {@link materialize} to turn a sentinel into a writable terrain.
  *
@@ -1587,9 +1628,9 @@ export function writeTerrain(data) {
         throw new Error(
             'terrain: data is flagged as the empty default sentinel ' +
             `(isDefaultSentinel/version 0x${TERRAIN_DATA_VERSION_DEFAULT.toString(16)}) but carries ` +
-            `${data.heights?.length ?? 0} height(s), ${data.weights?.length ?? 0} weight byte(s) and ` +
-            `${data.layers?.length ?? 0} layer(s) — call materialize() before writing, ` +
-            'otherwise the payload would be dropped'
+            `${data.heights?.length ?? 0} height(s), ${data.normals?.length ?? 0} normal float(s), ` +
+            `${data.weights?.length ?? 0} weight byte(s) and ${data.layers?.length ?? 0} layer(s) — ` +
+            'call materialize() before writing, otherwise the payload would be dropped'
         );
     }
     validateTerrainData(data);
@@ -1800,8 +1841,8 @@ export function weightUsage(data) {
  *   weightMapTexels,
  *   heightCount, weightCount, normalCount, payloadLength, padding,
  *   heightMin, heightMax, heightMean, heightMinRaw, heightMaxRaw, isFlat,
- *   layers, blockLayers, layerUsage, blockUsage, warnings}`, or null when the file is not
- *   a terrain
+ *   layers, blockLayers, layerUsage, blockUsage, warnings, warningEntries}`, or null when the
+ *   file is not a terrain
  * @throws {Error} on unreadable files (fs errors) or structural corruption
  */
 export function readTerrainInfo(filePath) {
@@ -1816,6 +1857,304 @@ export function readTerrainInfo(filePath) {
 }
 
 /**
+ * THE wording of every repeating warning family, by kind: `keys` are the facts one occurrence
+ * needs, `text` renders them. Registered by kind rather than closed over the loop that found it,
+ * for two reasons: a memoized card must not retain the terrain data through a closure, and a
+ * consumer that filters a family (see {@link renderTerrainWarnings}) has to re-render the
+ * occurrences that are LEFT.
+ *
+ * Families a TOOL detects live here too (`unresolvedTexture` needs an AssetIndex this module
+ * cannot see): the finding is about the BINARY, and three tools spelling it three ways is what
+ * the caller then has to recognize as one problem — so the consumer supplies the resolved facts
+ * through {@link TerrainWarnings} and gets the message plus the aggregation from here.
+ */
+const WARNING_RENDERERS = {
+    __proto__: null, // consumer-supplied key (TerrainWarnings kind): no Object.prototype hits
+    layerSlotIndex: {
+        keys: ['index', 'slot'],
+        text: (s) =>
+            `layers[${s.index}].slot is ${s.slot}, not the array index ${s.index} — the engine always ` +
+            'writes the array index here, so this file was not produced by Cocos Creator; ' +
+            'layerBuffer palette indices cannot be matched to layer records reliably',
+    },
+    nonAsciiDetailMapId: {
+        keys: ['index'],
+        text: (s) => `layers[${s.index}].detailMapId contains non-ASCII characters (unreadable id)`,
+    },
+    nonAsciiNormalMapId: {
+        keys: ['index'],
+        text: (s) => `layers[${s.index}].normalMapId contains non-ASCII characters (unreadable id)`,
+    },
+    noDetailMap: {
+        keys: ['index'],
+        text: (s) => `layers[${s.index}] has no detailMapId — the editor drops such layers on re-save`,
+    },
+    emptyChannel: {
+        keys: ['block', 'channel', 'usedChannel'],
+        text: (s) =>
+            `block [${s.block[0]},${s.block[1]}] has an empty channel ${s.channel} below used channel ` +
+            `${s.usedChannel} — the engine samples it as a null layer; keep block slots left-packed`,
+    },
+    unbackedSlot: {
+        keys: ['slot'],
+        text: (s) => `layerBuffer references palette slot ${s.slot}, which has no layer record`,
+    },
+    unusedLayer: {
+        keys: ['slot'],
+        text: (s) => `layer slot ${s.slot} is defined but no block uses it`,
+    },
+    zeroCoverage: {
+        keys: ['slot', 'blocks', 'sampledBlocks'],
+        text: (s) =>
+            `layer slot ${s.slot} is assigned to ${s.blocks} block(s) but has zero ` +
+            `weight coverage — it never shows up (${s.sampledBlocks} of those block(s) blend more ` +
+            'than one layer, so their weight map IS sampled and this layer contributes nothing there)',
+    },
+    unresolvedTexture: {
+        keys: ['slot', 'field', 'id'],
+        // One spelling includes the field names: the binary's own, minus the Id suffix
+        enums: { field: ['detailMap', 'normalMap'] },
+        text: (s) =>
+            `layer slot ${s.slot}: ${s.field} ${s.id} does not resolve to a project asset ` +
+            '(deleted texture, wrong sub-asset id, or a missing .meta) — the layer draws the ' +
+            'effect fallback there; re-assign it with edit_terrain set_layer',
+    },
+};
+
+/** The registered family, refusing an unknown kind or a subject missing a fact its text needs */
+function familySpec(kind, subject) {
+    const spec = WARNING_RENDERERS[kind];
+    if (!spec) {
+        throw new Error(
+            `terrain warnings: no registered wording for family "${kind}" — ` +
+            'add it to WARNING_RENDERERS in terrainBin.js, so one finding has one spelling'
+        );
+    }
+    if (!subject || typeof subject !== 'object') {
+        throw new Error(`terrain warnings: ${kind} needs a subject object {${spec.keys.join(', ')}}`);
+    }
+    for (const key of spec.keys) {
+        if (!Object.hasOwn(subject, key)) {
+            throw new Error(`terrain warnings: ${kind} subject needs {${spec.keys.join(', ')}}, missing "${key}"`);
+        }
+    }
+    if (spec.enums) {
+        for (const [key, allowed] of Object.entries(spec.enums)) {
+            if (!allowed.includes(subject[key])) {
+                throw new Error(
+                    `terrain warnings: ${kind} subject ${key} must be ${allowed.join(' or ')}, ` +
+                    `got ${JSON.stringify(subject[key])}`
+                );
+            }
+        }
+    }
+    return spec;
+}
+
+/**
+ * The message of ONE occurrence of a registered family — for a consumer that reports per
+ * occurrence (lint_assets: one line per file) instead of per aggregated family.
+ * @param {string} kind - A {@link WARNING_RENDERERS} family
+ * @param {object} subject - The facts that family's wording needs
+ * @returns {string}
+ */
+export function terrainWarningText(kind, subject) {
+    return familySpec(kind, subject).text(subject);
+}
+
+/**
+ * Aggregate line of one entry over the subjects that are LEFT — head + the elision. A family's
+ * head is re-rendered from a surviving subject, so no count and no named slot/block is a leftover
+ * of a filtered-out occurrence; an aggregate is a family by definition, so an unregistered kind
+ * throws instead of eliding a `text` that already reads as an aggregate ({@link familySpec}).
+ * `count` is what the elision states — the occurrences left, retained or not.
+ */
+function entryText(entry, subjects = entry.subjects, count = subjects.length) {
+    const aggregate = count > 1;
+    const head = aggregate || WARNING_RENDERERS[entry.kind]
+        ? familySpec(entry.kind, subjects[0]).text(subjects[0])
+        : entry.text;
+    return aggregate
+        ? `${head} ${terrainWarningElision(count - 1, count, 'occurrence')}`
+        : head;
+}
+
+/**
+ * Every entry {@link cardEntries} minted, so {@link renderTerrainWarnings} can tell a card's
+ * entries from a hand-built lookalike — the check that makes {@link TerrainWarnings} the only
+ * wording, on the data channel as well as on `own`.
+ */
+const CARD_ENTRIES = new WeakSet();
+
+/**
+ * Card view of live entries: exact `count`, the aggregate text of ALL occurrences, and only the
+ * first {@link TERRAIN_MAX_WARNING_SUBJECTS} subjects — one survivor is what a re-render needs.
+ */
+function cardEntries(entries) {
+    return entries.map((e) => {
+        const entry = {
+            kind: e.kind,
+            count: e.subjects.length,
+            subjects: e.subjects.slice(0, TERRAIN_MAX_WARNING_SUBJECTS),
+            // DERIVED, and re-derived on every render: the aggregate of all occurrences
+            text: entryText(e),
+        };
+        CARD_ENTRIES.add(entry);
+        return entry;
+    });
+}
+
+/** A card's entries, refusing any that {@link cardEntries} did not mint */
+function cardWarningEntries(info) {
+    const entries = info?.warningEntries ?? [];
+    for (const entry of entries) {
+        if (!CARD_ENTRIES.has(entry)) {
+            throw new Error(
+                'terrain warnings: info.warningEntries must come through TerrainWarnings — ' +
+                'terrainInfoFromData/readTerrainInfo build a card, withTerrainWarnings folds a ' +
+                "consumer's own findings into one; a hand-built entry escapes both the registered " +
+                'wording and the subject cap'
+            );
+        }
+    }
+    return entries;
+}
+
+/**
+ * A card with a consumer's OWN findings folded into both warning views — the supported way to put
+ * a finding whose defect is IN the file but whose detection needs project context on the card
+ * (`unresolvedTexture`: a dangling texture id in the binary, only an AssetIndex can see it is
+ * dangling). Returns a new card; `info` is untouched.
+ * @param {object} info - Card from {@link readTerrainInfo}/{@link terrainInfoFromData}
+ * @param {TerrainWarnings} own - The consumer's findings, in the registered wording
+ * @returns {object} `{...info, warnings, warningEntries}` — the card's entries first
+ */
+export function withTerrainWarnings(info, own) {
+    if (!(own instanceof TerrainWarnings)) {
+        throw new Error('terrain warnings: `own` must be a TerrainWarnings instance');
+    }
+    const entries = [...cardWarningEntries(info), ...cardEntries(own.entries)];
+    return { ...info, warnings: entries.map((e) => e.text), warningEntries: entries };
+}
+
+/**
+ * Warning collector for {@link terrainInfoFromData}, and the ONLY way to add warnings to a card —
+ * as `own` of {@link renderTerrainWarnings} for a report, of {@link withTerrainWarnings} for the
+ * card's own data, both of which refuse anything else — so every entry obeys one convention: a
+ * repeating family is `kind` + one subject per occurrence and its prose comes from
+ * {@link WARNING_RENDERERS}; a one-off carries its own literal text and can never be aggregated.
+ *
+ * A family (one per block, per layer record, per palette slot) collapses to ONE entry — before
+ * this, 4096 blocks meant 4096 warnings in every query_terrain/edit_terrain report — while its
+ * occurrences stay on the entry as DATA, because "which slot/block" is exactly what a consumer
+ * re-words by (capped on the card, see {@link TERRAIN_MAX_WARNING_SUBJECTS}). A subject is a few
+ * numbers, the same per-block order `blockLayers` already carries.
+ */
+export class TerrainWarnings {
+    #entries = [];
+    #families = new Map();
+
+    /**
+     * A warning that can only occur once, with its own message (counts, sizes — nothing a
+     * registered family could spell).
+     * @param {string} kind - Consumer-facing tag, NOT a {@link WARNING_RENDERERS} family
+     * @param {string} text - Its only message
+     */
+    push(kind, text) {
+        if (WARNING_RENDERERS[kind]) {
+            throw new Error(`terrain warnings: "${kind}" is a registered family — use family()`);
+        }
+        this.#entries.push({ kind, subjects: [{}], text });
+    }
+
+    /**
+     * One occurrence of a repeating family; its message comes from {@link WARNING_RENDERERS}.
+     * @param {string} kind - A registered family, which is also the consumer-facing tag
+     * @param {object} subject - What this occurrence is about (`{slot}`, `{block, channel}`, …)
+     */
+    family(kind, subject) {
+        familySpec(kind, subject);
+        const seen = this.#families.get(kind);
+        if (seen) {
+            seen.subjects.push(subject);
+            return;
+        }
+        const entry = { kind, subjects: [subject], text: null };
+        this.#families.set(kind, entry);
+        this.#entries.push(entry);
+    }
+
+    /** Entries as {@link renderTerrainWarnings} reads them — live, not a copy */
+    get entries() {
+        return this.#entries;
+    }
+
+    /** @returns {{warnings: string[], entries: object[]}} card fields — plain, JSON-safe data */
+    result() {
+        const entries = cardEntries(this.#entries);
+        return { warnings: entries.map((e) => e.text), entries };
+    }
+}
+
+/**
+ * Render a card's warnings for a report: fold in findings of your OWN, DROP or RE-WORD individual
+ * occurrences, then get truthful counts back. build_terrain drops the `unusedLayer` family its own
+ * note already states, edit_terrain re-words the slots THIS batch appended, query_terrain and
+ * get_asset_info add the layer findings only a tool with an AssetIndex can make — all of which
+ * used to match the prose with a regex, or hand-build an entry, neither of which can tell an
+ * aggregate from its first occurrence.
+ *
+ * `drop`/`reword` see the occurrences the card RETAINED ({@link TERRAIN_MAX_WARNING_SUBJECTS});
+ * the elided ones stay counted in the family's aggregate — and when a predicate removes every
+ * retained occurrence they get a counted line of their own, naming none of them. A `drop`
+ * declaring no `subject` parameter is the other intent, a drop by KIND, and takes the family whole.
+ *
+ * @param {object|null} info - Card from {@link readTerrainInfo}/{@link terrainInfoFromData}
+ * @param {{own?: TerrainWarnings, drop?: (entry: object, subject: object) => boolean,
+ *   reword?: (entry: object, subject: object) => string|null|undefined, limit?: number}} [opts]
+ *   `own` renders after the card's own entries; it must be a {@link TerrainWarnings} instance,
+ *   which — with the same check on `info`'s entries — keeps the registered wording the only wording
+ * @returns {{lines: string[], total: number, elided: number}} `lines` is capped at `limit`
+ *   ({@link TERRAIN_MAX_WARNINGS}); `total` counts real problems, `elided` the ones not in
+ *   `lines` — render those with {@link terrainWarningElision}, never as a line of their own here
+ */
+export function renderTerrainWarnings(info, opts = {}) {
+    const limit = opts.limit ?? TERRAIN_MAX_WARNINGS;
+    if (opts.own !== undefined && !(opts.own instanceof TerrainWarnings)) {
+        throw new Error('terrain warnings: `own` must be a TerrainWarnings instance');
+    }
+    const lines = [];
+    // A `drop` that declares no `subject` cannot be deciding per occurrence: that signature IS the
+    // "drop this family by KIND" intent, the one that takes the unretained occurrences with it.
+    const dropsByKind = opts.drop !== undefined && opts.drop.length < 2;
+    for (const entry of [...cardWarningEntries(info), ...(opts.own?.entries ?? [])]) {
+        const kept = [];
+        let dropped = 0;
+        for (const subject of entry.subjects) {
+            if (opts.drop?.(entry, subject)) { dropped++; continue; }
+            const reworded = opts.reword?.(entry, subject);
+            if (reworded) lines.push(reworded);
+            else kept.push(subject);
+        }
+        // Occurrences the card did not retain were never offered to drop/reword, so they are
+        // still there — counted in the aggregate, one of the retained ones heading it.
+        const elidedSubjects = (entry.count ?? entry.subjects.length) - entry.subjects.length;
+        if (kept.length) {
+            lines.push(entryText(entry, kept, kept.length + elidedSubjects));
+        } else if (elidedSubjects && !(dropsByKind && dropped === entry.subjects.length)) {
+            // Every retained occurrence went, per occurrence — the rest are real problems still,
+            // so they get their own counted line, with no facts to name them by.
+            lines.push(
+                `${elidedSubjects} more "${entry.kind}" occurrence${elidedSubjects === 1 ? '' : 's'} ` +
+                `past the ${TERRAIN_MAX_WARNING_SUBJECTS} a card retains — unnamed here, since only ` +
+                'the retained ones carry facts; query_terrain reports the family with its exact count'
+            );
+        }
+    }
+    return { lines: lines.slice(0, limit), total: lines.length, elided: Math.max(0, lines.length - limit) };
+}
+
+/**
  * The same card as {@link readTerrainInfo}, computed from an IN-MEMORY data object — what an
  * editing tool needs to describe the result of a `dryRun` (nothing on disk to re-read) and
  * the single implementation both paths share.
@@ -1823,13 +2162,27 @@ export function readTerrainInfo(filePath) {
  * `fileSize`/`payloadLength` default to what {@link writeTerrain} would produce, so a card
  * built from edited data reports the file the write WOULD create.
  *
+ * `warnings` aggregates every repeating family to one line and `warningEntries` carries the same
+ * list as data — see {@link TerrainWarnings}, and {@link renderTerrainWarnings} for a report.
+ *
  * @param {object} data - Terrain data object (e.g. from {@link readTerrain})
  * @param {{filePath?: string|null, fileSize?: number|null, payloadLength?: number|null,
  *   blockUsage?: boolean}} [opts] - `blockUsage` keeps {@link weightUsage}'s per-block rows
  *   on the card instead of only their per-slot sum
  * @returns {object} same shape as {@link readTerrainInfo}
+ * @throws {Error} when `data` is not a full terrain data object (a missing payload array)
  */
 export function terrainInfoFromData(data, opts = {}) {
+    if (!data || typeof data !== 'object') throw new Error('terrain: data must be an object');
+    // Descriptive over the bare TypeError the field accesses below would throw
+    for (const key of ['heights', 'normals', 'weights', 'layerBuffer', 'layers']) {
+        if (!data[key] || typeof data[key].length !== 'number') {
+            throw new Error(
+                `terrain: data.${key} is missing — a card needs a full data object ` +
+                '(readTerrain output, or materialize() for a sentinel)'
+            );
+        }
+    }
     const payloadLen = opts.payloadLength ?? payloadLength(data);
     const fileSize = opts.fileSize ?? padToCapacity(payloadLen);
     const filePath = opts.filePath ?? null;
@@ -1839,44 +2192,44 @@ export function terrainInfoFromData(data, opts = {}) {
     const [uWC, vWC] = weightMapDims(data);
     const expected = expectedCounts(data.blockCount, data.weightMapSize);
     const stats = heightStats(data);
-    const warnings = [];
+    const warnings = new TerrainWarnings();
 
     // Structural consistency — warnings, not errors: the file parsed fine, the engine
     // would simply re-materialize the mis-sized buffers on load (terrain.ts:2481-2526).
     if (!data.isDefaultSentinel) {
         if (data.heights.length !== expected.heights) {
-            warnings.push(
+            warnings.push('heightsCount',
                 `heights count ${data.heights.length} != ${expected.heights} expected for ` +
                 `blockCount [${bc0},${bc1}] — the engine would discard them and rebuild a flat grid`
             );
         }
         if (data.weights.length !== expected.weights) {
-            warnings.push(
+            warnings.push('weightsCount',
                 `weights count ${data.weights.length} != ${expected.weights} expected for ` +
                 `blockCount [${bc0},${bc1}] / weightMapSize ${data.weightMapSize} — ` +
                 'the engine would reset the weight map'
             );
         }
         if (data.layerBuffer.length !== expected.layerBuffer) {
-            warnings.push(
+            warnings.push('layerBufferCount',
                 `layerBuffer count ${data.layerBuffer.length} != ${expected.layerBuffer} expected ` +
                 `for blockCount [${bc0},${bc1}] — the engine would clear all layer assignments`
             );
         }
         if (data.normals.length !== 0 && data.normals.length !== expected.normals) {
-            warnings.push(
+            warnings.push('normalsCount',
                 `normals count ${data.normals.length} is neither 0 nor ${expected.normals} — ` +
                 'the engine rebuilds them on load'
             );
         } else if (data.normals.length !== 0) {
-            warnings.push(
+            warnings.push('normalsPresent',
                 `normals count ${data.normals.length} is non-zero — the editor writes 0 and the ` +
                 'engine rebuilds them on load, so rewriting this file through the MCP drops them ' +
                 '(no visual change, but the file will not stay byte-identical)'
             );
         }
         if (!isTileSizeStable(data.rawTileSize)) {
-            warnings.push(
+            warnings.push('tileSizeSnap',
                 `tileSize is stored as ${data.rawTileSize} but the loader snaps it to ${data.tileSize} ` +
                 '(Math.floor(t * 100) / 100) — every size/coordinate here uses the snapped value'
             );
@@ -1890,19 +2243,17 @@ export function terrainInfoFromData(data, opts = {}) {
             // was written by something else, and its palette indices are then ambiguous —
             // layerBuffer indexes `_layerList` (the library JSON's `_layerInfos[].slot`),
             // which this module cannot see.
-            warnings.push(
-                `layers[${i}].slot is ${layer.slot}, not the array index ${i} — the engine always ` +
-                'writes the array index here, so this file was not produced by Cocos Creator; ' +
-                'layerBuffer palette indices cannot be matched to layer records reliably'
-            );
+            warnings.family('layerSlotIndex', { index: i, slot: layer.slot });
         }
         for (const key of ['detailMapId', 'normalMapId']) {
+            // Per-field families: a bad detailMapId and a bad normalMapId are two problems
             if (layer[key] && !isAscii(layer[key])) {
-                warnings.push(`layers[${i}].${key} contains non-ASCII characters (unreadable id)`);
+                warnings.family(key === 'detailMapId' ? 'nonAsciiDetailMapId' : 'nonAsciiNormalMapId',
+                    { index: i, field: key });
             }
         }
         if (!layer.detailMapId) {
-            warnings.push(`layers[${i}] has no detailMapId — the editor drops such layers on re-save`);
+            warnings.family('noDetailMap', { index: i });
         }
     });
 
@@ -1918,10 +2269,7 @@ export function terrainInfoFromData(data, opts = {}) {
                 const maxIdx = maxLayerIndex(slots);
                 for (let k = 0; k < maxIdx; k++) {
                     if (slots[k] < 0) {
-                        warnings.push(
-                            `block [${bx},${by}] has an empty channel ${k} below used channel ${maxIdx} — ` +
-                            'the engine samples it as a null layer; keep block slots left-packed'
-                        );
+                        warnings.family('emptyChannel', { block: [bx, by], channel: k, usedChannel: maxIdx });
                     }
                 }
             }
@@ -1930,12 +2278,12 @@ export function terrainInfoFromData(data, opts = {}) {
 
     for (const slot of [...usedSlots].sort((a, b) => a - b)) {
         if (!data.layers.some((l) => l.slot === slot)) {
-            warnings.push(`layerBuffer references palette slot ${slot}, which has no layer record`);
+            warnings.family('unbackedSlot', { slot });
         }
     }
     data.layers.forEach((layer) => {
         if (!usedSlots.has(layer.slot)) {
-            warnings.push(`layer slot ${layer.slot} is defined but no block uses it`);
+            warnings.family('unusedLayer', { slot: layer.slot });
         }
     });
 
@@ -1954,12 +2302,9 @@ export function terrainInfoFromData(data, opts = {}) {
             return maxLayerIndex(blockLayers(data, bx, by)) !== 0;
         });
         if (sampled.length === 0) continue;
-        warnings.push(
-            `layer slot ${u.slot} is assigned to ${u.blocks.length} block(s) but has zero ` +
-            `weight coverage — it never shows up (${sampled.length} of those block(s) blend more ` +
-            'than one layer, so their weight map IS sampled and this layer contributes nothing there)'
-        );
+        warnings.family('zeroCoverage', { slot: u.slot, blocks: u.blocks.length, sampledBlocks: sampled.length });
     }
+    const rendered = warnings.result();
 
     return {
         filePath,
@@ -1992,6 +2337,10 @@ export function terrainInfoFromData(data, opts = {}) {
         // Opt-in: the rows exist either way (layerUsage is their sum), but a caller that
         // does not print a block table should not retain bc0*bc1 of them in a cached card.
         blockUsage: opts.blockUsage ? usage.blocks : null,
-        warnings,
+        // Two views of ONE list: the strings most consumers just spread, and the same entries as
+        // data (`{kind, count, subjects, text}`) for one that filters or re-words per occurrence.
+        // `count` is exact, `subjects` retains TERRAIN_MAX_WARNING_SUBJECTS of them.
+        warnings: rendered.warnings,
+        warningEntries: rendered.entries,
     };
 }

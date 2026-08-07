@@ -21,10 +21,13 @@ import { terrainCard } from './terrainCard.js';
 import {
     readTerrain,
     readTerrainInfo,
+    renderTerrainWarnings,
     terrainInfoFromData,
+    terrainWarningElision,
     validateTerrainData,
     writeTerrain,
     payloadLength,
+    TERRAIN_MAX_WARNINGS,
     TERRAIN_HEIGHT_FMIN,
     TERRAIN_HEIGHT_FMAX,
 } from '../utils/terrainBin.js';
@@ -36,8 +39,8 @@ const OPS_DOC = `Operations (applied in order, all-or-nothing — nothing is wri
 - set_heights {region?, value?} | {region?, rows?} | {region?, heightmap?} (+ falloff?, profile?, clamp?) — flatten to "value" metres, set from inline "rows" (2D array of metres, rows[j][i], x fastest), or sample a heightmap: {source: "Art/hills.png"|"Art/hills.raw", min?: 0, max: 20, width?, height?, bitDepth?} (grayscale 8/16-bit .png or headerless 16-bit .raw; rows/images are resampled onto the region's vertex grid)
 - adjust_heights {region?, delta, falloff?, profile?, clamp?} — raise (+) or lower (-) by delta metres. With no falloff this is a flat-topped rectangle with vertical sides; falloff (metres) tapers the delta to 0 AT the region border, which is what makes a smooth hill/depression a single op
 - smooth_heights {region?, iterations?: 1, falloff?, profile?, clamp?} — 3x3 box blur. Vertices outside the region are read but never written (no crease at the border); outside the terrain the edge vertex is reused. The blur runs unmasked and the mask blends its result against the original, so falloff keeps its meaning
-- paint_layer {layer, region?, weight, falloff?, profile?} — write layer "layer" (a palette slot) at "weight" (0..1) over the region's weight texels, rescaling the other channels so each texel still sums to 255, and assigning the slot into each touched block's 4 blend slots automatically (error if all 4 are taken by other layers). weight 0 ERASES this layer at those texels (the other assigned channels take the full 255) — that is the local undo, NOT remove_layer, which deletes the palette entry everywhere and re-indexes the higher slots. Two warts, both reported: painting weight 0 into a block that did not assign the layer still assigns it (leaving a slot with zero coverage), and in a block where this is the ONLY assigned layer the requested weight is ignored and 255 stored — the engine draws such a block flat and ignores its weight map, so any other value would become a dark patch as soon as a second layer arrives
-- set_block_layers {block: [x,z]|"all", layers: [slots…]} — low-level: set which palette slots a block blends (block is a BLOCK index pair, 0-based, same order as blockCount — [x,z], the second component walks along Z; up to 4, order = weight channels R,G,B,A, -1 pads, must stay left-packed). No weight is PAINTED — paint_layer is what fills them in — but a channel losing its layer is zeroed and the block's remaining channels rescaled back to a sum of 255, so the block does not render darkened and no stale weight resurfaces if that channel gains a layer again
+- paint_layer {layer, region?, weight, falloff?, profile?} — write layer "layer" (a palette slot) at "weight" (0..1) over the region's weight texels, rescaling the other channels so each texel still sums to 255, and assigning the slot into each touched block's 4 blend slots automatically (error if all 4 are taken by other layers). The mask factor BLENDS the weight in exactly as the height ops blend a height: a texel ends at current + (weight*255 - current) * t, so the full weight lands where the factor is 1, nothing changes where it is 0, and two overlapping strokes JOIN instead of erasing each other along their falloff borders. weight 0 ERASES this layer where the factor is 1 (the other assigned channels take the full 255) — that is the local undo, NOT remove_layer, which deletes the palette entry everywhere and re-indexes the higher slots. Two warts, both reported: painting weight 0 into a block that did not assign the layer still assigns it (leaving a slot with zero coverage), and in a block where this is the ONLY assigned layer the requested weight is ignored and 255 stored — the engine draws such a block flat and ignores its weight map, so any other value would become a dark patch as soon as a second layer arrives
+- set_block_layers {block: [x,z]|"all", layers: [slots…]} — low-level: set which palette slots a block blends (block is a BLOCK index pair, 0-based, same order as blockCount — [x,z], the second component walks along Z; up to 4, order = weight channels R,G,B,A, -1 pads, must stay left-packed). No weight is PAINTED — paint_layer is what fills them in — but the stored weights FOLLOW their layer through the change: each channel takes the bytes of the layer now assigned to it, wherever that layer sat before ([0,1] -> [1,0] swaps the two layers' coverage instead of re-attributing it), and a channel whose layer the block did not carry starts at 0. Only then is the block renormalized back to a sum of 255 per texel, so it does not render darkened and no stale weight resurfaces if a channel gains a layer again
 
 region {x?: 0, z?: 0, width?, depth?, shape?} is LOCAL METRES; omitted entirely = the whole terrain, omitted width/depth = out to the far edge. Height vertices sit every tileSize metres and weight texels every blockSize/(weightMapSize-1) metres, so a region snaps to whichever of those it contains. Weight texels are per block (each block owns a full weightMapSize^2 grid whose first and last texel sit ON its edges), so a region ending exactly on a block seam also paints the neighbouring block's edge texels — and gets that layer assigned there.
 shape: "rect" (default) | "ellipse" | "band". A "band" follows an ISO-CONTOUR of the height field instead of a coordinate box — the shape a maintenance edit needs, because what it must meet is an existing edge (a waterline, a plateau rim, a cliff foot, a shoreline to paint sand along): region: {shape: "band", contour: <height m>, inner: -1, outer: 2} plus optional x/z/width/depth as a bounding box. inner/outer are SIGNED HORIZONTAL distances from the contour LINE — metres across the ground in the XZ plane, NOT heights — negative on the HIGH side and positive on the low side, so -1..2 means "from 1 m inside the high side to 2 m out on the low side". How much height a band spans therefore depends on the local slope: on a 1:20 beach 2 m of ground is 0.1 m of height, so size the band from the contour readout, not from a height difference. A band's falloff tapers across its THICKNESS only; the x/z/width/depth box is a hard clip and never a taper edge (it defaults to the whole terrain). query_terrain {contourAt: <height>} shows where that contour actually runs before you commit to it.
@@ -221,22 +224,42 @@ export class EditTerrain extends BaseTool {
 
         lines.push('', ...terrainCard(info, assetIndex));
 
-        // A slot this batch appended and left unassigned gets the actionable form of
-        // terrainBin's "defined but no block uses it" warning — derived from the FINAL state,
-        // so a later paint_layer in the same batch silences it.
+        // Batch-level notes get their own section: like the per-op ones they state what the tool
+        // DID to the file (materialized the sentinel, dropped stored normals) before the ops ran,
+        // and a count of problems must never include them.
+        if (notes.length) {
+            lines.push('', '## Notes');
+            notes.forEach((n) => lines.push(`- ${n}`));
+        }
+
+        // A slot this batch appended and left unassigned gets the actionable form of terrainBin's
+        // "defined but no block uses it" warning — per OCCURRENCE, so the slots the batch did not
+        // touch keep their own (truthfully counted) line, and from the FINAL state, so a later
+        // paint_layer in the same batch silences it. Collected through `drop` rather than `reword`
+        // so they land AFTER the file's own warnings: rendered in place, a batch appending 9+
+        // slots pushed every genuine warning past the cap — the section hiding its own subject.
         const appended = new Set(results.map((r) => r.appendedSlot).filter((s) => s !== null && s !== undefined));
-        const fileWarnings = (info?.warnings ?? []).map((w) => {
-            const m = /^layer slot (\d+) is defined but no block uses it/.exec(w);
-            return m && appended.has(Number(m[1]))
-                ? `palette slot ${m[1]} exists now but no block references it yet, so it cannot ` +
-                  'show up — assign it with paint_layer (which also fills in the weights) or ' +
-                  'set_block_layers'
-                : w;
+        const annotated = [];
+        const { lines: fileWarnings } = renderTerrainWarnings(info, {
+            limit: Infinity,
+            drop: (entry, subject) => {
+                if (entry.kind !== 'unusedLayer' || !appended.has(subject.slot)) return false;
+                annotated.push(
+                    `palette slot ${subject.slot} exists now but no block references it yet, so it ` +
+                    'cannot show up — assign it with paint_layer (which also fills in the weights) ' +
+                    'or set_block_layers'
+                );
+                return true;
+            }
         });
-        // `## Warnings` is reserved for batch-level (file preparation) and file-level items, the
-        // way apply_edits reserves it for validator output.
-        const warnings = [...notes, ...fileWarnings];
+        // `## Warnings` is reserved for real problems with the FILE, the way apply_edits reserves
+        // it for validator output. The cap applies to both kinds, the file's own first.
+        const problems = [...fileWarnings, ...annotated];
+        const elided = Math.max(0, problems.length - TERRAIN_MAX_WARNINGS);
+        const warnings = problems.slice(0, TERRAIN_MAX_WARNINGS);
+        let total = problems.length;
         if (!fs.existsSync(`${filePath}.meta`)) {
+            total += 1;
             warnings.push(
                 `${title} has no .meta, so it is not an addressable asset yet — no UUID, invisible to ` +
                 'the asset index and unreferencable from a cc.Terrain component. Generate one with ' +
@@ -244,9 +267,20 @@ export class EditTerrain extends BaseTool {
                 'on import). The edit itself was applied normally.'
             );
         }
-        if (warnings.length) {
-            lines.push('', `## Warnings (${warnings.length})`);
+        // The header counts real problems, elided ones included; the elision is a continuation
+        // line, never a bullet, so nobody has to subtract it back out. The meta warning is
+        // appended past the cap, so it is always printed and never counted as elided.
+        if (total) {
+            // Named composition, like query_terrain's header: a file family is ONE line however
+            // many slots it covers, while the hints above are one per appended slot.
+            const perSlot = annotated.length;
+            const fromFile = total - perSlot;
+            const split = fromFile && perSlot
+                ? `${fromFile} about the file, ${perSlot} for palette slots this batch appended`
+                : (perSlot ? 'all for palette slots this batch appended' : 'all about the file');
+            lines.push('', `## Warnings (${total} — ${split})`);
             warnings.forEach((w) => lines.push(`- ${w}`));
+            if (elided) lines.push(terrainWarningElision(elided, total, 'warning'));
         }
 
         // Only emitted when there is something specific to say. The two standing hazards (the

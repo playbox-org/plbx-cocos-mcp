@@ -54,6 +54,65 @@ describe('ListAssets tool', () => {
         assert.ok(text.includes(compressUuid('836478c3-ffde-4110-8347-cfda26288652')));
     });
 
+    // 2.0 moved the DEFAULT, not the shape: this was the pre-2.0 default output, and the
+    // assertion below is the one the default-shape change deleted, re-pointed at it.
+    it('still serves the pre-2.0 row shape for format:"flat", uuid:"full"', async () => {
+        const text = (await tool.execute({ format: 'flat', uuid: 'full' }, PROJECT)).content[0].text;
+        const total = Number(text.match(/# Assets \((\d+)\)/)[1]);
+        const rows = text.match(/^- .*$/gm) ?? [];
+        assert.strictEqual(rows.length, total, 'one row per asset');
+        const shape = /^- assets\/\S+ \[[\w-]+\] [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+        for (const row of rows) assert.match(row, shape);
+        assert.ok(text.includes('- assets/Prefabs/Gold.prefab [prefab] 836478c3-ffde-4110-8347-cfda26288652'));
+        assert.ok(!text.includes('uuid omitted'));
+    });
+
+    // The schema is published to the client, so a `default` it does not apply is a wrong answer
+    // nobody can check against the code: the uuid default is per FORMAT, and the description is
+    // the only place that can say so.
+    it('applies exactly the per-format uuid default its schema publishes', async () => {
+        const schema = tool.inputSchema.properties.uuid;
+        assert.ok(!('default' in schema), 'one default cannot be true for every format');
+
+        for (const format of ['grouped', 'flat', 'text']) {
+            const declared = schema.description.match(new RegExp(`${format}='(none|compressed|full)'`))?.[1];
+            assert.ok(declared, `the schema must state the default for format:"${format}"`);
+            const implicit = (await tool.execute({ format }, PROJECT)).content[0].text;
+            const spelledOut = (await tool.execute({ format, uuid: declared }, PROJECT)).content[0].text;
+            assert.strictEqual(implicit, spelledOut, `format:"${format}" ignores its declared default`);
+            // and the other two forms really do render differently, so the equality above bites
+            for (const other of ['none', 'compressed', 'full'].filter(v => v !== declared)) {
+                assert.notStrictEqual((await tool.execute({ format, uuid: other }, PROJECT)).content[0].text,
+                    implicit, `format:"${format}" uuid:"${other}" must differ from the default`);
+            }
+        }
+    });
+
+    // The per-format table is keyed by a caller-supplied value, so it carries `__proto__: null`
+    // like every other such table here; the enum is what keeps a prototype name from reaching it.
+    it('rejects an Object.prototype name as a format', async () => {
+        for (const format of ['constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__']) {
+            const result = await tool.run({ format }, PROJECT);
+            assert.ok(result.isError, format);
+            assert.match(result.content[0].text,
+                /parameter "format" must be one of .*"grouped"/);
+        }
+    });
+
+    // the 2.0 default, pinned: a caller passing no format gets grouped rows and no uuid
+    it('defaults to the grouped, uuid-less shape and states the omission', async () => {
+        const text = (await tool.execute({}, PROJECT)).content[0].text;
+        const total = Number(text.match(/# Assets \((\d+)\)/)[1]);
+        const rows = text.match(/^ {2}\S.*$/gm) ?? [];
+        assert.strictEqual(rows.length, total, 'one indented row per asset under a folder header');
+        assert.ok(rows.every(r => !r.includes('/')), 'a grouped row carries the leaf name, not the path');
+        assert.doesNotMatch(text, /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/);
+        assert.match(text, /^uuid omitted — /m);
+        // spelling the default out must be the same call
+        const explicit = await tool.execute({ format: 'grouped', uuid: 'none' }, PROJECT);
+        assert.strictEqual(explicit.content[0].text, text);
+    });
+
     it('should filter by type and folder', async () => {
         const result = await tool.execute({ type: 'model', folder: 'Models' }, PROJECT);
         const text = result.content[0].text;
