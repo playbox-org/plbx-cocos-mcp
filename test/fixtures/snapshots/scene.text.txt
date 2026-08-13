@@ -1,9 +1,9 @@
 # Scene: Main.scene_V2.scene
 
 ● Main.scene_V2 [P]
-  ● Main Light
+  ● Main Light rot(-121.8,8,30.1)
     ◆ DirectionalLight
-  ● Main Camera @(-8,12,8)
+  ● Main Camera @(-8,12,8) rot(-45,-45,0)
     ◆ Camera
     ◆ Script:b4347hmF {target=→Player offsetX=-18.5 offsetY=28 offsetZ=19.6}
     ◆ Script:14deb29W {camera=→Main Camera layoutController=→[SERVICES] _id=c3Fy4M7mlO6LP8sIK25LDZ}
@@ -318,7 +318,7 @@
         ◆ MeshRenderer
       ● SM_Gate_Wood-001
         ◆ MeshRenderer
-    ● RedZoneGate @(-12.3,0,-3)
+    ● RedZoneGate @(-12.3,0,-3) rot(0,90,0)
       ● SM_Gate_Wood
         ◆ MeshRenderer
       ● SM_Gate_Wood-001
@@ -362,7 +362,7 @@
         ● Plane
           ◆ MeshRenderer
       ● lightning [P→f874611c…]
-    ● SellingStationRed @(-5,0,11.8)
+    ● SellingStationRed @(-5,0,11.8) rot(0,-90,0)
       ◆ Script:8d141ySj {crystalIcon=<asset> crystalStack=→CrystallStack carActiveAnchor=→ActiveWaypoint carPool=→Cars}
       ◆ BoxCollider
       ● Table
@@ -385,7 +385,7 @@
             ◆ Sprite
       ● Waypoints
         [+15 hidden nodes, depth 1]
-    ● SellingStation @(1.2,0,11.8)
+    ● SellingStation @(1.2,0,11.8) rot(0,-90,0)
       ◆ Script:8d141ySj {crystalIcon=<asset> crystalStack=→CrystallStack carActiveAnchor=→ActiveWaypoint carPool=→Cars}
       ◆ BoxCollider
       ● Table
@@ -449,7 +449,7 @@
       ● SM_Button
         ◆ MeshRenderer
         [+2 hidden nodes, depth 2]
-    ● Conveyor @(11.5,0.1,10)
+    ● Conveyor @(11.5,0.1,10) rot(0,180,0)
       ◆ Script:ad425ISo {pathPoints=[×5] targetStorage=→CrystallStack beltMaterial=<asset> batchInterval=0.25}
       ● SM_Bort_3
         ◆ MeshRenderer
@@ -524,12 +524,12 @@
         ◆ MeshRenderer
     ● VFXs
     ● Cacti_V1
-    ● Cacti2 [P→bb73cd66…]
+    ● Cacti2 @(-9.2,0,16.1) [P→bb73cd66…]
     ● Cactis
       ● Cacti1 [P→b267cf03…]
       ● Cacti2 [P→b267cf03…]
       ● Cacti3 [P→b267cf03…]
-    ● Cacti3 [P→bb73cd66…]
+    ● Cacti3 @(8.5,0,13.6) rot(0,-39.3,0) [P→bb73cd66…]
   ● [UI] @(540,1184,0)
     ◆ UITransform
     ◆ Canvas
@@ -601,27 +601,27 @@
           ◆ UITransform
           ◆ Sprite
           ◆ Button
-  ● Dummies
-    ● BigCrystal
+  ● Dummies scale(0.01,0.01,0.01)
+    ● BigCrystal scale(0.01,0.01,0.01)
       ● Cristal_Anim [P→3405a2a2…]
-    ● BigRedCrystal @(-15.8,1.6,-6.1)
+    ● BigRedCrystal @(-15.8,1.6,-6.1) scale(0.01,0.01,0.01)
       ● Cristal_Anim
         ◆ SkeletalAnimation
         ● Armature
           ● Cristal
             ◆ SkinnedMeshRenderer
           [+7 hidden nodes, depth 2]
-    ● CrystalSmall @(-0.5,0,0)
+    ● CrystalSmall @(-0.5,0,0) scale(0.01,0.01,0.01)
       ● Cristal
         ◆ MeshRenderer
-    ● truba_FX
+    ● truba_FX scale(0.01,0.01,0.01)
       ● SM_Truba
         ◆ MeshRenderer
-    ● hit01
+    ● hit01 scale(0.001,0.001,0.001)
       ◆ ParticleSystem
       ○ light-001
         ◆ ParticleSystem
-    ● levelup
+    ● levelup scale(0.001,0.001,0.001) rot(90,0,0)
       ◆ ParticleSystem
       ● light
         ◆ ParticleSystem
@@ -637,7 +637,7 @@
         ◆ ParticleSystem
       ● line-002
         ◆ ParticleSystem
-    ● RockHit @(-167.6,103.5,0)
+    ● RockHit @(-167.6,103.5,0) scale(0.001,0.001,0.001)
       ◆ ParticleSystem
       ● Explosion
         ◆ ParticleSystem
@@ -645,7 +645,7 @@
         ◆ ParticleSystem
       ● smoke
         ◆ ParticleSystem
-    ● ZombieBuyer @(540,1184,0)
+    ● ZombieBuyer @(540,1184,0) scale(0.01,0.01,0.01)
       ● Zombie_1gr_colander
         ◆ SkeletalAnimation
         ● Zombie_1gr_colander

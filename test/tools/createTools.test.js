@@ -8,10 +8,11 @@ import assert from 'node:assert';
 import { createTools } from '../../src/tools/index.js';
 
 const EXPECTED_NAMES = [
-    'query_scene_graph', 'query_prefab_graph', 'query_animgraph', 'list_scene_scripts',
-    'find_scene_nodes', 'inspect_node',
+    'query_scene_graph', 'query_prefab_graph', 'query_animgraph', 'query_terrain',
+    'list_scene_scripts', 'find_scene_nodes', 'inspect_node',
     'get_project_info', 'get_asset_info', 'list_assets',
-    'apply_edits', 'validate_document', 'build_prefab', 'build_animgraph',
+    'apply_edits', 'validate_document', 'build_prefab', 'build_animgraph', 'build_terrain',
+    'edit_terrain',
     'get_node_bounds', 'compute_fit_scale', 'compute_rotation', 'find_asset_references', 'lint_assets',
     'create_asset_meta'
 ];

@@ -1,0 +1,2298 @@
+/**
+ * terrainOps — semantic edit operations over a `.terrain` binary
+ *
+ * The write-side counterpart of `src/document/operations.js` for terrain assets: a batch of
+ * named operations is applied to the IN-MEMORY data struct that `terrainBin.readTerrain`
+ * produced, all-or-nothing, and the caller (`EditTerrain`) validates and writes once at the
+ * end. Nothing here touches the filesystem, and nothing here knows the binary layout — all
+ * format knowledge lives in `src/utils/terrainBin.js`, all heightmap decoding in
+ * `src/utils/heightmap.js`, and layer-texture resolution is shared with `TerrainBuilder`.
+ *
+ * Coordinates are LOCAL METRES: `x` along the width, `z` along the depth, heights are Y in
+ * metres. A terrain is anchored at its node's origin (local X in `[0, width]`, Z in
+ * `[0, depth]`) and the terrain shader applies only the node's world POSITION — node rotation
+ * and scale are ignored. Heights quantize to 1/128 m and clamp to [-256, 255.9921875] m.
+ *
+ * Two conventions this module imposes that the ENGINE does not:
+ *
+ * 1. **Weight channels of a texel sum to 255.** The shader is a plain weighted sum with no
+ *    normalization (legacy `terrain.effect:158-172`), so a texel summing to less than 255
+ *    just renders darker. `paint_layer`/`remove_layer` therefore rescale the other channels
+ *    proportionally, and channels with no layer assigned (`layerBuffer` slot `-1`) are held
+ *    at 0 — their weight is meaningless and would only corrupt the sum.
+ * 2. **Block slots stay left-packed.** `TerrainBlock.getMaxLayer` (terrain.ts:857-869) derives
+ *    the sampled layer count from the HIGHEST non-empty channel, so a `-1` hole below it is
+ *    sampled as a null layer and renders as nothing.
+ *
+ * `set_info` is an exact port of `Terrain.rebuild` (terrain.ts:1569-1610 plus
+ * `_rebuildHeights`/`_rebuildLayerBuffer`/`_rebuildWeights` at :2541-2703), including the
+ * engine's own early-outs and its diagonal-split weight resampler — see `setInfo` below.
+ */
+
+import {
+    materialize,
+    validateTerrainGeometry,
+    validateTerrainCapacity,
+    expectedCounts,
+    heightToRaw,
+    rawToHeight,
+    vertexCounts,
+    vertexIndex,
+    terrainSize,
+    blockIndex,
+    blockLayers,
+    setBlockLayers,
+    maxLayerIndex,
+    removeLayer,
+    compactPalette,
+    weightTexelIndex,
+    weightMapDims,
+    texelPosition,
+    versionName,
+    TERRAIN_HEIGHT_BASE,
+    TERRAIN_HEIGHT_FMIN,
+    TERRAIN_HEIGHT_FMAX,
+    TERRAIN_HEIGHT_FACTOR,
+    TERRAIN_MAX_BLEND_LAYERS,
+    TERRAIN_MAX_LAYER_COUNT,
+    TERRAIN_BLOCK_TILE_COMPLEXITY,
+    TERRAIN_DATA_VERSION8,
+    TERRAIN_DATA_VERSION_DEFAULT,
+} from '../utils/terrainBin.js';
+import {
+    resolveTextureRef,
+    checkTileSize,
+    checkWeightMapSize,
+    checkLightMapSize,
+    TerrainBuildError,
+} from './TerrainBuilder.js';
+import { buildHeightGrid, HeightmapError } from '../utils/heightmap.js';
+import { ContourDistance, ContourError } from '../utils/terrainContour.js';
+
+/** Thrown by every op; `EditTerrain` turns it into "… Nothing was written." */
+export class TerrainOpError extends Error {
+    name = 'TerrainOpError';
+}
+
+/** Region shapes; `band` follows an ISO-CONTOUR of the height field instead of a coordinate box */
+const REGION_SHAPES = ['rect', 'ellipse', 'band'];
+
+/** Base keys of a `region` argument (local metres) */
+const REGION_KEYS = ['x', 'z', 'width', 'depth'];
+
+/** Extra keys of a `band` region: the contour it follows and its two signed offsets */
+const BAND_KEYS = ['contour', 'inner', 'outer'];
+
+/** How the falloff ramps from 0 at the region border to 1 `falloff` metres inside it */
+const PROFILES = ['linear', 'smooth', 'cosine'];
+
+/** Which direction a masked height write may move the ground */
+const CLAMPS = ['none', 'raise-only', 'lower-only'];
+
+/**
+ * Accepted keys per op. Unknown keys are REJECTED with the supported list: a silently
+ * ignored `radius`/`strength`/`blockCount` is the difference between "the edit did nothing"
+ * and a self-correcting error.
+ */
+const OP_KEYS = {
+    set_info: ['tileSize', 'blockCount', 'weightMapSize', 'lightMapSize'],
+    set_layer: ['slot', 'detailMap', 'normalMap', 'tileSize', 'roughness', 'metallic'],
+    remove_layer: ['slot'],
+    set_heights: ['region', 'value', 'rows', 'heightmap', 'falloff', 'profile', 'clamp'],
+    adjust_heights: ['region', 'delta', 'falloff', 'profile', 'clamp'],
+    smooth_heights: ['region', 'iterations', 'falloff', 'profile', 'clamp'],
+    paint_layer: ['layer', 'region', 'weight', 'falloff', 'profile'],
+    set_block_layers: ['block', 'layers'],
+};
+
+/** Iteration cap for `smooth_heights` — each pass is a full grid copy */
+const MAX_SMOOTH_ITERATIONS = 64;
+
+/** How far past the terrain's own vertex grid a `set_heights` source may be resampled */
+const MAX_ASKED_VERTEX_FACTOR = 4;
+
+/**
+ * Tolerance for "a vertex/texel sits exactly on the region border". Region bounds come from
+ * an LLM as round metre values while vertex positions are `i * tileSize` products, so an
+ * exact `<=` would drop the far edge of `{x: 0, width: 10}` on a `tileSize: 0.1` terrain.
+ */
+const EPS = 1e-6;
+
+// --- small helpers ----------------------------------------------------------
+
+function show(v) {
+    if (typeof v === 'number') return String(v);
+    return JSON.stringify(v) ?? String(v);
+}
+
+/** Compact metre formatting: no trailing zeros */
+function fmt(v, digits = 3) {
+    if (v === null || v === undefined || Number.isNaN(v)) return 'n/a';
+    return String(Number(v.toFixed(digits)));
+}
+
+function plural(n, word, many = `${word}s`) {
+    return `${n} ${n === 1 ? word : many}`;
+}
+
+function requireFinite(op, field) {
+    const v = op[field];
+    if (typeof v !== 'number' || !Number.isFinite(v)) {
+        throw new TerrainOpError(`"${field}" (a finite number) is required, got ${show(v)}`);
+    }
+    return v;
+}
+
+function requireNumberIn(op, field, min, max, unit = '') {
+    const v = requireFinite(op, field);
+    if (v < min || v > max) {
+        throw new TerrainOpError(`"${field}" must be in ${min}..${max}${unit}, got ${show(v)}`);
+    }
+    return v;
+}
+
+function requireIntIn(op, field, min, max, tail = '') {
+    const v = op[field];
+    if (!Number.isInteger(v) || v < min || v > max) {
+        throw new TerrainOpError(
+            `"${field}" must be an integer in ${min}..${max}, got ${show(v)}${tail}`
+        );
+    }
+    return v;
+}
+
+/** Run a `TerrainBuilder` helper and re-badge its error as an op error */
+function shared(fn) {
+    try {
+        return fn();
+    } catch (err) {
+        if (err instanceof TerrainBuildError) throw new TerrainOpError(err.message);
+        throw err;
+    }
+}
+
+function checkHeightRange(metres, what) {
+    if (metres < TERRAIN_HEIGHT_FMIN || metres > TERRAIN_HEIGHT_FMAX) {
+        throw new TerrainOpError(
+            `${what} = ${metres} m is outside the representable height range ` +
+            `[${TERRAIN_HEIGHT_FMIN}, ${TERRAIN_HEIGHT_FMAX}] m`
+        );
+    }
+}
+
+function validateOpKeys(op) {
+    const allowed = OP_KEYS[op.op];
+    for (const key of Object.keys(op)) {
+        if (key === 'op' || allowed.includes(key)) continue;
+        throw new TerrainOpError(
+            `unknown key "${key}" — ${op.op} takes ${allowed.join(', ')}`
+            // `shape` belongs to the region, not the op — the near-miss worth naming
+            + (key === 'shape'
+                ? '. shape is a REGION key: region: {x, z, width, depth, shape: '
+                  + `${REGION_SHAPES.map((s) => `"${s}"`).join('|')}}`
+                : '')
+        );
+    }
+}
+
+/** One of a fixed set of strings, with the list in the error */
+function parseEnum(op, field, values, fallback) {
+    if (op[field] === undefined) return fallback;
+    if (!values.includes(op[field])) {
+        throw new TerrainOpError(
+            `"${field}" must be ${values.map((v) => `"${v}"`).join(' / ')}, got ${show(op[field])}`
+        );
+    }
+    return op[field];
+}
+
+// --- regions ----------------------------------------------------------------
+
+/**
+ * Parse a `region` argument into local metres, defaulting to the whole terrain.
+ *
+ * An omitted `width`/`depth` means "from `x`/`z` to the far edge" (the same rule
+ * `query_terrain`'s `exportHeights` uses), never "the whole terrain shifted by x/z".
+ *
+ * For `shape: "band"` the rectangle is only a BOUNDING BOX: the band is `contour ± inner/outer`
+ * intersected with it.
+ *
+ * @param {object} op
+ * @param {object} data - Terrain data object
+ * @returns {{x: number, z: number, width: number, depth: number, shape: string, whole: boolean,
+ *   contour?: number, inner?: number, outer?: number}}
+ */
+function parseRegion(op, data) {
+    const [sw, sh] = terrainSize(data);
+    const raw = op.region;
+    if (raw === undefined || raw === null) {
+        return { x: 0, z: 0, width: sw, depth: sh, shape: 'rect', whole: true };
+    }
+    const keys = [...REGION_KEYS, 'shape', ...BAND_KEYS];
+    if (typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new TerrainOpError(
+            `region must be an object {${keys.join(', ')}} in local metres, got ${show(raw)}`
+        );
+    }
+    for (const key of Object.keys(raw)) {
+        if (!keys.includes(key)) {
+            throw new TerrainOpError(
+                `region: unknown key "${key}" — valid keys are ${keys.join(', ')} ` +
+                '(local metres; x/z default to 0, width/depth to the far edge; ' +
+                'contour/inner/outer belong to shape: "band")'
+            );
+        }
+    }
+    const r = { x: 0, z: 0, shape: 'rect' };
+    for (const key of ['x', 'z']) {
+        if (raw[key] === undefined) continue;
+        if (typeof raw[key] !== 'number' || !Number.isFinite(raw[key])) {
+            throw new TerrainOpError(`region.${key} must be a finite number of metres, got ${show(raw[key])}`);
+        }
+        r[key] = raw[key];
+    }
+    r.width = raw.width ?? Math.max(0, sw - r.x);
+    r.depth = raw.depth ?? Math.max(0, sh - r.z);
+    for (const key of ['width', 'depth']) {
+        if (typeof r[key] !== 'number' || !Number.isFinite(r[key]) || r[key] <= 0) {
+            throw new TerrainOpError(
+                `region.${key} must be a number > 0 metres, got ${show(r[key])}` +
+                (raw[key] === undefined
+                    ? ` (it defaults to the distance from ${key === 'width' ? 'x' : 'z'} to the far ` +
+                      `edge, and the terrain is ${fmt(key === 'width' ? sw : sh)} m on that axis)`
+                    : '')
+            );
+        }
+    }
+    if (raw.shape !== undefined) {
+        if (!REGION_SHAPES.includes(raw.shape)) {
+            throw new TerrainOpError(
+                `region.shape must be one of ${REGION_SHAPES.map((s) => `"${s}"`).join(', ')}, ` +
+                `got ${show(raw.shape)} ("band" follows an iso-contour of the height field and ` +
+                'additionally takes contour/inner/outer)'
+            );
+        }
+        r.shape = raw.shape;
+    }
+    const bandGiven = BAND_KEYS.filter((k) => raw[k] !== undefined);
+    if (r.shape === 'band') {
+        if (raw.contour === undefined) {
+            throw new TerrainOpError(
+                'region.shape "band" needs "contour": the height in metres whose iso-contour the ' +
+                'band follows (a waterline, a plateau rim, a cliff foot). Get it from ' +
+                'query_terrain {contourAt: <height>} if you are unsure where that contour runs'
+            );
+        }
+        for (const key of BAND_KEYS) {
+            if (raw[key] !== undefined && (typeof raw[key] !== 'number' || !Number.isFinite(raw[key]))) {
+                throw new TerrainOpError(`region.${key} must be a finite number of metres, got ${show(raw[key])}`);
+            }
+        }
+        r.contour = raw.contour;
+        r.inner = raw.inner ?? 0;
+        r.outer = raw.outer ?? 0;
+        if (!(r.inner < r.outer)) {
+            throw new TerrainOpError(
+                `region: inner ${fmt(r.inner)} must be less than outer ${fmt(r.outer)} m — both are ` +
+                'SIGNED HORIZONTAL distances from the contour line (metres across the ground in the ' +
+                'XZ plane, not height), negative on the HIGH side and positive on the low side, so ' +
+                '{inner: -1, outer: 2} is "from 1 m inside the high side to 2 m out on the low side". ' +
+                'How much height that spans depends on the local slope: on a 1:20 beach 2 m of ground ' +
+                'is 0.1 m of height'
+            );
+        }
+    } else if (bandGiven.length) {
+        throw new TerrainOpError(
+            `region.${bandGiven[0]} only applies to shape: "band" (this region is a ` +
+            `${r.shape}) — pass region.shape: "band" to follow an iso-contour of the height field`
+        );
+    }
+    if (r.x >= sw || r.z >= sh || r.x + r.width <= 0 || r.z + r.depth <= 0) {
+        throw new TerrainOpError(
+            `region x ${fmt(r.x)}..${fmt(r.x + r.width)} m, z ${fmt(r.z)}..${fmt(r.z + r.depth)} m ` +
+            `does not overlap the terrain (x 0..${fmt(sw)} m, z 0..${fmt(sh)} m — local metres, ` +
+            'the terrain starts at its node origin)'
+        );
+    }
+    r.whole = false;
+    return r;
+}
+
+/**
+ * Vertex index range covered by a region: every vertex whose position `i * tileSize` lies
+ * inside `[x, x + width]` (border inclusive, {@link EPS} tolerance), clamped to the grid.
+ *
+ * `asked` is the same span BEFORE that clamp, and `clipped` says whether the two differ: a
+ * region overhanging the terrain edge still asks for the whole span, and a source resampled
+ * onto the clipped one would be squeezed into the surviving part (see {@link setHeights}).
+ * @param {object} data
+ * @param {object} r - Parsed region
+ * @returns {{i0: number, i1: number, j0: number, j1: number, cols: number, rows: number,
+ *   count: number, asked: object, clipped: boolean}}
+ */
+function vertexRange(data, r) {
+    const [vx, vz] = vertexCounts(data.blockCount);
+    const ts = data.tileSize;
+    const asked = {
+        i0: Math.ceil(r.x / ts - EPS),
+        i1: Math.floor((r.x + r.width) / ts + EPS),
+        j0: Math.ceil(r.z / ts - EPS),
+        j1: Math.floor((r.z + r.depth) / ts + EPS),
+    };
+    asked.cols = asked.i1 - asked.i0 + 1;
+    asked.rows = asked.j1 - asked.j0 + 1;
+    const i0 = Math.max(0, asked.i0);
+    const i1 = Math.min(vx - 1, asked.i1);
+    const j0 = Math.max(0, asked.j0);
+    const j1 = Math.min(vz - 1, asked.j1);
+    if (i1 < i0 || j1 < j0) {
+        throw new TerrainOpError(
+            `region x ${fmt(r.x)}..${fmt(r.x + r.width)} m, z ${fmt(r.z)}..${fmt(r.z + r.depth)} m ` +
+            `contains no height vertex — vertices sit every ${fmt(ts)} m (tileSize), so a region ` +
+            'must reach at least one of them'
+        );
+    }
+    return {
+        i0, i1, j0, j1,
+        cols: i1 - i0 + 1,
+        rows: j1 - j0 + 1,
+        count: (i1 - i0 + 1) * (j1 - j0 + 1),
+        asked,
+        clipped: i0 !== asked.i0 || i1 !== asked.i1 || j0 !== asked.j0 || j1 !== asked.j1,
+    };
+}
+
+/** `vertices 4..12 x 4..12` — which grid cells a region actually snapped to */
+function describeVertices(range) {
+    return `vertices ${range.i0}..${range.i1} x ${range.j0}..${range.j1}`;
+}
+
+/** `the whole terrain (32 x 32 m)` / `x 4..12 m, z 0..8 m (ellipse)` */
+function describeRegion(data, r) {
+    if (r.whole) {
+        const [sw, sh] = terrainSize(data);
+        return `the whole terrain (${fmt(sw)} x ${fmt(sh)} m)`;
+    }
+    const box = `x ${fmt(r.x)}..${fmt(r.x + r.width)} m, z ${fmt(r.z)}..${fmt(r.z + r.depth)} m`;
+    if (r.shape === 'band') {
+        return `${box}, band ${fmt(r.inner)}..${fmt(r.outer)} m around the ${fmt(r.contour)} m ` +
+            'contour (signed horizontal distance across the ground: negative = the high side)';
+    }
+    return `${box}${r.shape === 'rect' ? '' : ` (${r.shape})`}`;
+}
+
+// --- masks ------------------------------------------------------------------
+
+/**
+ * The mask a region + falloff describe: `factorAt(x, z)` is 0..1 inside, `null` outside. The factor
+ * is 0 AT the border and 1 `falloff` metres in, so a ramp can never be centred on the edge (= step).
+ * Every consumer BLENDS by it — `current + (target - current) * t`, heights toward their target and
+ * weights toward the requested weight — so factor 0 is a NO-OP rather than a write of 0, which at
+ * the border would ERASE whatever the mask reached instead of tapering into it.
+ * A band tapers across its THICKNESS only — its rectangle is a bounding box, and the default box is
+ * the whole terrain, so feathering against it would fade the band out along the map border.
+ * @param {object} data - Terrain data object
+ * @param {object} r - Parsed region
+ * @param {object} op - The op (read for `falloff`/`profile`)
+ * @returns {{factorAt: (x: number, z: number, h?: number|null) => number|null, falloff: number,
+ *   profile: string, shape: string}}
+ */
+function buildMask(data, r, op) {
+    const falloff = op.falloff === undefined
+        ? 0
+        : requireNumberIn(op, 'falloff', 0, Infinity, ' metres');
+    const profile = parseEnum(op, 'profile', PROFILES, 'linear');
+
+    const cx = r.x + r.width / 2;
+    const cz = r.z + r.depth / 2;
+    const rx = r.width / 2;
+    const rz = r.depth / 2;
+    const inradius = Math.min(rx, rz);
+    const rectEdge = (x, z) => Math.min(x - r.x, r.x + r.width - x, z - r.z, r.z + r.depth - z);
+
+    let contour = null;
+    if (r.shape === 'band') {
+        // `inner < outer` is enforced by parseRegion, so at least one offset is non-zero
+        const reach = Math.max(Math.abs(r.inner), Math.abs(r.outer));
+        const [sw, sh] = terrainSize(data);
+        // Grown by the reach: a segment just outside the box still owns points inside it
+        const pad = reach + (data.tileSize > 0 ? data.tileSize : 0);
+        const x0 = Math.max(0, r.x - pad);
+        const z0 = Math.max(0, r.z - pad);
+        try {
+            contour = new ContourDistance(data, r.contour, {
+                region: {
+                    x: x0,
+                    z: z0,
+                    width: Math.min(sw, r.x + r.width + pad) - x0,
+                    depth: Math.min(sh, r.z + r.depth + pad) - z0,
+                },
+                reach,
+            });
+        } catch (err) {
+            if (err instanceof ContourError) throw new TerrainOpError(`region: ${err.message}`);
+            throw err;
+        }
+        if (contour.segmentCount === 0) {
+            throw new TerrainOpError(
+                `region: no ${fmt(r.contour)} m contour runs through x ${fmt(r.x)}..${fmt(r.x + r.width)} m, ` +
+                `z ${fmt(r.z)}..${fmt(r.z + r.depth)} m — the whole area is above, below, or exactly ` +
+                'AT that height, and a level surface has no edge to follow. Check the height range ' +
+                'with query_terrain (its Height line), or pick the contour with ' +
+                'query_terrain {contourAt: <height>}'
+            );
+        }
+    }
+
+    const ramp = (edge) => {
+        if (!(falloff > 0)) return 1;
+        const t = Math.min(Math.max(edge / falloff, 0), 1);
+        if (profile === 'smooth') return t * t * (3 - 2 * t);
+        if (profile === 'cosine') return 0.5 - 0.5 * Math.cos(Math.PI * t);
+        return t;
+    };
+
+    const factorAt = (x, z, h = undefined) => {
+        if (r.shape === 'ellipse') {
+            const q = Math.sqrt(((x - cx) / rx) ** 2 + ((z - cz) / rz) ** 2);
+            if (q > 1 + EPS) return null;
+            // Distance to the boundary as `(1 - q) / |grad q|` — EXACT on both axes (so the ramp
+            // spans `falloff` metres along each), `(1 - q) * r` for a circle. Capped at the
+            // inradius, which is the true maximum inner distance and kills the 0/0 at the centre.
+            const g = Math.hypot((x - cx) / rx ** 2, (z - cz) / rz ** 2);
+            return ramp(g > 0 ? Math.min(((1 - q) * q) / g, inradius) : inradius);
+        }
+        const inBox = x >= r.x - EPS && x <= r.x + r.width + EPS
+            && z >= r.z - EPS && z <= r.z + r.depth + EPS;
+        if (!inBox) return null;
+        if (r.shape !== 'band') return ramp(rectEdge(x, z));
+        const sd = contour.signedDistanceAt(x, z, h);
+        if (!sd) return null;
+        const s = sd.signed;
+        if (s < r.inner - EPS || s > r.outer + EPS) return null;
+        // ACROSS the band only. The rectangle is a bounding box (see parseRegion), and it defaults
+        // to the whole terrain — feathering against it would fade the band to nothing along the map
+        // border, which is a step in the middle of the band and not a transition to anything.
+        return ramp(Math.min(s - r.inner, r.outer - s));
+    };
+
+    return { factorAt, falloff, profile, shape: r.shape };
+}
+
+/** `, 3 m falloff (smooth)` — the mask part of an op summary */
+function describeMask(mask) {
+    if (!(mask.falloff > 0)) return '';
+    return `, ${fmt(mask.falloff)} m ${mask.profile} falloff`;
+}
+
+// --- weight helpers ---------------------------------------------------------
+
+/**
+ * Split `total` (an integer) over `values` (non-negative floats summing to `total`) with
+ * largest-remainder rounding, so the integers sum to EXACTLY `total`. Truncating each channel
+ * independently would leak up to 3 units per texel and break the sum-255 convention.
+ * @param {number[]} values
+ * @param {number} total
+ * @returns {number[]} integers summing to `total`
+ */
+function distribute(values, total) {
+    if (values.length === 0) return [];
+    const out = values.map((v) => Math.floor(v));
+    let left = total - out.reduce((a, b) => a + b, 0);
+    const order = values
+        .map((v, i) => [v - Math.floor(v), i])
+        .sort((a, b) => b[0] - a[0] || a[1] - b[1]);
+    for (let n = 0; left > 0 && n < order.length; n++, left--) out[order[n][1]]++;
+    // Defensive: floating point can leave a unit over when every remainder is 0
+    if (left > 0) out[0] += left;
+    return out;
+}
+
+/**
+ * Rescale the four channels of one texel so the channels WITH a layer sum to exactly 255,
+ * keeping their relative proportions. Channels without a layer are zeroed.
+ *
+ * A texel whose assigned channels are ALL 0 has no ratio to preserve and no coverage at all —
+ * it would render as nothing (the shader is a plain weighted sum). It falls back to the
+ * block's first layer at full weight, which is exactly what a freshly created block looks
+ * like `(255, 0, 0, 0)`; the caller counts those and reports them.
+ * @param {object} data
+ * @param {number} base - `weightTexelIndex(data, i, j)`
+ * @param {number[]} slots - The block's four palette slots
+ * @returns {{changed: boolean, filled: boolean}} `filled` = the no-coverage fallback was used
+ */
+function renormalizeTexel(data, base, slots) {
+    const w = data.weights;
+    const assigned = [];
+    let sum = 0;
+    let changed = false;
+    for (let k = 0; k < TERRAIN_MAX_BLEND_LAYERS; k++) {
+        if (slots[k] < 0) {
+            if (w[base + k] !== 0) { w[base + k] = 0; changed = true; }
+            continue;
+        }
+        assigned.push(k);
+        sum += w[base + k];
+    }
+    if (assigned.length === 0) return { changed, filled: false };
+    if (sum === 0) {
+        w[base + assigned[0]] = 255;
+        return { changed: true, filled: true };
+    }
+    if (sum === 255) return { changed, filled: false };
+    const scaled = distribute(assigned.map((k) => (w[base + k] * 255) / sum), 255);
+    assigned.forEach((k, idx) => {
+        if (w[base + k] !== scaled[idx]) { w[base + k] = scaled[idx]; changed = true; }
+    });
+    return { changed, filled: false };
+}
+
+/**
+ * Set channel `k` of one texel to `value` (0..255) and give the remaining `255 - value` to the
+ * block's other assigned channels, in proportion to what they hold. `value` is what the CALLER
+ * already blended through the mask (see {@link paintLayer}), so this function never looks at the
+ * factor — it only redistributes. Two edge cases, both reported by `paint_layer`:
+ * - the other assigned channels are all 0 → the remainder is split EQUALLY between them (the
+ *   texel had no coverage at all; any split is invented, an equal one at least keeps the sum);
+ * - there is no other assigned channel → the requested weight is FORCED to the full 255 (whether
+ *   that ignored the request is the caller's to decide, see `@returns`). Storing `value` there
+ *   would look more honest but is a trap: the weight is provably unobservable while the block
+ *   assigns one layer (`maxLayerIndex === 0` makes the shader draw `detailMap0` and never sample
+ *   the weight map, terrain.ts:879/920-930), and the moment a LATER op assigns a second layer to
+ *   that block the map starts being sampled and every such texel renders at `value/255`
+ *   brightness — 0 means literally black. 255 is the only value that stays correct after a second
+ *   layer arrives, so it is what we store.
+ * @param {object} data
+ * @param {number} base - `weightTexelIndex(data, i, j)`
+ * @param {number[]} slots - The block's four palette slots
+ * @param {number} k - Target channel
+ * @param {number} value - 0..255
+ * @returns {{forced: boolean, split: boolean}} which edge case was hit. `forced` = 255 was stored
+ *   whatever `value` said; whether that IGNORED the request is the caller's to decide — it knows the
+ *   requested weight, while `value` here is already blended and equals 255 at factor 0 on a full texel.
+ */
+function paintTexel(data, base, slots, k, value) {
+    const w = data.weights;
+    const others = [];
+    let sum = 0;
+    for (let c = 0; c < TERRAIN_MAX_BLEND_LAYERS; c++) {
+        if (c === k) continue;
+        if (slots[c] < 0) { w[base + c] = 0; continue; }
+        others.push(c);
+        sum += w[base + c];
+    }
+    if (others.length === 0) {
+        w[base + k] = 255;
+        return { forced: true, split: false };
+    }
+    w[base + k] = value;
+    const remain = 255 - value;
+    const shares = sum === 0
+        ? others.map(() => remain / others.length)
+        : others.map((c) => (w[base + c] * remain) / sum);
+    const ints = distribute(shares, remain);
+    others.forEach((c, idx) => { w[base + c] = ints[idx]; });
+    return { forced: false, split: sum === 0 && remain > 0 };
+}
+
+/** Block coordinates of a block index (`blockIndex`'s inverse) */
+function blockCoords(b, bc) {
+    return [b % bc[0], Math.floor(b / bc[0])];
+}
+
+/**
+ * Move a block's weight bytes so each channel keeps carrying its own LAYER across a slot change:
+ * channel `k` takes the bytes of the layer now assigned to it, wherever that layer sat `before`, and
+ * a channel whose layer the block did not carry starts at 0. Renormalizing is the caller's job.
+ *
+ * Without this the bytes stay where they are and get re-attributed: `[0,1] -> [1]` handed layer 0's
+ * coverage to layer 1 and threw layer 1's own away, and `[0,1] -> [1,0]` swapped the two layers'
+ * coverage. `terrainBin.removeLayer` already moves the weights along; this is the same rule for an
+ * arbitrary re-assignment.
+ * @param {object} data
+ * @param {number} bx
+ * @param {number} by
+ * @param {number[]} before - The block's four slots before the write
+ * @param {number[]} after - Its four slots now
+ * @returns {number} texels whose bytes actually moved
+ */
+function remapBlockWeights(data, bx, by, before, after) {
+    const from = after.map((s) => (s >= 0 ? before.indexOf(s) : -1));
+    const wms = data.weightMapSize;
+    let moved = 0;
+    for (let j = 0; j < wms; j++) {
+        for (let i = 0; i < wms; i++) {
+            const base = weightTexelIndex(data, bx * wms + i, by * wms + j);
+            const old = [
+                data.weights[base], data.weights[base + 1],
+                data.weights[base + 2], data.weights[base + 3],
+            ];
+            let changed = false;
+            for (let k = 0; k < TERRAIN_MAX_BLEND_LAYERS; k++) {
+                const v = from[k] < 0 ? 0 : old[from[k]];
+                if (data.weights[base + k] !== v) { data.weights[base + k] = v; changed = true; }
+            }
+            if (changed) moved++;
+        }
+    }
+    return moved;
+}
+
+/** Renormalize every texel of one block; returns how many changed / fell back to slot 0 */
+function renormalizeBlock(data, bx, by) {
+    const wms = data.weightMapSize;
+    const slots = blockLayers(data, bx, by);
+    let changed = 0;
+    let filled = 0;
+    for (let j = 0; j < wms; j++) {
+        for (let i = 0; i < wms; i++) {
+            const res = renormalizeTexel(data, weightTexelIndex(data, bx * wms + i, by * wms + j), slots);
+            if (res.changed) changed++;
+            if (res.filled) filled++;
+        }
+    }
+    return { changed, filled, first: slots.find((v) => v >= 0) ?? -1 };
+}
+
+// --- set_info ---------------------------------------------------------------
+
+/**
+ * `_rebuildHeights` (terrain.ts:2541-2566): a fresh grid filled with `TERRAIN_HEIGHT_BASE`
+ * (0 m), the overlapping rect copied in, anchored at the origin corner. Early-out when the
+ * vertex counts are unchanged, so a pure `tileSize` edit keeps every height.
+ */
+function rebuildHeights(data, info) {
+    const [oldVX, oldVZ] = vertexCounts(data.blockCount);
+    const [newVX, newVZ] = vertexCounts(info.blockCount);
+    if (oldVX === newVX && oldVZ === newVZ) return { changed: false };
+    const heights = new Uint16Array(newVX * newVZ).fill(TERRAIN_HEIGHT_BASE);
+    const w = Math.min(oldVX, newVX);
+    const h = Math.min(oldVZ, newVZ);
+    // Hand-indexed on purpose: this spans TWO grids, so neither side is `vertexIndex(data, …)`
+    for (let j = 0; j < h; j++) {
+        for (let i = 0; i < w; i++) heights[j * newVX + i] = data.heights[j * oldVX + i];
+    }
+    data.heights = heights;
+    return { changed: true, kept: w * h, fresh: newVX * newVZ - w * h, keptGrid: [w, h] };
+}
+
+/** `_rebuildLayerBuffer` (terrain.ts:2568-2595): new blocks get four `-1` slots */
+function rebuildLayerBuffer(data, info) {
+    const [oldBC0, oldBC1] = data.blockCount;
+    const [newBC0, newBC1] = info.blockCount;
+    if (oldBC0 === newBC0 && oldBC1 === newBC1) return { changed: false };
+    const layerBuffer = new Int16Array(newBC0 * newBC1 * TERRAIN_MAX_BLEND_LAYERS).fill(-1);
+    const w = Math.min(oldBC0, newBC0);
+    const h = Math.min(oldBC1, newBC1);
+    for (let j = 0; j < h; j++) {
+        for (let i = 0; i < w; i++) {
+            for (let l = 0; l < TERRAIN_MAX_BLEND_LAYERS; l++) {
+                layerBuffer[(j * newBC0 + i) * TERRAIN_MAX_BLEND_LAYERS + l]
+                    = data.layerBuffer[(j * oldBC0 + i) * TERRAIN_MAX_BLEND_LAYERS + l];
+            }
+        }
+    }
+    data.layerBuffer = layerBuffer;
+    return { changed: true, kept: w * h, fresh: newBC0 * newBC1 - w * h };
+}
+
+/**
+ * `_rebuildWeights` (terrain.ts:2597-2703) — the tricky one, ported exactly:
+ *
+ * - Early-out on the TOTAL texel dimensions, not on `weightMapSize`: `blockCount [2,2]` at
+ *   `weightMapSize 64` → `[1,1]` at `128` is 128x128 texels either way, so the engine returns
+ *   without re-mapping anything and the old bytes stay where they are. Reproduced (and
+ *   reported), because the file the editor would produce is the one we must produce.
+ * - The new buffer is pre-filled `(255, 0, 0, 0)`, so blocks outside the overlap are "layer
+ *   slot 0 at full strength".
+ * - Per overlapping BLOCK: a straight copy when `weightMapSize` is unchanged, otherwise
+ *   `sampleOldWeight` — the same diagonal-split kernel as `getHeightAt` (`m = (b+c)/2`, the far
+ *   corner extrapolated), NOT plain bilinear. Its `ix1`/`iz1` clamp is `min(ix0+1, oldWms-1)`,
+ *   i.e. BLOCK-LOCAL, and the block's texel origin is added AFTER the clamp, so a sample never
+ *   crosses a block seam.
+ * - Channel stores go through a `Uint8Array`, which truncates toward zero. No clamping is
+ *   needed and none is added: despite looking like an extrapolation, the kernel is a CONVEX
+ *   COMBINATION of the corner values in both branches, so a channel can never leave [0, 255].
+ *   Substituting `d = 2m - a` (`dx + dz <= 1`) collapses the double lerp to
+ *   `a(1 - dx - dz) + b·dx + c·dz`, and `a = 2m - d` (`dx + dz > 1`) to
+ *   `b(1 - dz) + c(1 - dx) + d(dx + dz - 1)` — both sets of coefficients sum to 1 and are
+ *   non-negative on their branch's domain. The `Uint8Array` store still means we would wrap
+ *   exactly as the engine does if that ever stopped holding.
+ */
+function rebuildWeights(data, info) {
+    const oldWms = data.weightMapSize;
+    const newWms = info.weightMapSize;
+    // Dims and offsets from terrainBin: the resize must not be the one weight path carrying its
+    // own copy of the layout. `info` is a sizing struct, which is all either helper reads.
+    const [oldU, oldV] = weightMapDims(data);
+    const [newU, newV] = weightMapDims(info);
+    if (newU === oldU && newV === oldV) return { changed: false, texels: [newU, newV] };
+
+    const old = data.weights;
+    const weights = new Uint8Array(newU * newV * 4);
+    for (let i = 0; i < newU * newV; i++) weights[i * 4] = 255;
+
+    const w = Math.min(info.blockCount[0], data.blockCount[0]);
+    const h = Math.min(info.blockCount[1], data.blockCount[1]);
+
+    const getOld = (i, j) => {
+        const index = weightTexelIndex(data, i, j);
+        return [old[index] / 255, old[index + 1] / 255, old[index + 2] / 255, old[index + 3] / 255];
+    };
+    const sampleOld = (x, y, xOff, yOff) => {
+        const ix0 = Math.floor(x);
+        const iz0 = Math.floor(y);
+        const ix1 = Math.min(ix0 + 1, oldWms - 1);
+        const iz1 = Math.min(iz0 + 1, oldWms - 1);
+        const dx = x - ix0;
+        const dz = y - iz0;
+        let a = getOld(ix0 + xOff, iz0 + yOff);
+        const b = getOld(ix1 + xOff, iz0 + yOff);
+        const c = getOld(ix0 + xOff, iz1 + yOff);
+        let d = getOld(ix1 + xOff, iz1 + yOff);
+        const m = b.map((v, k) => (v + c[k]) * 0.5);
+        if (dx + dz <= 1.0) d = m.map((v, k) => v + (v - a[k]));
+        else a = m.map((v, k) => v + (v - d[k]));
+        return a.map((av, k) => {
+            const n1 = av + (b[k] - av) * dx;
+            const n2 = c[k] + (d[k] - c[k]) * dx;
+            return n1 + (n2 - n1) * dz;
+        });
+    };
+
+    for (let j = 0; j < h; j++) {
+        for (let i = 0; i < w; i++) {
+            const uOff = i * oldWms;
+            const vOff = j * oldWms;
+            for (let v = 0; v < newWms; v++) {
+                for (let u = 0; u < newWms; u++) {
+                    const wv = newWms === oldWms
+                        ? getOld(u + uOff, v + vOff)
+                        : sampleOld((u / (newWms - 1)) * (oldWms - 1), (v / (newWms - 1)) * (oldWms - 1), uOff, vOff);
+                    const index = weightTexelIndex(info, i * newWms + u, j * newWms + v);
+                    for (let k = 0; k < 4; k++) weights[index + k] = wv[k] * 255;
+                }
+            }
+        }
+    }
+    data.weights = weights;
+    return {
+        changed: true,
+        resampled: newWms !== oldWms,
+        blocks: w * h,
+        fresh: info.blockCount[0] * info.blockCount[1] - w * h,
+        texels: [newU, newV],
+    };
+}
+
+function parseBlockCount(value) {
+    if (!Array.isArray(value) || value.length !== 2) {
+        throw new TerrainOpError(
+            `blockCount must be an array of two integers [x, z], got ${show(value)} ` +
+            `(each block is ${TERRAIN_BLOCK_TILE_COMPLEXITY}x${TERRAIN_BLOCK_TILE_COMPLEXITY} tiles)`
+        );
+    }
+    value.forEach((v, i) => {
+        if (!Number.isInteger(v) || v < 1) {
+            throw new TerrainOpError(`blockCount[${i}] = ${show(v)} must be an integer >= 1`);
+        }
+    });
+    return [value[0], value[1]];
+}
+
+/**
+ * `set_info` — overlap-preserving resize, an exact port of `Terrain.rebuild`.
+ * @returns {{op: string, summary: string, notes: string[], blockCountChanged: boolean}}
+ */
+function setInfo(data, op) {
+    const notes = [];
+    const given = OP_KEYS.set_info.filter((k) => op[k] !== undefined);
+    if (given.length === 0) {
+        throw new TerrainOpError(
+            `set_info needs at least one of ${OP_KEYS.set_info.join(', ')} — ` +
+            'the omitted ones keep their current value'
+        );
+    }
+    const info = {
+        tileSize: op.tileSize === undefined
+            ? data.tileSize
+            : shared(() => checkTileSize(op.tileSize, 'tileSize', notes)),
+        blockCount: op.blockCount === undefined ? [...data.blockCount] : parseBlockCount(op.blockCount),
+        // The weight/light map guards are AUTHORING conventions (the editor panel's four
+        // sizes), so they only apply to a value this op actually introduces. Restating the
+        // file's own size — as an LLM does when it passes the whole info block back — must
+        // never fail, or a terrain already outside the guard could not be edited at all. A size
+        // the BINARY format cannot store is a different case and never reaches here:
+        // `applyTerrainOperations` refuses such a file up front, so this exemption only ever
+        // waves through sizes that are writable (2048, say — outside the panel, inside i16).
+        weightMapSize: op.weightMapSize === undefined || op.weightMapSize === data.weightMapSize
+            ? data.weightMapSize
+            : shared(() => checkWeightMapSize(op.weightMapSize, 'weightMapSize')),
+        lightMapSize: op.lightMapSize === undefined || op.lightMapSize === data.lightMapSize
+            ? data.lightMapSize
+            : shared(() => checkLightMapSize(op.lightMapSize, 'lightMapSize')),
+    };
+    // The buffers below are sized from these numbers, so refuse an absurd pair BEFORE
+    // allocating anything (a 64x64-block terrain at weightMapSize 512 is 4 GB of weights).
+    try {
+        validateTerrainCapacity(info);
+    } catch (err) {
+        throw new TerrainOpError(err.message);
+    }
+
+    const from = {
+        tileSize: data.tileSize,
+        blockCount: [...data.blockCount],
+        weightMapSize: data.weightMapSize,
+        lightMapSize: data.lightMapSize,
+    };
+    const changedFields = given.filter((k) => (k === 'blockCount'
+        ? info.blockCount[0] !== from.blockCount[0] || info.blockCount[1] !== from.blockCount[1]
+        : info[k] !== from[k]));
+    if (changedFields.length === 0) {
+        return {
+            op: 'set_info',
+            summary: `Geometry already was blockCount [${from.blockCount}], tileSize ${fmt(from.tileSize)} m, ` +
+                `weightMapSize ${from.weightMapSize}, lightMapSize ${from.lightMapSize} — nothing changed`,
+            notes,
+            blockCountChanged: false,
+        };
+    }
+
+    // Engine order (terrain.ts:1579-1585): every _rebuildX reads the OLD this._* fields,
+    // which are only updated afterwards.
+    const lb = rebuildLayerBuffer(data, info);
+    const hs = rebuildHeights(data, info);
+    const wt = rebuildWeights(data, info);
+
+    data.tileSize = info.tileSize;
+    // The file stores an unsnapped tileSize; after an EXPLICIT change the only trustworthy stored
+    // value is the snapped one we just validated. A resize that never mentioned tileSize must
+    // leave the stored value alone, or a `set_info {blockCount}` would silently rewrite a file's
+    // 0.295 as 0.29 — the very fidelity `consistentRawTileSize` exists to keep.
+    if (changedFields.includes('tileSize')) data.rawTileSize = info.tileSize;
+    data.blockCount = [...info.blockCount];
+    data.weightMapSize = info.weightMapSize;
+    data.lightMapSize = info.lightMapSize;
+
+    const [sw, sh] = terrainSize(data);
+    const [oldW, oldH] = terrainSize({ blockCount: from.blockCount, tileSize: from.tileSize });
+    const parts = [];
+    if (changedFields.includes('blockCount')) {
+        parts.push(`blocks [${from.blockCount}] -> [${info.blockCount}]`);
+    }
+    if (changedFields.includes('tileSize')) {
+        parts.push(`tileSize ${fmt(from.tileSize)} -> ${fmt(info.tileSize)} m`);
+    }
+    if (changedFields.includes('weightMapSize')) {
+        parts.push(`weightMapSize ${from.weightMapSize} -> ${info.weightMapSize}`);
+    }
+    if (changedFields.includes('lightMapSize')) {
+        parts.push(`lightMapSize ${from.lightMapSize} -> ${info.lightMapSize}`);
+    }
+    const detail = [];
+    detail.push(hs.changed
+        ? `heights: kept the overlapping ${hs.keptGrid[0]}x${hs.keptGrid[1]} vertices, ` +
+          `${plural(hs.fresh, 'new vertex', 'new vertices')} set to 0 m`
+        : 'heights: unchanged (the vertex grid is the same size)');
+    detail.push(lb.changed
+        ? `layerBuffer: kept ${plural(lb.kept, 'overlapping block')}, ${plural(lb.fresh, 'new block')} left unassigned (-1)`
+        : 'layerBuffer: unchanged');
+    if (!wt.changed) {
+        detail.push(
+            `weights: NOT re-mapped — the total weight map is ${wt.texels[0]}x${wt.texels[1]} texels ` +
+            'either way, and the engine early-outs on that (terrain.ts:2605), so the old texels keep ' +
+            'their positions in the buffer rather than following their blocks'
+        );
+    } else if (wt.resampled) {
+        detail.push(
+            `weights: ${plural(wt.blocks, 'overlapping block')} resampled ${from.weightMapSize} -> ` +
+            `${info.weightMapSize} texels per side (the engine's diagonal-split scheme, not bilinear), ` +
+            `${plural(wt.fresh, 'new block')} reset to (255,0,0,0)`
+        );
+    } else {
+        detail.push(
+            `weights: ${plural(wt.blocks, 'overlapping block')} copied texel-for-texel, ` +
+            `${plural(wt.fresh, 'new block')} reset to (255,0,0,0)`
+        );
+    }
+
+    // `Terrain.rebuild` drops the bake on ANY resize: `_resetLightmap(false)` at terrain.ts:1576
+    // runs before the three helpers and unconditionally does `_lightmapInfos.length = 0`
+    // (terrain.ts:2323-2333). So a tileSize-only change invalidates it just as much as a
+    // blockCount one — and it is the SILENT case, because the block count still matches so the
+    // validator's `_lightmapInfos.length ∈ {0, bc0*bc1}` check stays quiet.
+    const resized = changedFields.includes('blockCount') || changedFields.includes('tileSize');
+    if (resized) {
+        notes.push(
+            `${changedFields.includes('blockCount') ? 'blockCount' : 'tileSize'} changed: any baked ` +
+            'lightmap on a cc.Terrain component using this asset is now wrong — ' +
+            (changedFields.includes('blockCount')
+                ? '`_lightmapInfos` is keyed by block index and no longer matches the grid'
+                : 'the terrain changed physical size, so the bake no longer matches its geometry') +
+            '. Clear `_lightmapInfos` on those components and re-bake; the editor clears the bake ' +
+            'on any resize too (terrain.ts:1576)'
+        );
+    }
+    return {
+        op: 'set_info',
+        summary: `${parts.join(', ')} — the terrain is now ${fmt(sw)} x ${fmt(sh)} m ` +
+            `(was ${fmt(oldW)} x ${fmt(oldH)} m); ${detail.join('; ')}`,
+        notes,
+        blockCountChanged: changedFields.includes('blockCount'),
+        resized,
+        blockCountFrom: from.blockCount,
+        blockCountTo: [...info.blockCount],
+    };
+}
+
+// --- layers -----------------------------------------------------------------
+
+function resolveTexture(ctx, ref, what) {
+    return shared(() => resolveTextureRef(ctx.assetIndex ?? null, ref, what));
+}
+
+/** Asset name for a `uuid@subId`, falling back to the id itself */
+function label(ctx, id) {
+    if (!id) return '(none)';
+    return ctx.assetIndex?.label(id) ?? id;
+}
+
+/**
+ * `set_layer` — add (append) or update one palette entry. The palette must stay DENSE
+ * (`layers[i].slot === i`): the engine overwrites the binary `slot` with the array index on
+ * every export (terrain-asset.ts:613), so a hole makes the binary and the library JSON
+ * disagree about which palette index a `layerBuffer` value means.
+ */
+function setLayer(data, op, ctx) {
+    const layers = data.layers;
+    const slot = requireIntIn(
+        op, 'slot', 0, TERRAIN_MAX_LAYER_COUNT - 1,
+        ` (the palette has ${plural(layers.length, 'layer')}; ${layers.length} appends a new one)`
+    );
+    if (slot > layers.length) {
+        throw new TerrainOpError(
+            `slot ${slot} would leave a gap: the palette holds ${plural(layers.length, 'layer')}` +
+            (layers.length ? ` (slots 0..${layers.length - 1})` : '') +
+            ` and must stay dense — use slot ${layers.length} to append`
+        );
+    }
+    const isNew = slot === layers.length;
+    const fields = OP_KEYS.set_layer.filter((k) => k !== 'slot' && op[k] !== undefined);
+    if (fields.length === 0) {
+        throw new TerrainOpError(
+            `set_layer needs at least one of ${OP_KEYS.set_layer.filter((k) => k !== 'slot').join(', ')}`
+        );
+    }
+    if (isNew && op.detailMap === undefined) {
+        throw new TerrainOpError(
+            `slot ${slot} is a new palette entry, so "detailMap" is required — the editor drops a ` +
+            'layer without a detail texture on re-save'
+        );
+    }
+
+    const layer = isNew
+        ? { slot, tileSize: 1, detailMapId: '', normalMapId: '', roughness: 1, metallic: 0 }
+        : layers[slot];
+    const changes = [];
+
+    if (op.detailMap !== undefined) {
+        if (op.detailMap === null) {
+            throw new TerrainOpError(
+                'detailMap cannot be cleared — a layer without a detail texture is dropped by the ' +
+                'editor on re-save; use remove_layer to delete the palette entry instead'
+            );
+        }
+        const id = resolveTexture(ctx, op.detailMap, 'detailMap');
+        if (id !== layer.detailMapId) {
+            changes.push(`detailMap ${label(ctx, layer.detailMapId)} -> ${label(ctx, id)}`);
+            layer.detailMapId = id;
+        }
+    }
+    if (op.normalMap !== undefined) {
+        // The binary stores an ABSENT normal map as "", never null
+        const id = op.normalMap === null ? '' : resolveTexture(ctx, op.normalMap, 'normalMap');
+        if (id !== layer.normalMapId) {
+            changes.push(id === ''
+                ? `normalMap ${label(ctx, layer.normalMapId)} cleared`
+                : `normalMap ${label(ctx, layer.normalMapId)} -> ${label(ctx, id)}`);
+            layer.normalMapId = id;
+        }
+    }
+    if (op.tileSize !== undefined) {
+        const v = requireFinite(op, 'tileSize');
+        if (v <= 0) {
+            throw new TerrainOpError(
+                `"tileSize" must be > 0 (metres per texture repeat for THIS layer — not the ` +
+                `terrain's tile size, which set_info owns), got ${show(v)}`
+            );
+        }
+        if (v !== layer.tileSize) {
+            changes.push(`tileSize ${fmt(layer.tileSize)} -> ${fmt(v)} m per texture repeat`);
+            layer.tileSize = v;
+        }
+    }
+    for (const key of ['roughness', 'metallic']) {
+        if (op[key] === undefined) continue;
+        const v = requireNumberIn(op, key, 0, 1);
+        if (v !== layer[key]) {
+            changes.push(`${key} ${fmt(layer[key])} -> ${fmt(v)}`);
+            layer[key] = v;
+        }
+    }
+
+    const notes = [];
+    // No "nothing uses this slot yet" note here: a later op in the same batch may assign it.
+    // The report derives that from the FINAL state (terrainBin's own unused-slot warning).
+    if (isNew) layers.push(layer);
+    if (layer.normalMapId) {
+        notes.push(
+            `layer ${slot} carries a normal map, which the engine only samples when the scene's ` +
+            'cc.Terrain component has `_useNormalmap: true` (apply_edits set_component_property)'
+        );
+    }
+    if (layer.roughness !== 1 || layer.metallic !== 0) {
+        notes.push(
+            `layer ${slot} uses non-default roughness/metallic, which only take effect with ` +
+            '`_usePBR: true` on the scene\'s cc.Terrain component'
+        );
+    }
+    return {
+        op: 'set_layer',
+        appendedSlot: isNew ? slot : null,
+        summary: isNew
+            ? `Added palette layer ${slot}: ${label(ctx, layer.detailMapId)} ` +
+              `(tileSize ${fmt(layer.tileSize)} m, roughness ${fmt(layer.roughness)}, metallic ${fmt(layer.metallic)}` +
+              `${layer.normalMapId ? `, normal ${label(ctx, layer.normalMapId)}` : ''})`
+            : (changes.length
+                ? `Updated palette layer ${slot}: ${changes.join(', ')}`
+                : `Palette layer ${slot} (${label(ctx, layer.detailMapId)}) already had those values — nothing changed`),
+        notes,
+    };
+}
+
+/**
+ * `remove_layer` — drop a palette entry through `terrainBin.removeLayer` (which unassigns it
+ * in every block, LEFT-PACKS the surviving channels with their weights and re-indexes the
+ * palette), then restore this module's sum-255 convention on the affected blocks.
+ */
+function removeLayerOp(data, op, ctx) {
+    const slot = requireIntIn(op, 'slot', 0, TERRAIN_MAX_LAYER_COUNT - 1);
+    const before = data.layers.map((l) => l.slot);
+    let removed;
+    let blocks;
+    let remap;
+    try {
+        ({ removed, blocks, remap } = removeLayer(data, slot));
+    } catch (err) {
+        throw new TerrainOpError(err.message);
+    }
+
+    let renormalized = 0;
+    let filled = 0;
+    // Per BLOCK: `first` is that block's own surviving slot, and palettes differ between blocks,
+    // so one last-write-wins value would name a layer most counted texels never fell back to.
+    const fallbackSlots = new Map(); // slot → texels that fell back to it
+    for (const b of blocks) {
+        const [bx, by] = blockCoords(b, data.blockCount);
+        const res = renormalizeBlock(data, bx, by);
+        renormalized += res.changed;
+        filled += res.filled;
+        if (res.filled > 0) {
+            fallbackSlots.set(res.first, (fallbackSlots.get(res.first) ?? 0) + res.filled);
+        }
+    }
+
+    const reindexed = [...remap.entries()].filter(([oldSlot, newSlot]) => oldSlot !== newSlot);
+    const notes = [];
+    if (filled > 0) {
+        // Every counted texel has a slot to fall back to (`renormalizeTexel` requires one).
+        const perSlot = [...fallbackSlots.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([slot, texels]) => `${plural(texels, 'texel')} to layer ${slot}`);
+        notes.push(
+            `${plural(filled, 'texel')} were covered by the removed layer ALONE and had no weight ` +
+            'left at all; they fall back at full weight to their own block\'s first surviving ' +
+            `layer (what a freshly created block looks like) instead of rendering as nothing — ` +
+            `${perSlot.join(', ')}`
+        );
+    }
+    if (reindexed.length) {
+        notes.push(
+            `the palette was re-indexed so that slot === array index (the binary format requires ` +
+            `it): ${reindexed.map(([o, n]) => `${o} -> ${n}`).join(', ')}. Every layerBuffer ` +
+            'reference was remapped, but any slot number you hold from an earlier call is stale'
+        );
+    }
+    const affected = blocks
+        .slice(0, 8)
+        .map((b) => `[${blockCoords(b, data.blockCount).join(',')}]`)
+        .join(', ');
+    return {
+        op: 'remove_layer',
+        summary: `Removed palette layer ${slot} (${label(ctx, removed.detailMapId)}) — unassigned in ` +
+            `${plural(blocks.length, 'block')}${blocks.length ? ` (${affected}${blocks.length > 8 ? ', …' : ''})` : ''}; ` +
+            `the affected blocks' remaining channels were left-packed and ${plural(renormalized, 'texel')} ` +
+            'renormalized to sum 255; ' +
+            `the palette now holds ${plural(data.layers.length, 'layer')} (was ${before.length})`,
+        notes,
+    };
+}
+
+// --- heights ----------------------------------------------------------------
+
+/**
+ * Mask factor per vertex of `range`: 0..1, NaN where the mask does not cover it.
+ * @returns {{factors: Float32Array, covered: number, peak: number}}
+ */
+function maskFactors(data, range, mask) {
+    const ts = data.tileSize;
+    const factors = new Float32Array(range.cols * range.rows);
+    let covered = 0;
+    let peak = 0;
+    for (let j = range.j0; j <= range.j1; j++) {
+        for (let i = range.i0; i <= range.i1; i++) {
+            // The stored vertex value IS the height there — no need to re-sample the kernel
+            const f = mask.factorAt(i * ts, j * ts, rawToHeight(data.heights[vertexIndex(data, i, j)]));
+            factors[(j - range.j0) * range.cols + (i - range.i0)] = f === null ? NaN : f;
+            if (f !== null) {
+                covered++;
+                if (f > peak) peak = f;
+            }
+        }
+    }
+    return { factors, covered, peak };
+}
+
+/**
+ * Write heights over a masked vertex range: `targetAt(i, j, current)` blended by the mask factor,
+ * then held in one direction by `clamp`. `edgeStep` is the taper check (see maskNotes).
+ */
+function writeMaskedHeights(data, range, factors, targetAt, clamp = 'none') {
+    const [vx, vz] = vertexCounts(data.blockCount);
+    const deltas = new Float32Array(range.cols * range.rows);
+    let clamped = 0;
+    let low = Infinity;
+    let high = -Infinity;
+    let changed = 0;
+    let touched = 0;
+    let maxDelta = 0;
+    let clampBlocked = 0;
+    for (let j = range.j0; j <= range.j1; j++) {
+        for (let i = range.i0; i <= range.i1; i++) {
+            const at = (j - range.j0) * range.cols + (i - range.i0);
+            const t = factors[at];
+            if (Number.isNaN(t)) { deltas[at] = NaN; continue; }
+            touched++;
+            const index = vertexIndex(data, i, j);
+            const current = rawToHeight(data.heights[index]);
+            const target = targetAt(i, j, current);
+            let metres = t >= 1 ? target : current + (target - current) * t;
+            if (clamp === 'raise-only' && metres < current) { metres = current; clampBlocked++; }
+            if (clamp === 'lower-only' && metres > current) { metres = current; clampBlocked++; }
+            if (metres < low) low = metres;
+            if (metres > high) high = metres;
+            if (metres < TERRAIN_HEIGHT_FMIN || metres > TERRAIN_HEIGHT_FMAX) clamped++;
+            const raw = heightToRaw(metres, true);
+            deltas[at] = rawToHeight(raw) - current;
+            if (data.heights[index] !== raw) {
+                maxDelta = Math.max(maxDelta, Math.abs(deltas[at]));
+                data.heights[index] = raw;
+                changed++;
+            }
+        }
+    }
+
+    // Mask boundary = covered vertex with an IN-GRID uncovered neighbour (off-grid is the
+    // terrain ending, not the mask ending)
+    let edgeStep = null;
+    for (let j = range.j0; j <= range.j1; j++) {
+        for (let i = range.i0; i <= range.i1; i++) {
+            const at = (j - range.j0) * range.cols + (i - range.i0);
+            if (Number.isNaN(deltas[at])) continue;
+            const amplitude = Math.abs(deltas[at]);
+            if (edgeStep && amplitude <= edgeStep.metres) continue;
+            let onBorder = false;
+            for (const [ni, nj] of [[i - 1, j], [i + 1, j], [i, j - 1], [i, j + 1]]) {
+                if (ni < 0 || nj < 0 || ni > vx - 1 || nj > vz - 1) continue;
+                const outside = ni < range.i0 || ni > range.i1 || nj < range.j0 || nj > range.j1
+                    || Number.isNaN(deltas[(nj - range.j0) * range.cols + (ni - range.i0)]);
+                if (outside) { onBorder = true; break; }
+            }
+            if (onBorder) edgeStep = { metres: amplitude, x: i * data.tileSize, z: j * data.tileSize };
+        }
+    }
+
+    return { clamped, low, high, changed, touched, maxDelta, clampBlocked, edgeStep };
+}
+
+/**
+ * Notes every masked height op shares: a ramp short of full amplitude, a step at the mask border,
+ * vertices a `clamp` held back.
+ * @param {object} data - Terrain data object (read for `tileSize`)
+ * @param {object} mask
+ * @param {object} shaped - `maskFactors` result
+ * @param {object} res - `writeMaskedHeights` result
+ * @param {string} amount - What the amplitude is ("delta", "value", …), for the wording
+ * @param {string} clamp
+ */
+function maskNotes(data, mask, shaped, res, amount, clamp) {
+    const notes = [];
+    if (mask.falloff > 0 && shaped.peak < 1 - 1e-6) {
+        // A band tapers ACROSS its thickness, so its way out is a wider inner/outer spread —
+        // region.inner/outer are rejected on any other shape, so the advice cannot be shared
+        notes.push(
+            `falloff ${fmt(mask.falloff)} m is wider than ` +
+            (mask.shape === 'band' ? 'the band is thick' : "the region's half-extent") +
+            `, so the full ${amount} is reached NOWHERE — the ramp peaks at ` +
+            `${fmt(shaped.peak)} of it. Use a smaller falloff, or ` +
+            (mask.shape === 'band' ? 'a wider band (a larger inner/outer spread)' : 'a larger region')
+        );
+    }
+    // A falloff over N tiles necessarily leaves ~1/N of the amplitude at the last covered vertex
+    // (the border falls BETWEEN vertices), and that residue is as steep as the ramp — not a step
+    const rampStep = mask.falloff > 0 ? (res.maxDelta * data.tileSize) / mask.falloff : 0;
+    if (res.edgeStep && res.edgeStep.metres > Math.max(TERRAIN_HEIGHT_FACTOR, 2 * rampStep)) {
+        notes.push(
+            `the edit ends in a STEP of up to ${fmt(res.edgeStep.metres)} m at the mask border ` +
+            `(x ${fmt(res.edgeStep.x)}, z ${fmt(res.edgeStep.z)}): the amplitude there is not 0, so ` +
+            'the border is a visible cliff' +
+            (mask.falloff > 0
+                ? `. The ${fmt(mask.falloff)} m falloff itself only accounts for ` +
+                  `${fmt(rampStep)} m per tile, so the rest comes from the surface BEHIND the ` +
+                  'border sitting at a different height — grow the region until the falloff has ' +
+                  'room, or use clamp so the edit cannot fight the existing surface'
+                : `. Pass falloff: <metres> to ramp the ${amount} down to 0 at the border ` +
+                  '(2-3 tiles is usually enough), or clamp: "raise-only"/"lower-only" so the ' +
+                  'edit cannot fight the existing surface')
+        );
+    }
+    if (res.clampBlocked > 0) {
+        notes.push(
+            `clamp "${clamp}" held ${plural(res.clampBlocked, 'vertex', 'vertices')} at their ` +
+            `existing height (the ${amount} would have moved them the other way) — that is what ` +
+            'makes the edit idempotent at its edges'
+        );
+    }
+    return notes;
+}
+
+/** `4096 of 4225 vertices covered` — how much of the range the mask actually touched */
+function describeCoverage(shaped, range) {
+    if (shaped.covered === range.count) return '';
+    return `, mask covers ${shaped.covered} of ${range.count} vertices`;
+}
+
+/** A shaped region that covered nothing */
+function emptyMaskError(data, r, what) {
+    if (r.shape === 'band') {
+        return new TerrainOpError(
+            `region ${describeRegion(data, r)} covers no ${what}: the contour runs through the box, ` +
+            `but no ${what} falls within ${fmt(r.inner)}..${fmt(r.outer)} m of it. ` +
+            `${what === 'vertex' ? 'Height vertices sit' : 'Weight texels sit'} ` +
+            `${what === 'vertex' ? `every ${fmt(data.tileSize)} m` : `every ${fmt(texelSpacing(data))} m`}, ` +
+            'so widen the band (inner/outer) until it spans at least that much'
+        );
+    }
+    return new TerrainOpError(
+        `region ${describeRegion(data, r)} covers no ${what} — the ${r.shape} is smaller than the ` +
+        `${what} spacing (${what === 'vertex' ? fmt(data.tileSize) : fmt(texelSpacing(data))} m). ` +
+        'Grow the region, or use shape: "rect"'
+    );
+}
+
+function clampNote(res, total) {
+    if (res.clamped === 0) return [];
+    return [
+        `${res.clamped} of ${total} height sample(s) fell outside the representable range ` +
+        `[${TERRAIN_HEIGHT_FMIN}, ${TERRAIN_HEIGHT_FMAX}] m (computed ${fmt(res.low)}..${fmt(res.high)} m) ` +
+        'and were clamped',
+    ];
+}
+
+/**
+ * `set_heights` — flatten to a value, set from inline rows, or sample a heightmap over the
+ * region. Rows/heightmap are resampled onto the region's vertex grid by `heightmap.js` (the
+ * engine's `importHeightField` scheme, with a 1:1 copy when the source already matches).
+ */
+function setHeights(data, op, ctx) {
+    const r = parseRegion(op, data);
+    const range = vertexRange(data, r);
+    const mask = buildMask(data, r, op);
+    const clamp = parseEnum(op, 'clamp', CLAMPS, 'none');
+    const shaped = maskFactors(data, range, mask);
+    if (shaped.covered === 0) throw emptyMaskError(data, r, 'vertex');
+    const sources = ['value', 'rows', 'heightmap'].filter((k) => op[k] !== undefined);
+    if (sources.length !== 1) {
+        throw new TerrainOpError(
+            'set_heights needs exactly one of "value" (metres), "rows" (2D array of metres, ' +
+            'rows[j][i] with x fastest) or "heightmap" {source, min, max}' +
+            (sources.length ? ` — got ${sources.join(' + ')}` : '')
+        );
+    }
+    const where = `${describeRegion(data, r)} (${describeVertices(range)})`;
+
+    if (op.value !== undefined) {
+        const v = requireFinite(op, 'value');
+        checkHeightRange(v, 'value');
+        const raw = heightToRaw(v, true);
+        const stored = rawToHeight(raw);
+        const res = writeMaskedHeights(data, range, shaped.factors, () => v, clamp);
+        const notes = stored !== v
+            ? [`value ${v} m quantized to ${stored} m (heights are stored in 1/128 m steps)`]
+            : [];
+        notes.push(...maskNotes(data, mask, shaped, res, 'value', clamp));
+        return {
+            op: 'set_heights',
+            summary: `Flattened ${plural(res.touched, 'vertex', 'vertices')} to ${fmt(stored)} m over ` +
+                `${where}${describeMask(mask)}${describeCoverage(shaped, range)} ` +
+                `— ${res.changed} of them changed, largest move ${fmt(res.maxDelta)} m` +
+                (mask.falloff > 0 ? `, result ${fmt(res.low)}..${fmt(res.high)} m` : ''),
+            notes,
+        };
+    }
+
+    // The source is resampled onto the span the REGION asks for, not onto what survives the grid
+    // clamp — otherwise an overhanging region squeezes the whole source into the surviving part
+    const asked = range.asked;
+    if (asked.cols < 2 || asked.rows < 2) {
+        throw new TerrainOpError(
+            `a rows/heightmap source needs at least 2 vertices per axis; ${where} covers ` +
+            `${asked.cols}x${asked.rows} (vertices sit every ${fmt(data.tileSize)} m) — ` +
+            'use "value" to set a single row/column'
+        );
+    }
+    const [gvx, gvz] = vertexCounts(data.blockCount);
+    if (asked.cols * asked.rows > MAX_ASKED_VERTEX_FACTOR * gvx * gvz) {
+        throw new TerrainOpError(
+            `region ${describeRegion(data, r)} asks for a ${asked.cols}x${asked.rows} vertex span, ` +
+            `more than ${MAX_ASKED_VERTEX_FACTOR}x the terrain's own ${gvx}x${gvz} grid — a ` +
+            'rows/heightmap source is resampled onto the span the region asks for (so the part that ' +
+            'lands on the terrain keeps the source\'s scale), and that grid would be enormous. ' +
+            'Shrink the region to something near the terrain'
+        );
+    }
+    const usedRows = op.rows !== undefined;
+    const spec = usedRows ? { rows: op.rows } : op.heightmap;
+    let grid;
+    try {
+        grid = buildHeightGrid(spec, {
+            vertexCount: [asked.cols, asked.rows],
+            tileCount: [asked.cols - 1, asked.rows - 1],
+            projectRoot: ctx.projectRoot ?? null,
+            // Name the argument the caller actually passed: `rows` values wrapped into a
+            // heightmap-shaped spec must not be reported as "heightmap.rows[1] …".
+            label: usedRows ? 'rows' : 'heightmap',
+        });
+    } catch (err) {
+        if (err instanceof HeightmapError) throw new TerrainOpError(err.message);
+        throw new TerrainOpError(`${usedRows ? 'rows' : 'heightmap'}: ${err.message}`);
+    }
+    const res = writeMaskedHeights(
+        data,
+        range,
+        shaped.factors,
+        (i, j) => grid.heights[(j - asked.j0) * asked.cols + (i - asked.i0)],
+        clamp
+    );
+    const clipNote = range.clipped
+        ? [`the region overhangs the terrain: the source was resampled onto the full ` +
+           `${asked.cols}x${asked.rows} vertex span it asks for (vertices ${asked.i0}..${asked.i1} x ` +
+           `${asked.j0}..${asked.j1}), and only the part on the grid (${describeVertices(range)}) was ` +
+           'written — the source keeps its scale and is cropped, it is not squeezed into the terrain']
+        : [];
+    return {
+        op: 'set_heights',
+        summary: `Set ${plural(res.touched, 'vertex', 'vertices')} over ${where}` +
+            `${range.clipped ? `, clipped from the ${asked.cols}x${asked.rows} vertices it asks for` : ''}` +
+            `${describeMask(mask)}${describeCoverage(shaped, range)} from ` +
+            `${op.rows !== undefined ? 'inline rows' : `heightmap ${show(spec.source ?? 'inline')}`} ` +
+            `— ${res.changed} changed, range ${fmt(res.low)}..${fmt(res.high)} m, largest move ${fmt(res.maxDelta)} m`,
+        notes: [...grid.notes, ...clipNote, ...clampNote(res, res.touched), ...maskNotes(data, mask, shaped, res, 'height', clamp)],
+    };
+}
+
+/** `adjust_heights` — relative raise/lower over a region, tapered by the mask */
+function adjustHeights(data, op) {
+    const r = parseRegion(op, data);
+    const range = vertexRange(data, r);
+    const mask = buildMask(data, r, op);
+    const clamp = parseEnum(op, 'clamp', CLAMPS, 'none');
+    const delta = requireFinite(op, 'delta');
+    const shaped = maskFactors(data, range, mask);
+    if (shaped.covered === 0) throw emptyMaskError(data, r, 'vertex');
+    const res = writeMaskedHeights(data, range, shaped.factors, (i, j, current) => current + delta, clamp);
+    const notes = clampNote(res, res.touched);
+    if (delta !== 0 && Math.abs(delta) < TERRAIN_HEIGHT_FACTOR / 2) {
+        notes.push(
+            `delta ${delta} m is smaller than half a height quantum (${TERRAIN_HEIGHT_FACTOR} m), ` +
+            'so it rounds away to nothing'
+        );
+    }
+    notes.push(...maskNotes(data, mask, shaped, res, 'delta', clamp));
+    return {
+        op: 'adjust_heights',
+        summary: `${delta >= 0 ? 'Raised' : 'Lowered'} ${plural(res.touched, 'vertex', 'vertices')} by ` +
+            `${fmt(delta)} m over ${describeRegion(data, r)} (${describeVertices(range)}` +
+            `${describeMask(mask)}${describeCoverage(shaped, range)}) — ` +
+            `${res.changed} changed, result ${fmt(res.low)}..${fmt(res.high)} m before clamping`,
+        notes,
+    };
+}
+
+/**
+ * `smooth_heights` — 3x3 box blur (the editor's smooth brush equivalent).
+ *
+ * Edge behaviour, deliberate and documented: every tap of the 3x3 kernel exists, and a tap
+ * outside the TERRAIN reuses the nearest edge vertex (clamp-to-edge — the rule
+ * `HeightField.getClamp`/`Terrain.getHeightClamp` use), so a terrain border keeps its height
+ * instead of sagging toward 0. Taps outside the REGION but inside the terrain are read
+ * normally, so smoothing a patch blends into its surroundings instead of creasing at the
+ * region border; only vertices inside the region are written. Each iteration reads a snapshot
+ * of the previous one (so the result does not depend on the scan order) and re-quantizes to
+ * 1/128 m, which is why many iterations converge instead of flattening completely.
+ */
+function smoothHeights(data, op) {
+    const r = parseRegion(op, data);
+    const range = vertexRange(data, r);
+    const mask = buildMask(data, r, op);
+    const clamp = parseEnum(op, 'clamp', CLAMPS, 'none');
+    const iterations = op.iterations === undefined
+        ? 1
+        : requireIntIn(op, 'iterations', 1, MAX_SMOOTH_ITERATIONS);
+    const [vx, vz] = vertexCounts(data.blockCount);
+    const clampIdx = (v, max) => (v < 0 ? 0 : (v > max ? max : v));
+    const shaped = maskFactors(data, range, mask);
+    if (shaped.covered === 0) throw emptyMaskError(data, r, 'vertex');
+
+    // Blur unmasked, blend once at the end: applying the factor per iteration compounds it to
+    // t^n, a different curve
+    const original = Uint16Array.from(data.heights);
+    for (let it = 0; it < iterations; it++) {
+        const prev = Uint16Array.from(data.heights);
+        for (let j = range.j0; j <= range.j1; j++) {
+            for (let i = range.i0; i <= range.i1; i++) {
+                let sum = 0;
+                for (let dj = -1; dj <= 1; dj++) {
+                    const sj = clampIdx(j + dj, vz - 1);
+                    for (let di = -1; di <= 1; di++) {
+                        sum += prev[vertexIndex(data, clampIdx(i + di, vx - 1), sj)];
+                    }
+                }
+                // Raw units are an affine image of metres, so averaging raw == averaging
+                // metres; rounding here IS the 1/128 m quantization.
+                data.heights[vertexIndex(data, i, j)] = Math.round(sum / 9);
+            }
+        }
+    }
+    // Restore the pre-blur grid over the range, then re-apply it through the mask
+    const blurred = new Float32Array(range.cols * range.rows);
+    for (let j = range.j0; j <= range.j1; j++) {
+        for (let i = range.i0; i <= range.i1; i++) {
+            const index = vertexIndex(data, i, j);
+            blurred[(j - range.j0) * range.cols + (i - range.i0)] = rawToHeight(data.heights[index]);
+            data.heights[index] = original[index];
+        }
+    }
+    const res = writeMaskedHeights(
+        data,
+        range,
+        shaped.factors,
+        (i, j) => blurred[(j - range.j0) * range.cols + (i - range.i0)],
+        clamp
+    );
+
+    return {
+        op: 'smooth_heights',
+        summary: `Smoothed ${plural(res.touched, 'vertex', 'vertices')} over ${describeRegion(data, r)} ` +
+            `(${describeVertices(range)}${describeMask(mask)}${describeCoverage(shaped, range)}) with ` +
+            `${plural(iterations, 'iteration')} of a 3x3 box blur — ` +
+            `${res.changed} changed, largest move ${fmt(res.maxDelta)} m; outside the terrain the edge vertex ` +
+            'is reused, vertices outside the region are read but never written',
+        notes: maskNotes(data, mask, shaped, res, 'smoothing', clamp),
+    };
+}
+
+// --- weights ----------------------------------------------------------------
+
+/**
+ * Blocks a region touches, and per block the texels the mask covers with their factor. Positions
+ * come from `terrainBin.texelPosition`, so painting and sampling agree texel for texel.
+ */
+function regionTexels(data, r, mask, visit) {
+    const [bc0, bc1] = data.blockCount;
+    const wms = data.weightMapSize;
+    const blockSize = TERRAIN_BLOCK_TILE_COMPLEXITY * data.tileSize;
+    const clampB = (v, max) => Math.min(Math.max(v, 0), max);
+    const bx0 = clampB(Math.floor(r.x / blockSize), bc0 - 1);
+    const bx1 = clampB(Math.floor((r.x + r.width) / blockSize), bc0 - 1);
+    const by0 = clampB(Math.floor(r.z / blockSize), bc1 - 1);
+    const by1 = clampB(Math.floor((r.z + r.depth) / blockSize), bc1 - 1);
+
+    for (let by = by0; by <= by1; by++) {
+        for (let bx = bx0; bx <= bx1; bx++) {
+            for (let lj = 0; lj < wms; lj++) {
+                for (let li = 0; li < wms; li++) {
+                    const gi = bx * wms + li;
+                    const gj = by * wms + lj;
+                    const [x, z] = texelPosition(data, gi, gj);
+                    const t = mask.factorAt(x, z);
+                    if (t === null) continue;
+                    visit(bx, by, gi, gj, t);
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Metres between two adjacent weight texels of the same block — endpoint-inclusive, so
+ * `blockSize / (weightMapSize - 1)` and NOT `blockSize / weightMapSize` (texel 0 sits on the
+ * block's near edge and texel `weightMapSize - 1` on its far edge). Same figure
+ * `query_terrain` prints and `texelPosition` implements.
+ */
+function texelSpacing(data) {
+    return (TERRAIN_BLOCK_TILE_COMPLEXITY * data.tileSize) / Math.max(1, data.weightMapSize - 1);
+}
+
+/**
+ * Whether one texel fails the sum-255 convention OBSERVABLY — i.e. its block blends more than
+ * one layer, so the shader (a plain weighted sum) renders the shortfall as darkening. Measures
+ * the invariant `paint_layer` claims in its summary instead of asserting it.
+ *
+ * Scope matters here: only texels the op itself WROTE may be measured. A block-wide sweep would
+ * also count the editor's own output — its brush stores `trunc(w * 255)`, so a real editor-saved
+ * terrain holds thousands of `(254,0,0,0)` texels — and report them as a bug in this op, with a
+ * remedy (re-run the op) that provably cannot reach texels outside the region.
+ * @param {object} data
+ * @param {number} base - `weightTexelIndex(data, i, j)`
+ * @param {number[]} slots - The block's four palette slots
+ * @returns {boolean}
+ */
+function isShortTexel(data, base, slots) {
+    if (maxLayerIndex(slots) === 0) return false; // the weight map is not sampled for this block
+    const sum = data.weights[base] + data.weights[base + 1]
+        + data.weights[base + 2] + data.weights[base + 3];
+    return sum !== 255;
+}
+
+/**
+ * `paint_layer` — blend one layer's weight over a region, renormalizing the other channels so
+ * every touched texel keeps summing to 255, and auto-assigning the slot into each touched
+ * block's `layerBuffer`.
+ *
+ * The mask factor BLENDS, exactly as the height ops do: a texel ends at `current + (weight * 255 -
+ * current) * t`, so `t = 1` sets the requested weight and `t = 0` is a no-op on an already
+ * normalized texel (the others are given back exactly what they held). Writing `weight * t`
+ * instead made every falloff border ERASE the coverage it reached — two overlapping paints left a
+ * bare stripe of the underlying layer down the middle of continuous painting. A texel that was
+ * SHORT is still repaired at factor 0, and counted so the note can say so.
+ */
+function paintLayer(data, op, ctx) {
+    const slot = requireIntIn(op, 'layer', 0, TERRAIN_MAX_LAYER_COUNT - 1);
+    if (!data.layers.some((l) => l.slot === slot)) {
+        throw new TerrainOpError(
+            `no palette layer with slot ${slot} — the palette holds ` +
+            `${data.layers.length ? data.layers.map((l) => `${l.slot} (${label(ctx, l.detailMapId)})`).join(', ') : 'no layers'}; ` +
+            'add one with set_layer first'
+        );
+    }
+    const weight = requireNumberIn(op, 'weight', 0, 1);
+    const r = parseRegion(op, data);
+    const mask = buildMask(data, r, op);
+    const falloff = mask.falloff;
+
+    // Peak of `min(1, edge / falloff)` is `min(1, halfExtent / falloff)`; a band has no
+    // meaningful half-extent, so its peak is MEASURED below instead
+    const halfExtent = Math.min(r.width, r.depth) / 2;
+    const peakFactor = falloff > 0 && r.shape !== 'band' ? Math.min(1, halfExtent / falloff) : 1;
+
+    // Pass 1: which blocks are touched, and can each host the layer? All-or-nothing, so the
+    // whole plan is checked before a single byte moves.
+    const touched = new Map(); // blockIndex -> texel count
+    regionTexels(data, r, mask, (bx, by) => {
+        const b = blockIndex(bx, by, data.blockCount);
+        touched.set(b, (touched.get(b) ?? 0) + 1);
+    });
+    if (touched.size === 0) {
+        if (r.shape !== 'rect') throw emptyMaskError(data, r, 'texel');
+        throw new TerrainOpError(
+            `region ${describeRegion(data, r)} contains no weight texel — texels sit every ` +
+            `${fmt(texelSpacing(data))} m (weightMapSize ${data.weightMapSize} per block side)`
+        );
+    }
+
+    const channelOf = new Map();
+    const assigned = [];
+    const full = [];
+    for (const b of [...touched.keys()].sort((a, c) => a - c)) {
+        const [bx, by] = blockCoords(b, data.blockCount);
+        const slots = blockLayers(data, bx, by);
+        let k = slots.indexOf(slot);
+        if (k < 0) {
+            k = slots.indexOf(-1); // blocks stay left-packed, so this is the first free channel
+            if (k < 0) {
+                full.push(`[${bx},${by}] uses slots ${slots.join(', ')}`);
+                continue;
+            }
+            assigned.push([bx, by, k]);
+        }
+        channelOf.set(b, k);
+    }
+    if (full.length) {
+        throw new TerrainOpError(
+            `layer ${slot} cannot be painted: all ${TERRAIN_MAX_BLEND_LAYERS} blend slots of ` +
+            `${plural(full.length, 'block')} are taken by other layers — ${full.slice(0, 8).join('; ')}` +
+            `${full.length > 8 ? '; …' : ''}. A block blends at most ${TERRAIN_MAX_BLEND_LAYERS} ` +
+            'layers (the weight map has 4 channels); free one with remove_layer or set_block_layers'
+        );
+    }
+
+    // Pass 2: assign, then write.
+    // A block that GAINS a channel here may hold texels that do not sum to 255 — from an earlier
+    // paint into what was then its only assigned layer, or from a hand-made file. Gaining a channel
+    // changes what the block blends (and, from one layer, whether it samples the weight map at all),
+    // so a stale byte ANYWHERE in it becomes visible: repair the whole block on assignment, exactly
+    // as `remove_layer` does when it changes a block's channel set.
+    let repaired = 0;
+    let repairedBlocks = 0;
+    for (const [bx, by, k] of assigned) {
+        const slots = blockLayers(data, bx, by);
+        slots[k] = slot;
+        setBlockLayers(data, bx, by, slots);
+        const moved = renormalizeBlock(data, bx, by).changed;
+        repaired += moved;
+        if (moved) repairedBlocks++;
+    }
+    const slotsByBlock = new Map();
+    for (const b of touched.keys()) {
+        slotsByBlock.set(b, blockLayers(data, ...blockCoords(b, data.blockCount)));
+    }
+
+    let texels = 0;
+    let forced = 0;
+    let splitSum = 0;
+    let zeroed = 0;
+    let short = 0;
+    let rescaled = 0;
+    let idleChanged = 0;
+    let vLow = Infinity;
+    let vHigh = -Infinity;
+    let ti0 = Infinity;
+    let ti1 = -Infinity;
+    let tj0 = Infinity;
+    let tj1 = -Infinity;
+    let peak = 0;
+    const target = weight * 255;
+    regionTexels(data, r, mask, (bx, by, gi, gj, t) => {
+        if (t > peak) peak = t;
+        const b = blockIndex(bx, by, data.blockCount);
+        const k = channelOf.get(b);
+        const slots = slotsByBlock.get(b);
+        const base = weightTexelIndex(data, gi, gj);
+        const current = data.weights[base + k];
+        // Factor 0 asks for no change, but a texel that was already SHORT is still renormalized —
+        // snapshot it (border only) so the note can count the bytes that moved unasked
+        const wasShort = isShortTexel(data, base, slots);
+        const wasBytes = t > 0 ? null : [
+            data.weights[base], data.weights[base + 1],
+            data.weights[base + 2], data.weights[base + 3],
+        ];
+        // BLEND toward the target, never write `weight * t`: the mask edge must leave the coverage
+        // that is already there alone (see the op's doc block)
+        const value = Math.round(t >= 1 ? target : current + (target - current) * t);
+        const res = paintTexel(data, base, slots, k, value);
+        // The invariant this op advertises, MEASURED rather than asserted — on the texel just
+        // written, while its block's slots are at hand
+        if (isShortTexel(data, base, slots)) short++;
+        if (wasShort) rescaled++;
+        if (wasBytes && wasBytes.some((v, c) => data.weights[base + c] !== v)) idleChanged++;
+        texels++;
+        // Statistics read the STORED byte, which `paintTexel` may override (a single-layer block)
+        const stored = data.weights[base + k];
+        if (stored === 0) zeroed++;
+        if (res.forced) forced++;
+        if (res.split) splitSum++;
+        if (stored < vLow) vLow = stored;
+        if (stored > vHigh) vHigh = stored;
+        ti0 = Math.min(ti0, gi); ti1 = Math.max(ti1, gi);
+        tj0 = Math.min(tj0, gj); tj1 = Math.max(tj1, gj);
+    });
+
+    // The REQUEST is one number for the region, so it decides "ignored" and the blended value does
+    // not: a forced texel stores 255 at every factor, which IS the request at weight 1, not below it
+    const ignored = weight < 1 ? forced : 0;
+    // The blend means the requested weight is not the whole story: report what was really stored.
+    // A single value is not a range — the summary omits it, so this must never read "1..1" either.
+    const ranged = vLow !== vHigh;
+    const wrote = ranged
+        ? `weights written ${fmt((vLow < 0 ? 0 : vLow) / 255)}..${fmt((vHigh < 0 ? 0 : vHigh) / 255)}`
+        : `every touched texel at weight ${fmt((vHigh < 0 ? 0 : vHigh) / 255)}`;
+    const notes = [];
+    // Both branches make the same claim about the same mask; only where the peak comes from and
+    // what to do about it differ (a band has no half-extent, so its peak is MEASURED). For a
+    // rect/ellipse the analytic branch is exact about the region, so a measured shortfall there is
+    // just the texel grid missing the peak and the band advice does not apply (region.inner/outer
+    // are rejected outside a band).
+    const wide = peakFactor < 1 - 1e-9
+        ? {
+            than: `the region's ${fmt(halfExtent)} m half-extent`,
+            peak: fmt(peakFactor) + (fmt(peak) === fmt(peakFactor) ? '' : ` (${fmt(peak)} on the texel grid)`),
+            fix: `Use a falloff of at most ${fmt(halfExtent)} m, or a larger region`,
+        }
+        : (r.shape === 'band' && falloff > 0 && peak < 1 - 1e-6 ? {
+            than: 'the band is thick',
+            peak: fmt(peak),
+            fix: 'Use a smaller falloff, or a wider band (a larger inner/outer spread)',
+        } : null);
+    if (wide) {
+        // `1 - peak` is what the DEEPEST texel keeps, a floor and not the amount every texel keeps —
+        // so state the MOVE. A texel whose block assigns this layer alone escapes the bound
+        // entirely: `paintTexel` stores 255 there whatever the factor. That count is `forced`, not
+        // `ignored` (at weight 1 nothing is ignored and they still escape), so "bounds nothing here"
+        // holds for any region wholly inside such blocks — whatever those texels happened to hold.
+        const seeBelow = ignored ? ' — see below' : '';
+        const bounded = forced === texels
+            ? `but that bounds nothing here: every texel it covers (${texels}) sits in a block ` +
+              `assigning layer ${slot} alone, so each was set to weight 1 regardless of its factor ` +
+              `(${wrote})${seeBelow}`
+            : `so the requested weight ${fmt(weight)} is reached NOWHERE that did not already hold ` +
+              `it${forced ? `, EXCEPT the ${plural(forced, 'texel')} whose block assigns layer ${slot} ` +
+                  `alone (set to weight 1 whatever the factor${seeBelow})` : ''}: a paint ` +
+              `BLENDS, so no texel moves more than ${fmt(peak)} of the way from what it held toward ` +
+              `${fmt(weight)}, and every texel at a lower factor moves less (${wrote})`;
+        notes.push(
+            `falloff ${fmt(falloff)} m is wider than ${wide.than} — the mask peaks at ${wide.peak}, ` +
+            `${bounded}. ${wide.fix}`
+        );
+    }
+    if (assigned.length) {
+        notes.push(
+            `layer ${slot} was assigned to ${assigned.map(([bx, by, k]) => `channel ${'RGBA'[k]} of block [${bx},${by}]`).join(', ')}`
+        );
+    }
+    // The accident this op can cause: the auto-assignment makes the layer a block's ONLY
+    // channel, and the engine then draws it flat over that block's whole 32x32-tile area
+    // instead of only the painted texels. Most visible when a region ends exactly on a block
+    // seam, where a single edge texel reaches into the untouched neighbour.
+    const sole = assigned
+        .map(([bx, by]) => [bx, by, blockLayers(data, bx, by)])
+        .filter(([, , s]) => s[0] === slot && s[1] < 0 && s[2] < 0 && s[3] < 0);
+    if (sole.length) {
+        notes.push(
+            `layer ${slot} became the ONLY layer of ${plural(sole.length, 'block')} ` +
+            `(${sole.map(([bx, by]) => `[${bx},${by}]`).join(', ')}), so those blocks now render it ` +
+            `over their WHOLE ${TERRAIN_BLOCK_TILE_COMPLEXITY}x${TERRAIN_BLOCK_TILE_COMPLEXITY}-tile ` +
+            `(${fmt(TERRAIN_BLOCK_TILE_COMPLEXITY * data.tileSize)} m) area, not just the painted ` +
+            'region: the engine drops the weight map for a block with a single assigned channel and ' +
+            'draws that detail map flat (terrain.ts:920-930, terrain.effect LAYERS==1). Weight texels ' +
+            `sit ON block edges, so a region ending exactly on a seam reaches ${fmt(texelSpacing(data))} m ` +
+            '(one texel) into the next block — shrink the region by that much to stay inside, or ' +
+            'paint the neighbour deliberately'
+        );
+    }
+    // Nothing to report at weight 1: 255 IS the request there, and that those texels also escaped
+    // the mask is what the wide-falloff note above states, from `forced`
+    if (ignored) {
+        notes.push(
+            `${plural(ignored, 'texel')} got weight 1 instead of the requested ${fmt(weight)}, ` +
+            'whatever the mask factor there: ' +
+            `layer ${slot} is the only layer their block assigns, so there is no other channel to ` +
+            'carry the remaining weight and the shader ignores the weight map for such a block ' +
+            'anyway. Storing the requested value would render correctly now but turn into a dark ' +
+            'patch the moment a second layer is painted into that block'
+        );
+    }
+    if (splitSum) {
+        notes.push(
+            `${plural(splitSum, 'texel')} had no weight on any other layer, so whatever was left ` +
+            'over this layer\'s share was split equally between the block\'s other assigned layers'
+        );
+    }
+    // ONE account of short-texel repair over its two DISJOINT sources: the sweep of a block that
+    // gained the layer (which leaves nothing short behind, so `rescaled` cannot re-count its texels)
+    // and the writes themselves — of which only the sweep and the factor-0 ones are UNASKED bytes,
+    // since a texel at factor 1 was asked to be written.
+    const wasShortCount = repaired + rescaled;
+    if (wasShortCount || idleChanged) {
+        const sources = [];
+        if (repaired) {
+            sources.push([repaired, `in ${plural(repairedBlocks, 'block')} that gained layer ${slot}, ` +
+                'swept WHOLE before painting (region or not: gaining a channel changes what the block ' +
+                'blends, so a stale byte anywhere in it becomes visible)']);
+        }
+        if (rescaled) {
+            sources.push([rescaled, `as ${rescaled === 1 ? 'it was' : 'they were'} written`]);
+        }
+        // One count per source, and only the total when there are two of them to add up
+        const where = sources
+            .map(([n, text]) => `${sources.length > 1 ? `${n} ` : ''}${text}`)
+            .join('; ');
+        const unasked = [
+            repaired ? 'the sweep reaches beyond the region' : null,
+            idleChanged ? 'a factor-0 texel asked for no change at all' : null,
+        ].filter(Boolean).join('; ');
+        notes.push(
+            (wasShortCount
+                ? `${plural(wasShortCount, 'texel')} did not sum to 255 before this op and ` +
+                  `${wasShortCount === 1 ? 'was' : 'were'} rescaled to it, ${where}. `
+                : '') +
+            (idleChanged
+                ? `${plural(idleChanged, 'texel')} changed where the mask factor is 0 — a blend by 0 ` +
+                  `keeps layer ${slot}'s own byte, but the other channels are still renormalized and ` +
+                  'a byte under an un-assigned channel is zeroed. '
+                : '') +
+            'The sum-255 convention is deliberate (a short texel renders darkened as soon as its ' +
+            'block blends a second layer), so these are repairs and not overwritten edits' +
+            (unasked ? ` — and bytes moved outside what this op was asked to write: ${unasked}` : '')
+        );
+    }
+    if (short) {
+        notes.push(
+            `${plural(short, 'texel')} THIS OP WROTE in a multi-layer block do not sum to 255 and ` +
+            'will render darkened — this should not happen; please report it'
+        );
+    }
+
+    return {
+        op: 'paint_layer',
+        summary: `Painted layer ${slot} (${label(ctx, data.layers[slot]?.detailMapId)}) at weight ` +
+            `${fmt(weight)} over ${plural(texels, 'texel')} in ${plural(touched.size, 'block')} ` +
+            `(${describeRegion(data, r)}${describeMask(mask)}` +
+            `; global texels ${ti0}..${ti1} x ${tj0}..${tj1}` +
+            // The mask BLENDS, so what a texel ended at also depends on what it held
+            (ranged ? `, ${wrote}` : '') +
+            `${zeroed ? `, ${zeroed} of them at weight 0` : ''})` +
+            (short ? '' : '; every touched texel sums to 255'),
+        notes,
+    };
+}
+
+/**
+ * `set_block_layers` — low-level `layerBuffer` write. No weight is PAINTED (use `paint_layer`), but
+ * the stored bytes follow their LAYER through the change and are renormalized — see
+ * {@link remapBlockWeights}.
+ */
+function setBlockLayersOp(data, op, ctx) {
+    if (op.block === undefined) {
+        throw new TerrainOpError(
+            '"block" is required: [x, z] block coordinates (0-based, same order as blockCount — '
+            + 'the second component walks along Z), or "all"'
+        );
+    }
+    const [bc0, bc1] = data.blockCount;
+    const all = op.block === 'all';
+    if (!all) {
+        if (!Array.isArray(op.block) || op.block.length !== 2
+            || !op.block.every((v) => Number.isInteger(v))) {
+            throw new TerrainOpError(
+                `"block" must be [x, z] integer block coordinates or "all", got ${show(op.block)} ` +
+                `(this terrain has ${bc0} x ${bc1} blocks)`
+            );
+        }
+        if (op.block[0] < 0 || op.block[0] >= bc0 || op.block[1] < 0 || op.block[1] >= bc1) {
+            throw new TerrainOpError(
+                `block [${op.block}] is outside the ${bc0} x ${bc1} block grid ` +
+                `(valid: [0..${bc0 - 1}, 0..${bc1 - 1}])`
+            );
+        }
+    }
+    if (!Array.isArray(op.layers)) {
+        throw new TerrainOpError(
+            '"layers" must be an array of up to 4 palette slots, -1 for an empty channel ' +
+            '(e.g. [0, 2] = layer 0 on channel R, layer 2 on channel G)'
+        );
+    }
+    if (op.layers.length > TERRAIN_MAX_BLEND_LAYERS) {
+        throw new TerrainOpError(
+            `"layers" has ${op.layers.length} entries but a block has only ` +
+            `${TERRAIN_MAX_BLEND_LAYERS} blend slots (the weight map's R/G/B/A channels)`
+        );
+    }
+    const slots = [];
+    for (let k = 0; k < TERRAIN_MAX_BLEND_LAYERS; k++) {
+        const v = k < op.layers.length ? op.layers[k] : -1;
+        if (!Number.isInteger(v) || v < -1 || v >= TERRAIN_MAX_LAYER_COUNT) {
+            throw new TerrainOpError(
+                `layers[${k}] = ${show(v)} must be -1 (empty) or a palette slot in ` +
+                `0..${TERRAIN_MAX_LAYER_COUNT - 1}`
+            );
+        }
+        if (v >= 0 && !data.layers.some((l) => l.slot === v)) {
+            throw new TerrainOpError(
+                `layers[${k}] = ${v} has no palette entry — the palette holds ` +
+                `${data.layers.length ? `slots 0..${data.layers.length - 1}` : 'no layers'}; ` +
+                'add one with set_layer'
+            );
+        }
+        if (v >= 0 && slots.includes(v)) {
+            throw new TerrainOpError(
+                `layers: palette slot ${v} appears twice — one block channel per layer`
+            );
+        }
+        if (v >= 0 && slots.length && slots[slots.length - 1] === -1) {
+            throw new TerrainOpError(
+                `layers ${JSON.stringify(op.layers)} leaves an empty channel before a used one — ` +
+                'block slots must stay left-packed, because the engine derives the sampled layer ' +
+                'count from the HIGHEST used channel and renders an empty one below it as nothing'
+            );
+        }
+        slots.push(v);
+    }
+
+    const targets = all
+        ? Array.from({ length: bc0 * bc1 }, (_, b) => blockCoords(b, data.blockCount))
+        : [[op.block[0], op.block[1]]];
+    let changed = 0;
+    const changedBlocks = [];
+    for (const [bx, by] of targets) {
+        const before = blockLayers(data, bx, by);
+        try {
+            setBlockLayers(data, bx, by, slots);
+        } catch (err) {
+            throw new TerrainOpError(err.message);
+        }
+        if (before.some((v, k) => v !== slots[k])) {
+            changed++;
+            changedBlocks.push([bx, by, before]);
+        }
+    }
+
+    // A weight byte belongs to its LAYER, not to its channel position, so the bytes follow the
+    // layers through the slot change — the same thing `terrainBin.removeLayer` does. Then
+    // renormalize: a channel whose layer the block did not carry starts at 0, so the four channels
+    // no longer sum to 255 and the shader (a plain weighted sum) would darken the whole block.
+    let renormalized = 0;
+    let remapped = 0;
+    let filled = 0;
+    let fallbackSlot = -1;
+    for (const [bx, by, before] of changedBlocks) {
+        remapped += remapBlockWeights(data, bx, by, before, slots);
+        const res = renormalizeBlock(data, bx, by);
+        renormalized += res.changed;
+        filled += res.filled;
+        if (res.filled > 0) fallbackSlot = res.first;
+    }
+
+    const used = slots.filter((v) => v >= 0);
+    const notes = [];
+    if (used.length === 0) {
+        notes.push(
+            'the block(s) now assign no layer at all and will render the effect\'s flat grey ' +
+            'fallback — assign a layer with set_layer + paint_layer'
+        );
+    }
+    notes.push(
+        'weights are not PAINTED by this op: a channel whose layer the block did not carry before ' +
+        'starts at 0 coverage (a freshly built terrain has R = 255, G/B/A = 0). Use paint_layer ' +
+        'to set them'
+    );
+    if (remapped) {
+        notes.push(
+            `the weights of ${plural(remapped, 'texel')} FOLLOWED their layer: each channel now ` +
+            'carries the bytes of the layer assigned to it, wherever that layer sat before, and a ' +
+            'channel whose layer the block did not carry was zeroed — a weight belongs to its layer, ' +
+            'not to its channel position'
+        );
+    }
+    if (renormalized) {
+        notes.push(
+            `${plural(renormalized, 'texel')} were renormalized: the surviving channels were ` +
+            'rescaled back to a sum of 255 after that remap, so the block does not render darkened ' +
+            'and no stale byte resurfaces if a channel gains a layer again'
+        );
+    }
+    if (filled) {
+        notes.push(
+            `${plural(filled, 'texel')} were covered by an un-assigned layer ALONE and had no ` +
+            `weight left at all; they fall back to layer ${fallbackSlot} at full weight (what a ` +
+            'freshly created block looks like) instead of rendering as nothing'
+        );
+    }
+    return {
+        op: 'set_block_layers',
+        summary: `Set the layer slots of ${all ? `all ${plural(targets.length, 'block')}` : `block [${op.block}]`} ` +
+            `to [${slots.join(', ')}]` +
+            `${used.length ? ` = ${used.map((v) => `${'RGBA'[slots.indexOf(v)]}: ${label(ctx, data.layers[v]?.detailMapId)}`).join(', ')}` : ''} ` +
+            `(${changed} of ${targets.length} block(s) actually changed)`,
+        notes,
+    };
+}
+
+// --- dispatch ---------------------------------------------------------------
+
+const HANDLERS = {
+    set_info: setInfo,
+    set_layer: setLayer,
+    remove_layer: removeLayerOp,
+    set_heights: setHeights,
+    adjust_heights: adjustHeights,
+    smooth_heights: smoothHeights,
+    paint_layer: paintLayer,
+    set_block_layers: setBlockLayersOp,
+};
+
+/** The op names `edit_terrain` accepts, in documentation order */
+export const TERRAIN_OP_NAMES = Object.keys(HANDLERS);
+
+/**
+ * Apply ONE operation to an in-memory terrain data object.
+ * @param {object} data - Terrain data object (mutated in place)
+ * @param {object} op - `{op: name, …}`
+ * @param {{assetIndex?: object, projectRoot?: string}} [ctx]
+ * @returns {{op: string, summary: string, notes: string[]}}
+ * @throws {TerrainOpError}
+ */
+export function applyTerrainOperation(data, op, ctx = {}) {
+    // `Object.hasOwn`, not a bare lookup: `HANDLERS.constructor` / `.toString` / `.valueOf` all
+    // resolve through Object.prototype, so a bare truthiness check would let `{op: "constructor"}`
+    // past this guard and "succeed" as a no-op that still writes the file.
+    if (!Object.hasOwn(HANDLERS, op?.op ?? '')) {
+        throw new TerrainOpError(
+            `Unknown op "${op?.op}". Supported: ${TERRAIN_OP_NAMES.join(', ')}`
+        );
+    }
+    const handler = HANDLERS[op.op];
+    validateOpKeys(op);
+    const result = handler(data, op, ctx);
+    result.notes = result.notes ?? [];
+    return result;
+}
+
+/**
+ * Make `data` writable before any op runs: materialize the "Create > Terrain" sentinel into
+ * real buffers (what the editor does on its first save) and drop stored normals (the editor
+ * writes none and the engine rebuilds them on load, so `writeTerrain` never emits any).
+ *
+ * `geometryRepairPending`: the stored geometry is unwritable and a `set_info` in THIS batch
+ * replaces it, so the rebuild below must not re-apply the rule that batch is about to satisfy.
+ *
+ * @param {object} data
+ * @param {string[]} notes
+ * @param {{geometryRepairPending?: boolean}} [options]
+ */
+function prepare(data, notes, options = {}) {
+    const repairPending = options.geometryRepairPending === true;
+    if (data.isDefaultSentinel || data.version === TERRAIN_DATA_VERSION_DEFAULT) {
+        let materialized;
+        try {
+            materialized = materialize(data, { allowUnwritableGeometry: repairPending });
+        } catch (err) {
+            throw new TerrainOpError(err.message);
+        }
+        delete data.payloadLength;
+        Object.assign(data, materialized);
+        const [vx, vz] = vertexCounts(data.blockCount);
+        notes.push(
+            'this file was the empty "Create > Terrain" sentinel (a 4-byte header, everything else ' +
+            `implied) — it is materialized into real buffers first: ${vx}x${vz} vertices at 0 m, ` +
+            `a ${data.weightMapSize * data.blockCount[0]}x${data.weightMapSize * data.blockCount[1]} ` +
+            'weight map of (255,0,0,0) and no layer assignments, exactly what the editor writes on ' +
+            'its first save'
+        );
+    } else if (data.version !== TERRAIN_DATA_VERSION8) {
+        notes.push(
+            `this file is format ${versionName(data.version)}; it is rewritten as V8 (the only ` +
+            'version the editor writes since 3.8). Heights were migrated from the old 1/512 m ' +
+            'quantum to 1/128 m on read, which is exactly what the engine does on load'
+        );
+    }
+    // Mis-sized buffers: the engine DISCARDS them on load and rebuilds
+    // (`_buildImp`, terrain.ts:2481-2526). Do the same before editing, so an op cannot read
+    // `undefined` out of a short buffer and silently store a 0 (= -256 m / palette slot 0).
+    const expected = expectedCounts(data.blockCount, data.weightMapSize);
+    const mismatched = [
+        ['heights', data.heights?.length ?? 0, expected.heights],
+        ['weights', data.weights?.length ?? 0, expected.weights],
+        ['layerBuffer', data.layerBuffer?.length ?? 0, expected.layerBuffer],
+    ].filter(([, have, want]) => have !== want);
+    if (mismatched.length) {
+        let rebuilt;
+        try {
+            rebuilt = materialize(data, { allowUnwritableGeometry: repairPending });
+        } catch (err) {
+            // Only a geometry that cannot even be SIZED reaches here (format rules are waived
+            // while a repair is pending), so keep the up-front guard's "property of the FILE" framing.
+            throw new TerrainOpError(
+                `this .terrain cannot be prepared for editing: ${err.message}. The value is what ` +
+                'the FILE already stores, so no edit can be saved while it stands — and it is too ' +
+                'far out for a set_info to repair (that would still have to allocate these buffers)'
+            );
+        }
+        Object.assign(data, rebuilt);
+        notes.push(
+            `this file declares blockCount [${data.blockCount}] / weightMapSize ${data.weightMapSize} ` +
+            `but stores ${mismatched.map(([name, have, want]) => `${have} ${name} instead of ${want}`).join(' and ')} ` +
+            '— those buffers were REBUILT from scratch (flat 0 m heights / (255,0,0,0) weights / no ' +
+            'layer assignments), which is exactly what the engine does with them on load ' +
+            '(terrain.ts:2481-2526). Their previous contents are gone' +
+            (repairPending
+                ? '. They were rebuilt onto the geometry the file still declares, which this batch\'s ' +
+                  'set_info then replaces — so they are rebuilt a second time, onto the new one'
+                : '')
+        );
+    }
+
+    if ((data.normals?.length ?? 0) !== 0) {
+        notes.push(
+            `this file stores ${data.normals.length} normal float(s); the editor writes none and the ` +
+            'engine rebuilds them on load, so they are dropped by this write (no visual change)'
+        );
+        data.normals = new Float32Array(0);
+    }
+    data.version = TERRAIN_DATA_VERSION8;
+    // A palette that is already dense (everything this module and the editor write) makes
+    // this a no-op; a hand-made sparse one is repaired here rather than at write time, where
+    // the invariant check would only reject it.
+    const before = [...(data.layerBuffer ?? [])];
+    const { changedSlots, clearedRefs } = compactPalette(data);
+    if (changedSlots > 0) {
+        notes.push(
+            `${plural(changedSlots, 'palette layer')} had a slot number other than its array index; ` +
+            'they were re-indexed (and every layerBuffer reference remapped) because the binary ' +
+            'format requires a dense palette'
+        );
+    }
+    // `compactPalette` rewrites a layerBuffer value with no matching layer record to -1. Saying
+    // so matters twice over: the block loses a layer assignment, and the -1 can land BELOW a used
+    // channel, which the engine then samples as a null layer (renders as nothing). Left-pack
+    // those blocks — moving each surviving channel's weights along, exactly like `removeLayer` —
+    // so the repair is complete instead of half-done.
+    if (clearedRefs > 0) {
+        const dropped = new Set();
+        const blocks = [];
+        for (let i = 0; i < before.length; i++) {
+            if (before[i] >= 0 && data.layerBuffer[i] < 0) {
+                dropped.add(before[i]);
+                const b = Math.floor(i / TERRAIN_MAX_BLEND_LAYERS);
+                if (!blocks.includes(b)) blocks.push(b);
+            }
+        }
+        const packed = blocks.filter((b) => leftPackBlock(data, ...blockCoords(b, data.blockCount)));
+        notes.push(
+            `${plural(clearedRefs, 'layerBuffer entry', 'layerBuffer entries')} referenced palette ` +
+            `slot(s) ${[...dropped].sort((a, c) => a - c).join(', ')}, which have no layer record — ` +
+            `they were cleared to -1, so ${plural(blocks.length, 'block')} lost a layer assignment` +
+            (packed.length
+                ? `, and ${plural(packed.length, 'block')} had their remaining channels left-packed ` +
+                  '(weights moved along and renormalized) because a -1 below a used channel is ' +
+                  'sampled as a null layer'
+                : '')
+        );
+    }
+}
+
+/**
+ * Move a block's assigned channels (slots AND their weight bytes) down to channels 0..n-1,
+ * zeroing the freed ones, then renormalize. No-op — and returns false — when the block is
+ * already left-packed.
+ * @param {object} data
+ * @param {number} bx
+ * @param {number} by
+ * @returns {boolean} whether anything moved
+ */
+function leftPackBlock(data, bx, by) {
+    const slots = blockLayers(data, bx, by);
+    const keep = [];
+    for (let k = 0; k < TERRAIN_MAX_BLEND_LAYERS; k++) {
+        if (slots[k] >= 0) keep.push(k);
+    }
+    if (keep.every((k, n) => k === n)) return false;
+    setBlockLayers(data, bx, by, keep.map((k) => slots[k]));
+    const wms = data.weightMapSize;
+    for (let j = 0; j < wms; j++) {
+        for (let i = 0; i < wms; i++) {
+            const base = weightTexelIndex(data, bx * wms + i, by * wms + j);
+            const old = [
+                data.weights[base], data.weights[base + 1],
+                data.weights[base + 2], data.weights[base + 3],
+            ];
+            for (let k = 0; k < TERRAIN_MAX_BLEND_LAYERS; k++) {
+                data.weights[base + k] = k < keep.length ? old[keep[k]] : 0;
+            }
+        }
+    }
+    renormalizeBlock(data, bx, by);
+    return true;
+}
+
+/** The geometry fields `set_info` can replace — i.e. the ones a bad file can be repaired through */
+const SIZING_FIELDS = ['blockCount', 'tileSize', 'weightMapSize', 'lightMapSize'];
+
+/**
+ * Whether the geometry a file already stores can be written back at all. The question is put to
+ * `terrainBin` — rather than re-deriving the rules here — so the answer, and the message naming
+ * the offending field, stay the format's own. Only the SCALAR half is asked: buffer sizes are
+ * `prepare()`'s business, which rebuilds them.
+ * @param {object} data - Terrain data object
+ * @returns {string|null} The message the write would fail with, or null when the geometry is fine
+ */
+function geometryWriteError(data) {
+    try {
+        validateTerrainGeometry(data);
+        return null;
+    } catch (err) {
+        return err.message.replace(/^terrain: /, '');
+    }
+}
+
+/**
+ * Whether the batch really REPAIRS the geometry: its `set_info` values composed over the stored
+ * ones and re-asked of the format, so `set_info {blockCount}` on a bad `weightMapSize` is not it.
+ */
+function repairsGeometry(ops, data) {
+    const setInfos = ops.filter((op) => op?.op === 'set_info');
+    if (setInfos.length === 0) return false;
+    const geometry = {};
+    for (const field of SIZING_FIELDS) geometry[field] = data[field];
+    for (const op of setInfos) {
+        for (const field of SIZING_FIELDS) {
+            if (op[field] !== undefined) geometry[field] = op[field];
+        }
+    }
+    return geometryWriteError(geometry) === null;
+}
+
+/**
+ * Apply a batch of operations in order, all-or-nothing. Throws on the first failing op, at
+ * which point `data` is partially modified and MUST be discarded — the caller writes only on
+ * success.
+ *
+ * @param {object} data - Terrain data object from `readTerrain` (mutated in place)
+ * @param {object[]} ops
+ * @param {{assetIndex?: object, projectRoot?: string}} [ctx]
+ * @returns {{results: Array<{op: string, summary: string, notes: string[]}>, notes: string[]}}
+ * @throws {TerrainOpError}
+ */
+export function applyTerrainOperations(data, ops, ctx = {}) {
+    if (!Array.isArray(ops) || ops.length === 0) {
+        throw new TerrainOpError('ops must be a non-empty array');
+    }
+    // A stored geometry the binary format cannot represent makes the file unwritable: the caller
+    // validates the whole data object before writing, so every op would run and then be discarded
+    // with "the edits produced an invalid terrain", blaming the batch for a property of the file.
+    // Refuse before the first op instead — unless the batch REPLACES the offending number, which
+    // is the only repair and must stay an explicit op: `set_info` rebuilds the buffers onto the
+    // new geometry, and that is a data change nobody may make on the caller's behalf.
+    const geometryError = geometryWriteError(data);
+    if (geometryError && !repairsGeometry(ops, data)) {
+        throw new TerrainOpError(
+            `this .terrain cannot be written back at all: ${geometryError}. Nothing is wrong with ` +
+            'the requested ops — the value is what the FILE already stores (the engine accepts it, ' +
+            'the binary format does not), so no edit can be saved while it stands. Repair it inside ' +
+            'the batch: put a {"op": "set_info", ...} replacing that value first (weightMapSize 128, ' +
+            'say, or another power of two the editor offers), which rebuilds the terrain onto the ' +
+            'new geometry'
+        );
+    }
+    const notes = [];
+    prepare(data, notes, { geometryRepairPending: Boolean(geometryError) });
+    const results = ops.map((op, i) => {
+        try {
+            return applyTerrainOperation(data, op, ctx);
+        } catch (err) {
+            throw new TerrainOpError(`op[${i}] ${op?.op ?? '<no op field>'}: ${err.message}`);
+        }
+    });
+    return { results, notes };
+}

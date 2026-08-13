@@ -90,4 +90,47 @@ describe('SceneParser', () => {
         assert.ok(parser.nodes.size > 0, 'should have nodes');
         assert.ok(parser.components.size > 0, 'should have components');
     });
+
+    it('keeps instance overrides whose name collides with Object.prototype', () => {
+        // The first-wins dedup asked `path[0] in overrides` on a plain object, so a
+        // serialized override named "toString" looked already-present and was dropped,
+        // and `__proto__` re-parented the accumulator instead of becoming a key.
+        const override = (path, value, next) => [
+            {
+                __type__: 'CCPropertyOverrideInfo',
+                targetInfo: { __id__: next }, propertyPath: [path], value
+            },
+            { __type__: 'cc.TargetInfo', localID: ['ROOT-FILE-ID'] }
+        ];
+        const scene = [
+            { __type__: 'cc.Scene', _name: 'S', _children: [{ __id__: 1 }] },
+            { __type__: 'cc.Node', _name: '', _id: 'stub', _prefab: { __id__: 2 } },
+            {
+                __type__: 'cc.PrefabInfo', fileId: 'ROOT-FILE-ID',
+                asset: { __uuid__: 'aaaa1111-2222-4333-8444-555555555555' },
+                instance: { __id__: 3 }
+            },
+            {
+                __type__: 'cc.PrefabInstance',
+                propertyOverrides: [{ __id__: 4 }, { __id__: 6 }, { __id__: 8 }]
+            },
+            ...override('toString', 'kept', 5),
+            ...override('__proto__', { hijacked: true }, 7),
+            ...override('_name', 'Renamed', 9)
+        ];
+
+        const dir = mkdtempSync(join(tmpdir(), 'scene-parser-overrides-'));
+        const filePath = join(dir, 'proto.scene');
+        writeFileSync(filePath, JSON.stringify(scene));
+        try {
+            const parser = new SceneParser(filePath);
+            const info = parser.getInstanceInfo(parser.getObject(1));
+            assert.strictEqual(info.overrides.toString, 'kept');
+            assert.deepStrictEqual(info.overrides.__proto__, { hijacked: true });
+            assert.strictEqual(Object.getPrototypeOf(info.overrides), null);
+            assert.strictEqual(info.nameOverride, 'Renamed'); // consumers still read _name
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 });

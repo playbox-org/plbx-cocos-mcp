@@ -7,6 +7,7 @@
  *             library/ JSON, falling back to .glb accessor min/max
  * - prefab:   summary (root, node count, component types) without full dump
  * - material: effect reference + active defines
+ * - terrain:  geometry/height/layer card from the native binary (terrainBin)
  *
  * SOLID: S - Only responsible for single-asset introspection
  * SOLID: D - Depends on AssetIndex abstraction for resolution
@@ -15,11 +16,16 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { extractMeshBounds } from '../utils/glb.js';
+import {
+    readTerrainInfo, withTerrainWarnings, TerrainWarnings, TERRAIN_HEIGHT_FACTOR
+} from '../utils/terrainBin.js';
 import { compressUuid, decompressUuid, isCompressedUuid } from '../utils/uuid.js';
 
 export class AssetInspector {
     #projectRoot;
     #index;
+    /** `${abs}:${mtimeNs}:${size}` → readTerrainInfo result | {error} | null */
+    #terrainCache = new Map();
 
     /**
      * @param {string} projectRoot - Path to Cocos project root
@@ -57,6 +63,8 @@ export class AssetInspector {
                 return { ...base, ...this.#inspectPrefab(entry) };
             case 'material':
                 return { ...base, ...this.#inspectMaterial(entry) };
+            case 'terrain':
+                return { ...base, terrain: this.#inspectTerrain(entry) };
             case 'typescript':
             case 'javascript':
                 return { ...base, compressedUuid: compressUuid(entry.uuid) };
@@ -264,6 +272,105 @@ export class AssetInspector {
             technique: material._techIdx ?? 0,
             defines
         };
+    }
+
+    // ---------- terrain ----------
+
+    /**
+     * Geometry/height/layer card of a `.terrain` native binary. The layer table's
+     * detail/normal map ids are `<uuid>@6c48a` texture sub-asset refs — resolved to
+     * names here, with the raw id kept so `format:"json"` stays machine-usable.
+     *
+     * Returns `{error}` when the file is missing or not a parsable terrain — the
+     * same convention as #inspectPrefab/#inspectMaterial (note that GetAssetInfo's
+     * text formatter has to print it explicitly, #formatText never does).
+     *
+     * `query_terrain` is the CANONICAL json shape for a terrain: an ABSENT texture id
+     * is `null` (the binary spells it `""`) and the height statistics live in a nested
+     * `height: {min, max, mean, minRaw, maxRaw, flat, quantum}` block. Both are emitted
+     * here so a consumer can read either tool with one code path; the flat `heightMin`/
+     * `isFlat`/… keys stay for compatibility and this text card renders from them.
+     *
+     * That includes the warnings: this tool's own layer findings are folded in through
+     * `withTerrainWarnings`, so `warnings` and `warningEntries` stay two views of ONE list
+     * built by ONE collector — terrainBin's contract, entry shape and subject cap included.
+     */
+    #inspectTerrain(entry) {
+        const info = this.#terrainInfo(path.resolve(this.#projectRoot, entry.path));
+        if (!info) return { error: 'Cannot read terrain file' };
+        if (info.error) return { error: info.error };
+
+        // A dangling texture id is a defect IN the binary; only a tool with an AssetIndex can see
+        // that it dangles, so it is collected here — terrainBin owns its wording and aggregation.
+        const own = new TerrainWarnings();
+        const layers = info.layers.map((layer) => {
+            const resolved = {
+                ...layer,
+                // "" is how the binary stores "no map"; query_terrain says null
+                detailMapId: layer.detailMapId || null,
+                normalMapId: layer.normalMapId || null,
+                detailMapName: layer.detailMapId ? this.#index.label(layer.detailMapId) : null,
+                normalMapName: layer.normalMapId ? this.#index.label(layer.normalMapId) : null
+            };
+            for (const field of ['detailMap', 'normalMap']) {
+                if (layer[`${field}Id`] && resolved[`${field}Name`] === null) {
+                    own.family('unresolvedTexture',
+                        { slot: layer.slot, field, id: layer[`${field}Id`] });
+                }
+            }
+            return resolved;
+        });
+        // `filePath` is the absolute path readTerrainInfo echoes back — the card
+        // already carries the project-relative `path`, so drop it. Uncapped list: this is the
+        // DATA card (`warnings.length` IS the problem count, as on terrainBin's own card) —
+        // GetAssetInfo's text card applies TERRAIN_MAX_WARNINGS.
+        const { filePath, ...card } = withTerrainWarnings(info, own);
+        return {
+            ...card,
+            height: {
+                min: info.heightMin,
+                max: info.heightMax,
+                mean: info.heightMean,
+                minRaw: info.heightMinRaw,
+                maxRaw: info.heightMaxRaw,
+                flat: info.isFlat,
+                quantum: TERRAIN_HEIGHT_FACTOR
+            },
+            layers
+        };
+    }
+
+    /**
+     * `readTerrainInfo` memoized per file identity. Keyed on path + mtime + size,
+     * NOT on path alone: edit_terrain rewrites the binary in-process and a reader
+     * that follows in the same tool call must see the fresh bytes. Negatives and
+     * parse errors are cached too (mirrors Bounds' #meshCache).
+     */
+    #terrainInfo(abs) {
+        let st;
+        try {
+            // NANOsecond mtime, not mtimeMs: pow-2 padding makes a rewritten terrain the
+            // same size, so the timestamp is the only thing separating two versions and
+            // it should carry every bit the filesystem has. (This does NOT help on a
+            // filesystem whose mtime granularity is coarser than the rewrite interval —
+            // exFAT 2 s, SMB 1 s. Nothing shipping today rewrites a terrain in-process;
+            // when edit_terrain does, it needs an explicit invalidation hook here.)
+            st = fs.statSync(abs, { bigint: true });
+        } catch (err) {
+            return { error: `Cannot read terrain file: ${err.message}` };
+        }
+        const key = `${abs}:${st.mtimeNs}:${st.size}`;
+        if (this.#terrainCache.has(key)) return this.#terrainCache.get(key);
+
+        let info;
+        try {
+            info = readTerrainInfo(abs);
+            if (!info) info = { error: 'Not a Cocos .terrain binary (unrecognized version magic)' };
+        } catch (err) {
+            info = { error: err.message };
+        }
+        this.#terrainCache.set(key, info);
+        return info;
     }
 
     // ---------- shared ----------

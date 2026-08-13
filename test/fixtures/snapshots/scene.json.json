@@ -5,6 +5,11 @@
     {
       "name": "Main Light",
       "active": true,
+      "euler": [
+        -121.8,
+        8,
+        30.1
+      ],
       "components": [
         {
           "type": "DirectionalLight",
@@ -19,6 +24,11 @@
         -8,
         12,
         8
+      ],
+      "euler": [
+        -45,
+        -45,
+        0
       ],
       "components": [
         {
@@ -1855,6 +1865,11 @@
             0,
             -3
           ],
+          "euler": [
+            0,
+            90,
+            0
+          ],
           "children": [
             {
               "name": "SM_Gate_Wood",
@@ -2200,6 +2215,11 @@
             0,
             11.8
           ],
+          "euler": [
+            0,
+            -90,
+            0
+          ],
           "components": [
             {
               "type": "Script:8d141ySj",
@@ -2372,6 +2392,11 @@
             1.2,
             0,
             11.8
+          ],
+          "euler": [
+            0,
+            -90,
+            0
           ],
           "components": [
             {
@@ -2854,6 +2879,11 @@
             0.1,
             10
           ],
+          "euler": [
+            0,
+            180,
+            0
+          ],
           "components": [
             {
               "type": "Script:ad425ISo",
@@ -3278,6 +3308,11 @@
         {
           "name": "Cacti2",
           "active": true,
+          "pos": [
+            -9.2,
+            0,
+            16.1
+          ],
           "prefab": true,
           "prefabSource": "bb73cd66…"
         },
@@ -3308,6 +3343,16 @@
         {
           "name": "Cacti3",
           "active": true,
+          "pos": [
+            8.5,
+            0,
+            13.6
+          ],
+          "euler": [
+            0,
+            -39.3,
+            0
+          ],
           "prefab": true,
           "prefabSource": "bb73cd66…"
         }
@@ -3705,10 +3750,20 @@
     {
       "name": "Dummies",
       "active": true,
+      "scale": [
+        0.01,
+        0.01,
+        0.01
+      ],
       "children": [
         {
           "name": "BigCrystal",
           "active": true,
+          "scale": [
+            0.01,
+            0.01,
+            0.01
+          ],
           "children": [
             {
               "name": "Cristal_Anim",
@@ -3725,6 +3780,11 @@
             -15.8,
             1.6,
             -6.1
+          ],
+          "scale": [
+            0.01,
+            0.01,
+            0.01
           ],
           "children": [
             {
@@ -3769,6 +3829,11 @@
             0,
             0
           ],
+          "scale": [
+            0.01,
+            0.01,
+            0.01
+          ],
           "children": [
             {
               "name": "Cristal",
@@ -3785,6 +3850,11 @@
         {
           "name": "truba_FX",
           "active": true,
+          "scale": [
+            0.01,
+            0.01,
+            0.01
+          ],
           "children": [
             {
               "name": "SM_Truba",
@@ -3801,6 +3871,11 @@
         {
           "name": "hit01",
           "active": true,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
           "components": [
             {
               "type": "ParticleSystem",
@@ -3823,6 +3898,16 @@
         {
           "name": "levelup",
           "active": true,
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
+          "euler": [
+            90,
+            0,
+            0
+          ],
           "components": [
             {
               "type": "ParticleSystem",
@@ -3910,6 +3995,11 @@
             103.5,
             0
           ],
+          "scale": [
+            0.001,
+            0.001,
+            0.001
+          ],
           "components": [
             {
               "type": "ParticleSystem",
@@ -3956,6 +4046,11 @@
             540,
             1184,
             0
+          ],
+          "scale": [
+            0.01,
+            0.01,
+            0.01
           ],
           "children": [
             {

@@ -40,7 +40,8 @@ const OPS_DOC = `Operations (applied in order, all-or-nothing):
 - prune_dangling_overrides {} (opt-in repair: removes broken cc.TargetOverrideInfo records — null/detached source or target — that the engine ignores on load; leftover detached nodes they referenced are garbage-collected on save. These records are NON-blocking (validate_document reports each as a warning and hints at this op; apply_edits does NOT require a prune), so run it only to tidy up. Idempotent.)
 
 Node addressing: "Canvas/Panel/BuyBtn" path from root, "/" = root, node _id, "Name[i]" or "[i]" disambiguate same-named/positional siblings.
-Prefab instances inside scenes are collapsed stubs: their internals are not in the file. Inspect them with inspect_node (shows internals + target paths + mounted components), override properties with set_instance_property, edit/remove components MOUNTED on the instance with set_component_property/set_asset_ref/remove_component, remove/reparent the whole instance, or edit the source .prefab; anything else is rejected.`;
+Prefab instances inside scenes are collapsed stubs: their internals are not in the file. Inspect them with inspect_node (shows internals + target paths + mounted components), override properties with set_instance_property, edit/remove components MOUNTED on the instance with set_component_property/set_asset_ref/remove_component, remove/reparent the whole instance, or edit the source .prefab; anything else is rejected.
+Terrain: the terrain-asset field is property "asset" on cc.Terrain (serialized __asset; "_asset"/"__asset" also accepted) and "terrain" on cc.TerrainCollider — same spellings in set_component_property, set_asset_ref, set_instance_property and remove_instance_override.`;
 
 export class ApplyEdits extends BaseTool {
     get name() {

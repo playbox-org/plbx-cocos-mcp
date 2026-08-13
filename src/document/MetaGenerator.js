@@ -25,8 +25,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { nameToId } from '../utils/uuid.js';
+import { writeFileAtomic } from '../utils/fsAtomic.js';
 
-export class MetaGenerationError extends Error {}
+export class MetaGenerationError extends Error {
+    /**
+     * @param {string} message
+     * @param {string} [assetPath] The refused asset — a caller reporting per-target failures
+     *        cannot otherwise say WHICH path of a parent-folder chain was refused.
+     */
+    constructor(message, assetPath) {
+        super(message);
+        this.assetPath = assetPath;
+    }
+}
 
 const AUDIO_EXTS = new Set(['.mp3', '.wav', '.ogg', '.aac', '.pcm', '.m4a']);
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.tga', '.hdr',
@@ -50,6 +61,17 @@ export function prefabMeta(rootName) {
 /** Meta for an .animgraph written by build_animgraph */
 export function animGraphMeta() {
     return skeleton({ importer: 'animation-graph', ver: '1.2.0' });
+}
+
+/**
+ * Meta for a .terrain written by build_terrain. Sourced from SIMPLE_TYPES so the
+ * builder's meta and create_asset_meta's can never drift; `userData` stays `{}` —
+ * the terrain importer has no userData config at all (verified against the
+ * editor-saved golden meta).
+ */
+export function terrainMeta() {
+    const { importer, ver, files } = SIMPLE_TYPES['.terrain'];
+    return skeleton({ importer, ver, files: [...files] });
 }
 
 /** Editor byte-form: 2-space JSON + trailing newline */
@@ -87,7 +109,8 @@ export function classifyAsset(absPath) {
 }
 
 // ext → fixed parts; userData/files needing the file are handled in createMetaObject
-const SIMPLE_TYPES = {
+// Exported so create_asset_meta's advertised type list can be drift-tested against it.
+export const SIMPLE_TYPES = {
     '.ts': { importer: 'typescript', ver: '4.0.24', files: [] },
     '.js': { importer: 'javascript', ver: '4.0.24', files: [] },
     '.cjs': { importer: 'javascript', ver: '4.0.24', files: [] },
@@ -98,6 +121,9 @@ const SIMPLE_TYPES = {
     '.pmtl': { importer: 'physics-material', ver: '1.0.1' },
     '.anim': { importer: 'animation-clip', ver: '2.0.4', files: ['.bin'] },
     '.animgraph': { importer: 'animation-graph', ver: '1.2.0' },
+    // The importer copies the binary verbatim to library/<uuid>.bin and lifts the layer
+    // table into <uuid>.json; it has no userData (verified on editor-saved metas).
+    '.terrain': { importer: 'terrain', ver: '1.1.50', files: ['.bin', '.json'] },
     '.json': { importer: 'json', ver: '2.0.1' },
     '.effect': { importer: 'effect', ver: '1.7.1' },
     '.rt': { importer: 'render-texture', ver: '1.2.1' },
@@ -155,23 +181,197 @@ export function createMetaObject(absPath, options = {}) {
 
 /**
  * Idempotent write: creates `<absPath>.meta` unless one already exists.
+ *
+ * Shares {@link inspectMetaPath} with {@link resolveAssetMeta} — the two entry points must not
+ * disagree about the same path, and `existsSync` here FOLLOWS a symlinked meta (a dangling one
+ * read as "no meta at all", so the rename replaced the link and minted a fresh uuid).
+ *
+ * Only `'exists'` is a skip: an errno this call cannot classify is thrown, because reported as
+ * "a meta is already there" it claimed a file that was never written.
  * @returns {{metaPath: string, meta: object|null, created: boolean}}
+ * @throws {MetaGenerationError} when the path cannot hold a meta this call may write
  */
 export function writeMetaFile(absPath, options = {}) {
     const metaPath = `${absPath}.meta`;
-    if (fs.existsSync(metaPath)) return { metaPath, meta: null, created: false };
+    const display = metaDisplayPath(absPath);
+    const found = inspectMetaPath(metaPath, display);
+    if (found.state === 'refuse') throw new MetaGenerationError(found.reason, absPath);
+    if (found.state === 'unknown') {
+        throw new MetaGenerationError(
+            `Cannot tell whether ${display}.meta exists: ${found.message} — check that path and ` +
+            'its folder\'s permissions by hand. No .meta was minted: one written blind would ' +
+            'either fail again or replace a uuid existing references use.', absPath);
+    }
+    if (found.state === 'exists') return { metaPath, meta: null, created: false };
     const meta = createMetaObject(absPath, options);
-    fs.writeFileSync(metaPath, serializeMeta(meta), 'utf-8');
+    writeMeta(metaPath, meta);
     return { metaPath, meta, created: true };
+}
+
+/** `<folder>/<name>`: a bare basename never says WHICH folder of a chain walk is at fault */
+function metaDisplayPath(absPath) {
+    const parent = path.basename(path.dirname(absPath));
+    const base = path.basename(absPath);
+    return parent ? `${parent}/${base}` : base;
+}
+
+/** Codes that mean the path itself cannot hold a `.meta` — nothing exists there to read */
+const UNUSABLE_PATH_CODES = new Set(['ENAMETOOLONG', 'ELOOP', 'ENOTDIR']);
+
+/** Per-component filename limit: 255 BYTES, not characters (see utils/fsAtomic.js) */
+const MAX_NAME_BYTES = 255;
+
+/**
+ * What is at `<asset>.meta`, as one decision for both entry points.
+ *
+ * `'none'` = mint, `'exists'` = keep what is there, `'refuse'` = the reason (the caller appends
+ * its own "nothing was written" tail), `'unknown'` = neither answer can be read from this path
+ * (EACCES on the parent, …), the errno carried along as `message` so both callers can NAME it:
+ * {@link resolveAssetMeta} lets its own read reproduce it, {@link writeMetaFile} refuses. What
+ * neither may do is call it "exists".
+ * @returns {{state: 'none'|'exists'}|{state: 'unknown', message: string}
+ *          |{state: 'refuse', reason: string}}
+ */
+function inspectMetaPath(metaPath, displayPath) {
+    let link;
+    try {
+        link = fs.lstatSync(metaPath);
+    } catch (err) {
+        if (err.code === 'ENOENT') return { state: 'none' };
+        if (UNUSABLE_PATH_CODES.has(err.code)) {
+            return { state: 'refuse', reason: unusableMetaPath(metaPath, displayPath, err.code) };
+        }
+        return { state: 'unknown', message: err.message };
+    }
+    if (link.isSymbolicLink()) {
+        return {
+            state: 'refuse',
+            reason: `${displayPath}.meta is a symlink, not a .meta file — replace it with a real one ` +
+                '(or remove it) by hand. It is not deleted or replaced for you: writing over the ' +
+                'link would swap it for a freshly minted uuid, orphaning every existing reference ' +
+                'to this asset, and reading through it reports a uuid kept outside the project.'
+        };
+    }
+    return { state: 'exists' };
+}
+
+/**
+ * No meta exists AND none can be written here, so the path is the diagnosis — not "something is
+ * at that path". The usual case is an asset name that fits while its `.meta` companion does not.
+ */
+function unusableMetaPath(metaPath, displayPath, code) {
+    const over = Buffer.byteLength(path.basename(metaPath)) - MAX_NAME_BYTES;
+    if (code === 'ENAMETOOLONG' && over > 0) {
+        return `No .meta can exist next to ${displayPath}: its ".meta" companion name is ${over} ` +
+            `byte(s) over the ${MAX_NAME_BYTES}-BYTE filename limit — shorten the asset name by ` +
+            'that much. The asset name itself fits; the ".meta" the editor needs beside it does not.';
+    }
+    return `No .meta can exist next to ${displayPath}: that path cannot hold a file (${code}) — ` +
+        'fix the path by hand.';
+}
+
+/**
+ * The one way a `.meta` reaches disk: temp+rename. A half-written one is sticky (every later
+ * build_* refuses that path), and a plain write follows a symlinked meta path out of the project.
+ * @param {string} metaPath - `<asset>.meta`, absolute
+ * @param {object} meta
+ */
+export function writeMeta(metaPath, meta) {
+    writeFileAtomic(metaPath, serializeMeta(meta));
+}
+
+/**
+ * The UUID an asset write must report and keep: the one an existing `.meta` already
+ * carries, or a fresh meta's.
+ *
+ * Every builder resolves this BEFORE writing the asset bytes, so an unusable `.meta`
+ * aborts the call with nothing on disk. Five refusals — a SYMLINK at the meta path, a path
+ * that cannot hold a file at all (both from {@link inspectMetaPath}), unreadable, unparseable,
+ * and parsing without a `uuid` — all leave the asset with a uuid other than the one this call
+ * would report, orphaning every reference made against it.
+ *
+ * The symlink is checked with `lstat` before anything else, because `existsSync` FOLLOWS the
+ * link: a dangling or self-referential `<asset>.meta` read as "no meta at all", so this minted
+ * a fresh uuid and {@link writeMeta}'s rename replaced the link — the two things this module
+ * promises never to do (never touch an existing meta, no UUID churn). A link that DOES resolve
+ * is refused just the same: its target lives outside the path this module owns, so the uuid it
+ * reports is not one the write can keep.
+ *
+ * The read and the parse failure are told APART on purpose: a read error names its own
+ * errno (a directory or a chmod-000 file at that path is not a broken meta, and "delete
+ * it" would be wrong and destructive advice), while a parse error never quotes the parser,
+ * whose message carries a slice of the file — and `<asset>.meta` may be any file on disk.
+ *
+ * @param {string} metaPath - `<asset>.meta`, absolute
+ * @param {string} displayPath - The asset path as the caller's argument spelled it, for messages
+ * @param {() => object} mint - Fresh meta factory; called only when no meta exists
+ * @returns {{uuid: string|null, newMeta: object|null, error: string|null}}
+ *          `newMeta` non-null when it still has to be written next to the asset
+ */
+export function resolveAssetMeta(metaPath, displayPath, mint) {
+    const found = inspectMetaPath(metaPath, displayPath);
+    if (found.state === 'none') {
+        const newMeta = mint();
+        return { uuid: newMeta.uuid, newMeta, error: null };
+    }
+    if (found.state === 'refuse') {
+        return { uuid: null, newMeta: null, error: `${found.reason}\n\nNothing was written.` };
+    }
+    let text;
+    try {
+        text = fs.readFileSync(metaPath, 'utf-8');
+    } catch (err) {
+        // The errno IS the diagnosis here (EISDIR/EACCES) and it quotes no content; codes meaning
+        // "nothing is there" are refused above instead of reported as something being there.
+        return {
+            uuid: null, newMeta: null,
+            error: `Cannot read existing ${displayPath}.meta: ${err.message} — check what is at ` +
+                'that path and fix it by hand. It is not deleted or replaced for you: a real .meta ' +
+                'there carries the uuid every existing reference to this asset uses.' +
+                '\n\nNothing was written.'
+        };
+    }
+    let meta;
+    try {
+        meta = JSON.parse(text);
+    } catch {
+        // Never the parser's message: it quotes the input, and `<asset>.meta` may be a symlink
+        // to any file — the report would carry a slice of it.
+        return {
+            uuid: null, newMeta: null,
+            error: `Cannot parse existing ${displayPath}.meta: it is not valid JSON — delete it and ` +
+                're-run (a fresh .meta will be generated), or fix it by hand. An empty or ' +
+                'truncated .meta is the usual cause; the editor will not import the asset while ' +
+                'it stands either.\n\nNothing was written.'
+        };
+    }
+    const uuid = meta?.uuid;
+    if (typeof uuid !== 'string' || uuid === '') {
+        return {
+            uuid: null, newMeta: null,
+            error: `${displayPath}.meta has no "uuid" — delete it and re-run (a fresh .meta ` +
+                'will be generated), or fix it by hand.\n\nNothing was written.'
+        };
+    }
+    return { uuid, newMeta: null, error: null };
 }
 
 /**
  * Every folder under assets/ needs its own meta. Walk from `absPath`'s parent
  * up to (excluding) `assetsRoot` — the assets root itself has no meta — and
  * create the missing ones.
- * @returns {Array<{dir: string, meta: object}>} newly created directory metas
+ *
+ * `onCreated` fires immediately after each meta lands on disk, BEFORE the next one
+ * is attempted. A caller unwinding a failed write needs that: the return value only
+ * materializes once the whole chain succeeded, so a throw half-way up would otherwise
+ * leave the metas already written with nothing registered to remove them.
+ *
+ * @param {string} absPath
+ * @param {string} assetsRoot
+ * @param {{onCreated?: (entry: {dir: string, metaPath: string, meta: object}) => void}} [options]
+ * @returns {Array<{dir: string, metaPath: string, meta: object}>} newly created directory metas
  */
-export function ensureParentDirMetas(absPath, assetsRoot) {
+export function ensureParentDirMetas(absPath, assetsRoot, options = {}) {
     const created = [];
     const root = path.resolve(assetsRoot);
     let dir = path.dirname(path.resolve(absPath));
@@ -183,8 +383,11 @@ export function ensureParentDirMetas(absPath, assetsRoot) {
         dir = path.dirname(dir);
     }
     for (const d of chain) {
-        const { meta, created: isNew } = writeMetaFile(d);
-        if (isNew) created.push({ dir: d, meta });
+        const { metaPath, meta, created: isNew } = writeMetaFile(d);
+        if (!isNew) continue;
+        const entry = { dir: d, metaPath, meta };
+        created.push(entry);
+        options.onCreated?.(entry);
     }
     return created;
 }

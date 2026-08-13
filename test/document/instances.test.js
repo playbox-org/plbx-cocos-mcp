@@ -472,6 +472,55 @@ describe('set_instance_property', () => {
             ], ctx),
             /set_instance_property/);
     });
+
+    test('a component property is rejected exactly as set_component_property rejects it', () => {
+        // The engine applies an override with a bare `targetPropOwner[name] = value`,
+        // so a path the direct write refuses is not an error here but a dead override.
+        // The old `seg in component` walked Object.prototype: "toString" wrote
+        // propertyPath ["toString"] into the scene with no error at all.
+        const ctx = makeCtx();
+        const doc = sceneWithDesk(ctx);
+        const source = SceneDocument.load(MOCK('assets/Prefabs/TableCash.prefab'));
+        const paths = () => doc.instanceOf(doc.resolveNode('Desk')).propertyOverrides
+            .map(r => doc.getObject(r.__id__).propertyPath.join('.'));
+        const before = paths();
+        const messageOf = (fn) => {
+            try { fn(); return null; } catch (err) { return err.message.replace(/^op\[\d+\] \w+: /, ''); }
+        };
+
+        for (const property of ['toString', 'constructor', 'valueOf', 'hasOwnProperty', 'anchorNode']) {
+            const direct = messageOf(() => applyOperations(source, [{
+                op: 'set_component_property', node: 'Table',
+                component: 'cc.MeshRenderer', property, value: 1
+            }], ctx));
+            const asOverride = messageOf(() => applyOperations(doc, [{
+                op: 'set_instance_property', node: 'Desk', target: 'Table',
+                component: 'cc.MeshRenderer', property, value: 1
+            }], ctx));
+            assert.match(direct ?? '', /has no property/, property);
+            assert.strictEqual(asOverride, direct, property);
+        }
+        assert.deepStrictEqual(paths(), before, 'no override was written');
+    });
+
+    test('an Object.prototype name is not a node property either', () => {
+        // NODE_PROPERTY_FORMS.toString resolved to a FUNCTION, so the guard passed
+        // and the failure surfaced two calls later as `Unknown node property
+        // "undefined"` — an error that does not name what the caller asked for.
+        const ctx = makeCtx();
+        const doc = sceneWithDesk(ctx);
+        for (const property of ['toString', 'constructor', 'valueOf']) {
+            assert.throws(() => applyOperations(doc, [
+                { op: 'set_instance_property', node: 'Desk', property, value: 'X' }
+            ], ctx), new RegExp(`Unknown node property "${property}"`), property);
+            assert.throws(() => applyOperations(doc, [
+                { op: 'remove_instance_override', node: 'Desk', property }
+            ], ctx), /nothing to remove|Unknown node property/, property);
+        }
+        const written = doc.instanceOf(doc.resolveNode('Desk')).propertyOverrides
+            .flatMap(r => doc.getObject(r.__id__).propertyPath);
+        assert.ok(written.every(seg => typeof seg === 'string'), 'every propertyPath segment is a string');
+    });
 });
 
 describe('remove_instance_override', () => {
@@ -512,6 +561,56 @@ describe('remove_instance_override', () => {
                 { op: 'remove_instance_override', node: 'Nugget', property: 'scale' }
             ], ctx),
             /nothing to remove/);
+    });
+
+    test('a stale component override stays removable after the source property vanishes', () => {
+        // Writes are strict, removal must not be: there is no prune op for property
+        // overrides, so a record naming a lost field would be unremovable.
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-stale-override-'));
+        try {
+            fs.cpSync(MOCK_PROJECT, root, { recursive: true });
+            const ctx = { assetIndex: new AssetIndex(root), projectRoot: root };
+            const doc = loadScene();
+            const write = (property, value) => ({
+                op: 'set_instance_property', node: 'Desk', target: 'Table',
+                component: 'cc.MeshRenderer', property, value
+            });
+            applyOperations(doc, [
+                { op: 'instantiate_prefab', parent: '/', prefab: 'Prefabs/TableCash.prefab', name: 'Desk' },
+                write('shadowBias', 0.5), write('shadowNormalBias', 0.25)
+            ], ctx);
+            const paths = () => overrides(doc, stubParts(doc, 'Desk').instance).map(o => o.path.join('.'));
+            assert.ok(paths().includes('_shadowBias') && paths().includes('_shadowNormalBias'), paths().join(','));
+
+            const prefabPath = path.join(root, 'assets/Prefabs/TableCash.prefab');
+            const src = SceneDocument.load(prefabPath);
+            const comp = src.getObject(src.componentIndices(src.resolveNode('Table'))
+                .find(i => src.getObject(i).__type__ === 'cc.MeshRenderer'));
+            delete comp._shadowBias;
+            delete comp._shadowNormalBias;
+            src.renumber();
+            src.save(prefabPath);
+
+            // Fresh ctx — the source prefab document is cached per ctx
+            const stale = { assetIndex: new AssetIndex(root), projectRoot: root };
+            assert.throws(() => applyOperations(doc, [write('shadowBias', 0.75)], stale),
+                /has no property "shadowBias"/);
+
+            const remove = (property) => applyOperations(doc, [{
+                op: 'remove_instance_override', node: 'Desk', target: 'Table',
+                component: 'cc.MeshRenderer', property
+            }], stale)[0];
+            // The un-underscored spelling still reaches the serialized key…
+            assert.match(remove('shadowBias').summary, /removed 1 override/);
+            // …and so does the stored path exactly as inspect_node prints it
+            assert.match(remove('_shadowNormalBias').summary, /removed 1 override/);
+            assert.deepStrictEqual(
+                paths().filter(p => p.includes('hadow')), []);
+            assertValid(doc);
+            assertFixedPoint(doc);
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
     });
 });
 

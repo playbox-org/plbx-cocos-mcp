@@ -56,6 +56,7 @@ function head(type) {
 }
 
 const TEMPLATES = {
+    __proto__: null, // user-sourced key (add_component type): no Object.prototype hits
     'cc.UITransform': () => ({
         component: {
             ...head('cc.UITransform'),
@@ -502,6 +503,39 @@ const TEMPLATES = {
         ]
     }),
 
+    // Full 16-key field set/order from ONE editor-saved 3.8.8 scene
+    // (project-example/guligames-legendale-c7/assets/scene.scene, index 65).
+    // The engine's own editor/assets/default_prefab/Terrain.prefab confirms
+    // the head→__asset→…→_usePBR prefix order and _receiveShadow: false
+    // independently, but it is an OLDER serialization — no __editorExtras__,
+    // no _lodEnable/_lodBias (both were appended to the class later, hence
+    // their trailing position) — so it does not corroborate the full set.
+    // Values are the engine defaults (terrain.ts:1207-1243, the 8
+    // @serializable members in declaration order) — note the real scene has
+    // _receiveShadow: true, which is a user flip, not the default.
+    // The asset key is `__asset` (DOUBLE underscore): the @serializable member
+    // is `protected __asset`, while `_asset` is only a getter/setter facade —
+    // there is no serialized twin, so no PAIRED_FIELDS entry (unlike
+    // AnimationController's _graph/graph, which exists only because of
+    // @formerlySerializedAs). operations.js maps the bare `asset` spelling
+    // onto it via PROPERTY_ALIASES.
+    // _effectAsset null => the engine falls back to TERRAIN_EFFECT_UUID.
+    // _lightmapInfos is filled by editor lightmap baking only.
+    'cc.Terrain': () => ({
+        component: {
+            ...head('cc.Terrain'),
+            __asset: null,
+            _effectAsset: null,
+            _lightmapInfos: [],
+            _receiveShadow: false,
+            _useNormalmap: false,
+            _usePBR: false,
+            _lodEnable: false,
+            _lodBias: 0,
+            _id: ''
+        }
+    }),
+
     'cc.BoxCollider': () => ({
         component: {
             ...head('cc.BoxCollider'),
@@ -564,6 +598,29 @@ const TEMPLATES = {
             _center: vec3(0, 0, 0),
             _mesh: null,
             _convex: false,
+            _id: ''
+        }
+    }),
+
+    // No editor-saved sample exists in any corpus project — field set derived
+    // from the engine: the only own @serializable member is `_terrain`
+    // (terrain-collider.ts:95-96; the public `terrain` is a plain accessor, so
+    // one serialized key and no PAIRED_FIELDS entry), on top of the Collider
+    // base _material/_isTrigger/_center (collider.ts:222-229). The order
+    // follows the base-then-subclass layout every real collider in the corpus
+    // uses (260+ Box/Sphere/Capsule samples), same basis as cc.CylinderCollider
+    // and cc.MeshCollider above. Wire the asset with set_asset_ref
+    // {property: "terrain"} → _terrain, __expectedType__ cc.TerrainAsset.
+    // Engine limitation: unsupported on a DYNAMIC cc.RigidBody (warnID 9630) —
+    // static body or none.
+    // PENDING: one-time editor re-save check of the field set/order.
+    'cc.TerrainCollider': () => ({
+        component: {
+            ...head('cc.TerrainCollider'),
+            _material: null,
+            _isTrigger: false,
+            _center: vec3(0, 0, 0),
+            _terrain: null,
             _id: ''
         }
     }),
@@ -1123,7 +1180,7 @@ ALIASES.set('animationcontroller', 'cc.animation.AnimationController');
  * @returns {string|null}
  */
 export function resolveTemplateType(type) {
-    if (TEMPLATES[type]) return type;
+    if (Object.hasOwn(TEMPLATES, type)) return type;
     const viaAlias = ALIASES.get(String(type).toLowerCase());
     if (viaAlias) return viaAlias;
     if (type.startsWith('cc.')) {
@@ -1143,7 +1200,7 @@ export function templateTypes() {
  * @returns {{component: object, extras: object[]}}
  */
 export function createComponent(type) {
-    const factory = TEMPLATES[type];
+    const factory = Object.hasOwn(TEMPLATES, type) ? TEMPLATES[type] : null;
     if (!factory) throw new Error(`No component template for "${type}"`);
     const { component, extras = [] } = factory();
     return { component, extras };

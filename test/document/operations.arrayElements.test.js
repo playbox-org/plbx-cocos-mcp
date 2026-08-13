@@ -465,6 +465,76 @@ describe('remove_array_element', () => {
         assert.deepStrictEqual(registry.targetOverrides, []);
         assertValid(doc);
     });
+
+    /** A live override wiring entries[1].target (serialized null) into an instance */
+    function withEntryOverride(doc) {
+        entryOf(doc, 1).target = null;
+        const registry = doc.getObject(4);
+        const ovIdx = doc.addObject({
+            __type__: 'cc.TargetOverrideInfo',
+            source: { __id__: 2 }, sourceInfo: null,
+            propertyPath: ['entries', '1', 'target'],
+            target: { __id__: 1 }, targetInfo: null
+        });
+        doc.getObject(ovIdx).targetInfo = {
+            __id__: doc.addObject({ __type__: 'cc.TargetInfo', localID: ['someFileId01'] })
+        };
+        registry.targetOverrides = [{ __id__: ovIdx }];
+        return { registry, ov: doc.getObject(ovIdx) };
+    }
+
+    const overridePaths = (doc, registry) =>
+        registry.targetOverrides.map(r => doc.getObject(r.__id__).propertyPath.join('.')).sort();
+
+    test('cloning a neighbor duplicates its target-override for the new element', () => {
+        // The clone copies the neighbor's serialized null; without a record of
+        // its own the "cloned" reference is dead.
+        const doc = makeCardsDoc();
+        const { registry, ov } = withEntryOverride(doc);
+
+        const [res] = applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'entries', from: 1, index: 1
+        }]);
+
+        assert.deepStrictEqual(ov.propertyPath, ['entries', '2', 'target']); // original shifted
+        assert.deepStrictEqual(overridePaths(doc, registry), ['entries.1.target', 'entries.2.target']);
+        const added = registry.targetOverrides
+            .map(r => doc.getObject(r.__id__))
+            .find(o => o !== ov);
+        assert.deepStrictEqual(added.target, { __id__: 1 });
+        assert.strictEqual(added.sourceInfo, null);
+        assert.deepStrictEqual(doc.getObject(added.targetInfo.__id__).localID, ['someFileId01']);
+        assert.match(res.summary, /cloned 1 target-override\b/);
+        assertRoundTrips(doc);
+    });
+
+    test('a value overwriting the field does not clone its target-override', () => {
+        const doc = makeCardsDoc();
+        const { registry, ov } = withEntryOverride(doc);
+
+        const [res] = applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'entries', from: 1, index: 1, value: { target: null }
+        }]);
+
+        assert.deepStrictEqual(overridePaths(doc, registry), ['entries.2.target']);
+        assert.deepStrictEqual(ov.propertyPath, ['entries', '2', 'target']);
+        assert.doesNotMatch(res.summary, /cloned \d+ target-override/);
+        assertRoundTrips(doc);
+    });
+
+    test('a dead target-override is not carried onto the clone', () => {
+        const doc = makeCardsDoc();
+        const { registry, ov } = withEntryOverride(doc);
+        ov.target = { __id__: 2 }; // a component, not a node — the engine skips it
+
+        applyOperations(doc, [{
+            op: 'insert_array_element', node: '/', component: 'CardsBase',
+            property: 'entries', from: 1, index: 1
+        }]);
+        assert.deepStrictEqual(overridePaths(doc, registry), ['entries.2.target']);
+    });
 });
 
 describe('footgun guard (docs §3a)', () => {

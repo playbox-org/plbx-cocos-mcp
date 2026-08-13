@@ -851,6 +851,62 @@ describe('PropertyExtractor', () => {
             assert.strictEqual(keys[0], 'cfg'); // NOT deferred — keeps its main slot
         });
 
+        it('#1: detailed mode keeps the SLOT of a struct main showed as →owner', () => {
+            // Same shape as the compact test above, in detailed mode: the struct
+            // now expands into an object, but the field WAS visible on main
+            // (→Owner via the back-ref) — the richer value is additive, the
+            // position must not move behind the text prop cap.
+            const objects = [
+                { __type__: 'cc.Node', _name: 'Owner', _components: [{ __id__: 1 }] },
+                { __type__: 'Holder', node: { __id__: 0 }, cfg: { __id__: 2 },
+                    a: 1, b: 2, c: 3, d: 4 },
+                { __type__: 'CfgStruct', node: { __id__: 0 }, speed: 5, power: 7 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const props = new PropertyExtractor(parser, { detailed: true }).extract(objects[1]);
+
+            assert.deepStrictEqual(Object.keys(props), ['cfg', 'a', 'b', 'c', 'd']);
+            // …and the expansion (this branch's added detail) is still there
+            assert.strictEqual(props.cfg.__struct__, 'CfgStruct');
+            assert.strictEqual(props.cfg.speed, 5);
+            assert.strictEqual(props.cfg.node, '→Owner#0');
+        });
+
+        it('#1: detailed mode still defers a struct main DROPPED (no named owner)', () => {
+            // Counterpart of the above: no `node` back-ref at all, so main
+            // rendered nothing — the expansion is newly surfaced and goes
+            // strictly last, behind the four scalars main showed.
+            const objects = [
+                { __type__: 'CfgStruct', speed: 5, power: 7 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const keys = Object.keys(new PropertyExtractor(parser, { detailed: true }).extract({
+                __type__: 'Holder', cfg: { __id__: 0 }, a: 1, b: 2, c: 3, d: 4
+            }));
+            assert.deepStrictEqual(keys, ['a', 'b', 'c', 'd', 'cfg']);
+        });
+
+        it('#1: an unnamed owner does not rescue the slot either', () => {
+            // main's back-ref heuristic needed a NON-EMPTY _name; an owner with
+            // an empty name resolved to null there, so the field is still new.
+            const objects = [
+                { __type__: 'cc.Node', _name: '', _components: [] },
+                { __type__: 'CfgStruct', node: { __id__: 0 }, speed: 5 }
+            ];
+            objects.forEach((o, i) => { o.__idx__ = i; });
+            const parser = { objects, getObject: (id) => objects[id] ?? null };
+            const component = { __type__: 'Holder', cfg: { __id__: 1 }, a: 1, b: 2, c: 3, d: 4 };
+
+            assert.deepStrictEqual(
+                Object.keys(new PropertyExtractor(parser, { detailed: true }).extract(component)),
+                ['a', 'b', 'c', 'd', 'cfg']);
+            assert.deepStrictEqual(
+                Object.keys(new PropertyExtractor(parser).extract(component)),
+                ['a', 'b', 'c', 'd', 'cfg']);
+        });
+
         it('#4: cc.Mat4 is deferred behind a value-type scalar visible on main', () => {
             const extractor = new PropertyExtractor(new MockSceneParser());
             const keys = Object.keys(extractor.extract({
@@ -884,6 +940,66 @@ describe('PropertyExtractor', () => {
             assert.strictEqual(props.root.__struct__, 'A');
             assert.strictEqual(props.root.next.__struct__, 'B');
             assert.strictEqual(props.root.next.back, '<cycle A>');
+        });
+    });
+
+    // `__`-prefixed keys are serializer bookkeeping and stay hidden — except
+    // the handful of real @serializable members spelled that way. cc.Terrain's
+    // asset reference IS literally `__asset` (terrain.ts: `protected __asset`;
+    // `_asset` is only a getter/setter facade), so hiding it would render a
+    // terrain component with no asset at all in every read tool.
+    describe('__-prefixed key allowlist (cc.Terrain.__asset)', () => {
+        // Editor-saved shape: project-example/guligames-legendale-c7/
+        // assets/scene.scene, array index 65 (Cocos Creator 3.8.8).
+        const terrain = () => ({
+            __type__: 'cc.Terrain',
+            _name: '',
+            _objFlags: 0,
+            __editorExtras__: { locked: true },
+            node: { __id__: 1 },
+            _enabled: true,
+            __prefab: { __id__: 2 },
+            __asset: {
+                __uuid__: '665a0471-f644-43e9-95c8-3415f2590ef5',
+                __expectedType__: 'cc.TerrainAsset'
+            },
+            _effectAsset: null,
+            _lightmapInfos: [],
+            _receiveShadow: true,
+            _useNormalmap: false,
+            _usePBR: false,
+            _lodEnable: false,
+            _lodBias: 0,
+            _id: '91etTnOcxA65CYXOCvdkvm'
+        });
+
+        it('renders __asset through the assetResolver', () => {
+            const extractor = new PropertyExtractor(new MockSceneParser(), {
+                assetResolver: (uuid) =>
+                    uuid === '665a0471-f644-43e9-95c8-3415f2590ef5' ? 'terrain.terrain' : null
+            });
+            const props = extractor.extract(terrain());
+            assert.strictEqual(props.__asset, 'terrain.terrain');
+        });
+
+        it('without a resolver it is still visible as <asset>', () => {
+            const props = new PropertyExtractor(new MockSceneParser()).extract(terrain());
+            assert.strictEqual(props.__asset, '<asset>');
+        });
+
+        it('the allowlist is narrow — every other __ key stays hidden', () => {
+            const extractor = new PropertyExtractor(new MockSceneParser());
+            const props = extractor.extract({
+                ...terrain(),
+                __somethingElse__: 7,
+                __asset2: { __uuid__: 'zzz' }
+            });
+            assert.deepStrictEqual(
+                Object.keys(props).filter(k => k.startsWith('__')), ['__asset']);
+            for (const hidden of ['__type__', '__prefab', '__editorExtras__',
+                '__somethingElse__', '__asset2']) {
+                assert.ok(!(hidden in props), `${hidden} must stay hidden`);
+            }
         });
     });
 });

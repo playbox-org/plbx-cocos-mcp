@@ -3,6 +3,7 @@
  *
  * Sprite: rect/trim/rawSize/9-slice borders. Model: sub-assets + mesh AABB.
  * Prefab: structure summary. Material: effect + defines.
+ * Terrain: size/blocks/vertex grid/height range + the layer palette.
  */
 
 import * as fs from 'fs';
@@ -11,6 +12,7 @@ import { BaseTool } from './BaseTool.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 import { AssetInspector } from '../core/AssetInspector.js';
 import { resolveBuiltin } from '../core/builtins.js';
+import { renderTerrainWarnings, terrainWarningElision } from '../utils/terrainBin.js';
 
 export class GetAssetInfo extends BaseTool {
     get name() {
@@ -22,6 +24,8 @@ export class GetAssetInfo extends BaseTool {
                'or "<uuid>@<subId>" sub-asset form). Sprites: rect/trim/raw size/9-slice borders. ' +
                'Models (fbx/glb): meshes with AABB and size, materials, prefab sub-asset. ' +
                'Prefabs: structure summary. Materials: effect and defines. ' +
+               'Terrain (.terrain): size in metres, blocks, vertex grid, weight/light map ' +
+               'sizes, height range and the layer palette with resolved textures. ' +
                'Args: {asset (required), format?: "text"|"json"}.';
     }
 
@@ -139,6 +143,7 @@ export class GetAssetInfo extends BaseTool {
         if (info.meshes) this.#formatModel(lines, info);
         if (info.rootName !== undefined) this.#formatPrefab(lines, info);
         if (info.effect) this.#formatMaterial(lines, info);
+        if (info.terrain) this.#formatTerrain(lines, info.terrain);
 
         if (info.subAssets?.length && !info.meshes) {
             lines.push('');
@@ -212,6 +217,78 @@ export class GetAssetInfo extends BaseTool {
         lines.push(`Components: ${comps || 'none'}`);
         if (info.topLevelChildren.length > 0) {
             lines.push(`Top-level children: ${info.topLevelChildren.join(', ')}`);
+        }
+    }
+
+    /**
+     * Terrain card. `t` is AssetInspector's terrain block (readTerrainInfo plus
+     * resolved layer texture names and the warning entries that resolution adds) —
+     * or `{error}`, which #formatText does not render on its own, so it is printed here.
+     */
+    #formatTerrain(lines, t) {
+        const fmt = v => Number(v.toFixed(4));
+        lines.push('');
+        lines.push('## Terrain');
+        if (t.error) {
+            lines.push(`Error: ${t.error}`);
+            return;
+        }
+
+        const [w, d] = t.size;
+        const [bc0, bc1] = t.blockCount;
+        lines.push(`Size: ${fmt(w)} x ${fmt(d)} m (X x Z), anchored at the node origin ` +
+                   '(the shader applies node position only — rotation/scale are ignored)');
+        lines.push(`Blocks: ${bc0} x ${bc1} of 32x32 tiles, tileSize ${fmt(t.tileSize)} m`);
+        lines.push(`Vertex grid: ${t.vertexCount[0]} x ${t.vertexCount[1]}`);
+        // weightMapSize is a per-SIDE texel count; query_terrain spells it the same way
+        lines.push(`Weight map: ${t.weightMapSize} x ${t.weightMapSize} per block ` +
+                   `(${t.weightMapTexels[0]} x ${t.weightMapTexels[1]} texels total)`);
+        lines.push(`Light map size: ${t.lightMapSize}`);
+        if (t.heightMin === null) {
+            lines.push('Height range: no height data');
+        } else if (t.isFlat) {
+            lines.push(`Height range: flat at ${fmt(t.heightMin)} m`);
+        } else {
+            lines.push(`Height range: ${fmt(t.heightMin)} .. ${fmt(t.heightMax)} m ` +
+                       `(mean ${fmt(t.heightMean)} m)`);
+        }
+        lines.push(`Format: ${t.versionLabel}, payload ${t.payloadLength} B of ${t.fileSize} B ` +
+                   `(${t.padding} B pow-2 padding)`);
+        if (t.isDefaultSentinel) {
+            lines.push('Note: empty default terrain — the editor created it but nothing has been ' +
+                       'sculpted or saved yet, so heights/weights/layers are all class defaults.');
+        }
+
+        lines.push('');
+        lines.push(`## Terrain layers (${t.layers.length})`);
+        if (t.layers.length === 0) {
+            lines.push('- none (blocks render the effect fallback until a layer is painted)');
+        }
+        const usage = new Map((t.layerUsage ?? []).map(u => [u.slot, u]));
+        for (const layer of t.layers) {
+            const detail = layer.detailMapName ?? layer.detailMapId ?? '(none)';
+            const normal = layer.normalMapId
+                ? `, normal ${layer.normalMapName ?? layer.normalMapId}`
+                : '';
+            const u = usage.get(layer.slot);
+            const used = u
+                ? `used by ${u.blocks.length} block(s), coverage ${(u.coverage * 100).toFixed(1)}%`
+                : 'unused (no block assigns this slot)';
+            lines.push(`- slot ${layer.slot}: ${detail}${normal}`);
+            lines.push(`  tileSize ${fmt(layer.tileSize)}, roughness ${fmt(layer.roughness)}, ` +
+                       `metallic ${fmt(layer.metallic)}, ${used}`);
+        }
+
+        // Through the shared renderer, so this card aggregates, caps and elides exactly like
+        // query_terrain/edit_terrain — a 16-layer palette of dead textures was 16 lines here
+        // against their one. `total` counts real problems, so the header stays truthful.
+        const { lines: warnings, total, elided } = renderTerrainWarnings(t);
+        if (total) {
+            lines.push('');
+            lines.push(`## Terrain warnings (${total})`);
+            for (const warning of warnings) lines.push(`- ${warning}`);
+            // A continuation line, never a bullet: the header above counts real problems
+            if (elided) lines.push(terrainWarningElision(elided, total, 'warning'));
         }
     }
 

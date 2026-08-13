@@ -475,6 +475,40 @@ export function overrideDeadReasons(doc, obj, mountedNodes = new Set()) {
 }
 
 /**
+ * Serialization shells the editor leaves when a reference into an instance is deleted: a bare
+ * detached `cc.Node` held only by a {@link overrideDeadReasons}-dead record the engine skips.
+ * @param {import('./SceneDocument.js').SceneDocument} doc
+ * @returns {Set<number>} node indices exempt from document-wide node invariants
+ */
+export function deadOverrideShellNodes(doc) {
+    const mountedNodes = mountedChildNodeIdxs(doc);
+    const deadOverrides = new Set();
+    doc.objects.forEach((obj, idx) => {
+        if (obj?.__type__ !== 'cc.TargetOverrideInfo') return;
+        if (overrideDeadReasons(doc, obj, mountedNodes).length > 0) deadOverrides.add(idx);
+    });
+    if (deadOverrides.size === 0) return new Set();
+
+    const candidates = new Set();
+    doc.objects.forEach((obj, idx) => {
+        if (obj?.__type__ !== 'cc.Node') return;
+        if (typeof obj._id === 'string' && obj._id !== '') return;
+        // Any own key beyond those two is scene state, i.e. a real node
+        const keys = Object.keys(obj).filter(k => k !== '__type__' && k !== '__editorExtras__');
+        if (keys.length > 0) return;
+        if (doc.nodePath(idx) !== null || mountedNodes.has(idx)) return;
+        candidates.add(idx);
+    });
+    if (candidates.size === 0) return candidates;
+
+    // Every incoming reference must come from a record the engine already ignores
+    for (const { fromIdx, toIdx } of doc.externalRefsInto(candidates)) {
+        if (!deadOverrides.has(fromIdx)) candidates.delete(toIdx);
+    }
+    return candidates;
+}
+
+/**
  * Remove every dangling record found by findDanglingOverrides from its
  * owning PrefabInfo. An emptied targetOverrides array becomes null (the
  * editor's no-overrides form). Orphaned TargetInfo objects and detached
@@ -509,7 +543,9 @@ export function listTargetOverrides(doc) {
  * fileId → {target, component} over a source prefab document: node
  * PrefabInfo.fileId and component CompPrefabInfo.fileId, keyed the way
  * cc.TargetInfo.localID references them (single-hop). `target` is the
- * node path relative to the prefab root ("/" = root).
+ * node path relative to the prefab root ("/" = root); `component` is the RAW
+ * serialized `__type__` — a script's is its compressed uuid, so a display path
+ * must resolve it through AssetIndex.scriptClassNames().
  */
 export function fileIdTargets(sourceDoc) {
     const map = new Map();

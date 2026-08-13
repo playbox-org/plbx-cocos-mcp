@@ -26,6 +26,14 @@ const SCENE = 'assets/Scenes/main.scene';
 
 let projectRoot;
 
+/** Serialized __type__ of the script component added to the source prefab */
+const scriptType = () => {
+    const src = SceneDocument.load(path.join(projectRoot, 'assets/Prefabs/TableCash.prefab'));
+    const idx = src.componentIndices(src.resolveNode('Table/CashRegister/Monitor'))
+        .find(i => !src.getObject(i).__type__.startsWith('cc.'));
+    return src.getObject(idx).__type__;
+};
+
 before(async () => {
     projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-target-overrides-'));
     fs.cpSync(MOCK_PROJECT, projectRoot, { recursive: true });
@@ -34,6 +42,18 @@ before(async () => {
         path.join(GOLDEN_DIR, 'Main.scene_V2.scene'),
         path.join(projectRoot, SCENE)
     );
+
+    // A sourceInfo (B2) override needs a SCRIPT component inside the instance:
+    // @property reference fields live on scripts, and set_instance_property
+    // shares set_component_property's resolver, so a property the source
+    // component does not have is rejected rather than written as a dead
+    // override. The mock prefabs carry no script — add one to this copy.
+    const prefabPath = 'assets/Prefabs/TableCash.prefab';
+    const scripted = await new ApplyEdits().execute({
+        filePath: prefabPath,
+        ops: [{ op: 'add_component', node: 'Table/CashRegister/Monitor', type: 'PlayerController' }]
+    }, projectRoot);
+    assert.ok(!scripted.isError, scripted.content[0].text);
 
     const result = await new ApplyEdits().execute({
         filePath: SCENE,
@@ -123,7 +143,7 @@ describe('in-instance sources and removedComponents, end-to-end (A2/B2)', () => 
             ops: [
                 {
                     op: 'set_instance_property', node: 'Desk', target: 'Table/CashRegister/Monitor',
-                    component: 'cc.MeshRenderer', property: 'buddy', value: { $node: 'Desk/Table' }
+                    component: 'PlayerController', property: 'buddy', value: { $node: 'Desk/Table' }
                 },
                 {
                     op: 'remove_component', node: 'Desk', target: 'Table/CashRegister',
@@ -165,8 +185,10 @@ describe('in-instance sources and removedComponents, end-to-end (A2/B2)', () => 
         assert.ok(!result.isError, text);
         assert.match(text, /## Removed components \(1\)/);
         assert.match(text, /"Table\/CashRegister" ▸ cc\.MeshRenderer \(removed on this instance/);
+        // The in-instance (B2) source resolves the script NAME, like the B1 branch
         assert.match(text,
-            /Desk "Table\/CashRegister\/Monitor" ▸ cc\.MeshRenderer \(inside instance\) \.buddy → "Table"/);
+            /Desk "Table\/CashRegister\/Monitor" ▸ PlayerController \(inside instance\) \.buddy → "Table"/);
+        assert.doesNotMatch(text, new RegExp(scriptType()));
     });
 
     test('inspect_node JSON exposes removedComponents additively', async () => {

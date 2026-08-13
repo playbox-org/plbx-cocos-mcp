@@ -5,8 +5,10 @@
  * engine builtin), then scans the project's serialized asset files for
  * `__uuid__` occurrences. Scenes and prefabs get deep attribution
  * (file → node path → component.property); other JSON assets (.mtl, .anim,
- * .animgraph) are reported at file level. Also answers "what is this UUID"
- * when it belongs to no project asset: engine builtin vs likely-broken ref.
+ * .animgraph) are reported at file level; `.terrain` binaries are parsed
+ * structurally and report the layer that holds the id. Also answers "what is
+ * this UUID" when it belongs to no project asset: engine builtin vs
+ * likely-broken ref.
  */
 
 import * as fs from 'fs';
@@ -16,10 +18,28 @@ import { AssetIndex } from '../core/AssetIndex.js';
 import { resolveBuiltin } from '../core/builtins.js';
 import { SceneDocument, isRef } from '../document/SceneDocument.js';
 import { splitSubAssetRef, isFullUuid, isCompressedUuid, decompressUuid, compressUuid } from '../utils/uuid.js';
+import { readTerrainLayout } from '../utils/terrainBin.js';
 
 /** Files that may hold __uuid__ references */
 const DEEP_EXTENSIONS = ['.scene', '.prefab'];
 const SHALLOW_EXTENSIONS = ['.mtl', '.material', '.anim', '.animgraph', '.effect'];
+/**
+ * Native binaries that carry asset ids OUTSIDE any JSON graph. A `.terrain`
+ * keeps each layer's detail/normal map as a plain ASCII `<uuid>@<subId>` string
+ * in its layer table, so a utf-8 read plus `includes()` WOULD in fact find the
+ * bytes — the reason for a dedicated branch is not visibility but honesty:
+ * these files are parsed structurally so a hit can name the layer and the
+ * property it sits in, and so that 100+ KB of heights and weights is never
+ * decoded as text just to produce a bare occurrence count.
+ */
+const BINARY_EXTENSIONS = ['.terrain'];
+
+/**
+ * Output cap on the skipped list. One entry carries a full errno message with an absolute path
+ * (~230 chars), so a read-protected subtree under `assets/` would print one per file; the
+ * section header keeps the true total either way.
+ */
+const MAX_SKIPPED_LINES = 20;
 
 export class FindAssetReferences extends BaseTool {
     get name() {
@@ -29,7 +49,8 @@ export class FindAssetReferences extends BaseTool {
     get description() {
         return 'Find every place an asset is referenced across the project\'s serialized files. ' +
                'Scenes/prefabs report file → node path → component.property; materials/anims ' +
-               'report at file level. Also identifies unknown UUIDs: project asset, engine ' +
+               'report at file level; .terrain binaries report the layer and map slot holding ' +
+               'the id. Also identifies unknown UUIDs: project asset, engine ' +
                'built-in, or a likely broken reference. ' +
                'Args: {asset (required: path, UUID, compressed UUID or "uuid@subId"), ' +
                'folder? (limit the scan to a subfolder of assets/)}.';
@@ -76,35 +97,66 @@ export class FindAssetReferences extends BaseTool {
             const needle = target.needle;
             const deep = [];
             const shallow = [];
+            const binary = [];
+            const unreadable = [];
             let scanned = 0;
+            const relPath = (p) => path.relative(projectRoot, p).replaceAll(path.sep, '/');
+            // A directory we cannot list is the same kind of gap as a file we cannot read
+            const unlistable = (dir, err) => unreadable.push({
+                file: `${relPath(dir)}/`, reason: `unlistable directory — ${err.message}`
+            });
 
             for (const root of roots) {
-                for (const file of walkFiles(root)) {
+                for (const file of walkFiles(root, unlistable)) {
                     const ext = path.extname(file).toLowerCase();
                     const isDeep = DEEP_EXTENSIONS.includes(ext);
-                    if (!isDeep && !SHALLOW_EXTENSIONS.includes(ext)) continue;
-                    scanned++;
-                    const content = fs.readFileSync(file, 'utf-8');
+                    // A script is referenced only as a component's __type__, which no
+                    // binary asset can hold — skip the structural pass for script targets.
+                    const isBinary = !target.scriptType && BINARY_EXTENSIONS.includes(ext);
+                    if (!isDeep && !isBinary && !SHALLOW_EXTENSIONS.includes(ext)) continue;
+                    const rel = relPath(file);
+                    if (isBinary) {
+                        // Structural pass — the utf-8 read and its substring pre-filter
+                        // below are skipped entirely for binaries (see BINARY_EXTENSIONS).
+                        const { hits, reason } = terrainHits(file, target);
+                        if (reason) {
+                            // Never searched: counting it as scanned would claim coverage we lack
+                            unreadable.push({ file: rel, reason });
+                            continue;
+                        }
+                        scanned++;
+                        if (hits.length > 0) binary.push({ file: rel, hits });
+                        continue;
+                    }
+                    // Text assets get the same treatment as an unparsable binary: one
+                    // chmod-000 or truncated scene must not abort the whole query.
+                    const read = readText(file);
+                    if (read.reason) {
+                        unreadable.push({ file: rel, reason: read.reason });
+                        continue;
+                    }
                     // Scripts are referenced only as a component's __type__
                     // (compressed uuid), never via __uuid__ — search that form.
                     const contentNeedle = target.scriptType ?? needle;
-                    if (!content.includes(contentNeedle)) continue;
-
-                    const rel = path.relative(projectRoot, file).replaceAll(path.sep, '/');
-                    if (isDeep) {
-                        // Reuse the content already read for the pre-filter — no
-                        // second disk read of the same (potentially 1MB+) file.
-                        deep.push({
-                            file: rel,
-                            hits: attributeMatches(content, file, target, scriptNames)
-                        });
-                    } else {
-                        shallow.push({ file: rel, count: countOccurrences(content, contentNeedle) });
+                    if (read.content.includes(contentNeedle)) {
+                        if (isDeep) {
+                            // Reuse the content already read for the pre-filter — no
+                            // second disk read of the same (potentially 1MB+) file.
+                            const { hits, reason } = deepHits(read.content, file, target, scriptNames);
+                            if (reason) {
+                                unreadable.push({ file: rel, reason });
+                                continue;
+                            }
+                            deep.push({ file: rel, hits });
+                        } else {
+                            shallow.push({ file: rel, count: countOccurrences(read.content, contentNeedle) });
+                        }
                     }
+                    scanned++;
                 }
             }
 
-            return this.success(render(args, target, deep, shallow, scanned));
+            return this.success(render(args, target, deep, shallow, binary, scanned, unreadable));
         } catch (err) {
             return this.error(err.message);
         }
@@ -158,6 +210,73 @@ function identifyTarget(ref, assetIndex) {
     return null;
 }
 
+/**
+ * Does a serialized id refer to the target? A target WITH a sub-asset id must
+ * match exactly; a bare target (an image path, say) also matches any of its
+ * sub-assets, which is how `<uuid>@6c48a` texture refs are found.
+ */
+function matchesTarget(uuid, target) {
+    return target.subId
+        ? uuid === target.needle
+        : uuid === target.uuid || uuid.startsWith(`${target.uuid}@`);
+}
+
+/**
+ * Structural hits inside a `.terrain`: the layer table's `detailMapId` /
+ * `normalMapId`, which are ASCII `<uuid>@<subId>` strings and therefore invisible
+ * to the JSON walk every other asset kind goes through.
+ * @returns {{hits: Array<object>, reason: string|null}} `reason` = the file was never
+ *   searched, so the answer is incomplete and says so (it is NOT counted as scanned)
+ */
+function terrainHits(file, target) {
+    let data;
+    try {
+        // layout only: the palette sits behind the payload, but nothing here decodes it
+        data = readTerrainLayout(file);
+    } catch (err) {
+        return { hits: [], reason: `unreadable .terrain binary — ${err.message}` };
+    }
+    if (!data) {
+        return { hits: [], reason: 'not a recognized .terrain (unknown version magic)' };
+    }
+
+    const hits = [];
+    data.layers.forEach((layer, i) => {
+        for (const [property, id] of [['detailMap', layer.detailMapId], ['normalMap', layer.normalMapId]]) {
+            if (id && matchesTarget(id, target)) {
+                hits.push({ layer: i, slot: layer.slot, property, uuid: id });
+            }
+        }
+    });
+    return { hits, reason: null };
+}
+
+/**
+ * Read a serialized text asset — same `reason` contract as `terrainHits`: set means the
+ * file was never searched, so it is NOT counted as scanned and the answer is a lower bound.
+ * @returns {{content: string|null, reason: string|null}}
+ */
+function readText(file) {
+    try {
+        return { content: fs.readFileSync(file, 'utf-8'), reason: null };
+    } catch (err) {
+        return { content: null, reason: `unreadable file — ${err.message}` };
+    }
+}
+
+/**
+ * Deep attribution guarded like the read: a scene whose JSON is truncated holds the needle
+ * (the pre-filter said so) but cannot be walked, which is an incomplete answer, not a failed one.
+ * @returns {{hits: Array<object>, reason: string|null}}
+ */
+function deepHits(content, file, target, scriptNames) {
+    try {
+        return { hits: attributeMatches(content, file, target, scriptNames), reason: null };
+    } catch (err) {
+        return { hits: [], reason: `unparsable ${path.extname(file)} — ${err.message}` };
+    }
+}
+
 /** Count non-overlapping occurrences of `needle` without allocating a split array */
 function countOccurrences(content, needle) {
     if (!needle) return 0;
@@ -187,11 +306,19 @@ function scanRoots(projectRoot, folder) {
     return [];
 }
 
-function* walkFiles(dir) {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
+/** `onUnlistable(dir, err)`: a directory we cannot read is reported, never thrown — the
+ *  files under it are simply not searched (same lower-bound contract as an unreadable file) */
+function* walkFiles(dir, onUnlistable) {
+    let entries;
+    try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+        onUnlistable(dir, err);
+        return;
+    }
     for (const entry of entries) {
         const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) yield* walkFiles(full);
+        if (entry.isDirectory()) yield* walkFiles(full, onUnlistable);
         else yield full;
     }
 }
@@ -235,10 +362,9 @@ function attributeMatches(content, filePath, target, scriptNames) {
                 return;
             }
             if (typeof value.__uuid__ === 'string') {
-                const hit = target.subId
-                    ? value.__uuid__ === target.needle
-                    : value.__uuid__ === target.uuid || value.__uuid__.startsWith(`${target.uuid}@`);
-                if (hit) matches.push({ idx, trail, uuid: value.__uuid__ });
+                if (matchesTarget(value.__uuid__, target)) {
+                    matches.push({ idx, trail, uuid: value.__uuid__ });
+                }
                 return;
             }
             if (Array.isArray(value)) {
@@ -285,7 +411,7 @@ function climbToOwner(doc, idx, trail, owners, scriptNames) {
     return { node: null, component: '?', property };
 }
 
-function render(args, target, deep, shallow, scanned) {
+function render(args, target, deep, shallow, binary, scanned, unreadable) {
     const lines = [`# References to ${target.label}`, ''];
     switch (target.kind) {
         case 'project':
@@ -301,9 +427,22 @@ function render(args, target, deep, shallow, scanned) {
     }
 
     const total = deep.reduce((n, d) => n + d.hits.length, 0) +
-        shallow.reduce((n, s) => n + s.count, 0);
-    lines.push('', `Found ${total} reference(s) in ${deep.length + shallow.length} file(s) ` +
-        `(scanned ${scanned} serialized asset files${args.folder ? ` under ${args.folder}` : ''}).`);
+        shallow.reduce((n, s) => n + s.count, 0) +
+        binary.reduce((n, b) => n + b.hits.length, 0);
+    const files = deep.length + shallow.length + binary.length;
+    lines.push('', `Found ${total} reference(s) in ${files} file(s) ` +
+        `(scanned ${scanned} serialized asset files${args.folder ? ` under ${args.folder}` : ''}` +
+        `${unreadable.length ? `, ${unreadable.length} skipped` : ''}).`);
+
+    if (unreadable.length > 0) {
+        lines.push('', `## Skipped — not searched (${unreadable.length})`,
+            'These could not be read or parsed, so the count above is a LOWER bound.');
+        for (const u of unreadable.slice(0, MAX_SKIPPED_LINES)) {
+            lines.push(`- ${u.file}: ${u.reason}`);
+        }
+        const elided = unreadable.length - MAX_SKIPPED_LINES;
+        if (elided > 0) lines.push(`… and ${elided} more not shown — the header counts every one.`);
+    }
 
     for (const d of deep) {
         lines.push('', `## ${d.file} (${d.hits.length})`);
@@ -327,6 +466,18 @@ function render(args, target, deep, shallow, scanned) {
             lines.push(count > 1 ? `${line} (×${count})` : line);
         }
     }
+    for (const b of binary) {
+        lines.push('', `## ${b.file} (${b.hits.length})`);
+        for (const h of b.hits) {
+            // The palette index a block references is `slot`; editor-written files
+            // always keep it equal to the array position, so only mention it when
+            // this file disagrees (see the terrainBin module header).
+            const which = h.slot === h.layer ? `layer ${h.layer}` : `layer ${h.layer} (slot ${h.slot})`;
+            const subId = h.uuid.split('@')[1];
+            lines.push(`- terrain ${which} .${h.property}` +
+                (h.uuid !== target.needle ? ` [${subId ? `sub-asset @${subId}` : h.uuid}]` : ''));
+        }
+    }
     if (shallow.length > 0) {
         lines.push('', '## Other asset files (occurrence counts)');
         for (const s of shallow) {
@@ -334,7 +485,10 @@ function render(args, target, deep, shallow, scanned) {
         }
     }
     if (total === 0) {
-        lines.push('', 'No references — the asset is unused in serialized files ' +
+        const scope = unreadable.length
+            ? 'the serialized files that could be read (see Skipped above)'
+            : 'serialized files';
+        lines.push('', `No references — the asset is unused in ${scope} ` +
             '(code may still load it dynamically by path/uuid).');
     }
     return lines.join('\n');

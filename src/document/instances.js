@@ -27,7 +27,7 @@ import { SceneDocument, isRef } from './SceneDocument.js';
 import {
     OperationError, requireString, resolveEditableNode, mergeTyped, parsePropertyPath,
     findComponent, normalizeNodeProperty, describeComponentType, REQUIRED_COMPANIONS,
-    childInsertIndex, componentTypeMatcher
+    childInsertIndex, componentTypeMatcher, resolveTopSegment
 } from './operations.js';
 import {
     transformValueTracked, upsertTargetOverride, dropTargetOverrides,
@@ -360,6 +360,9 @@ function sceneAssetUuid(doc, ctx) {
 
 /** Node-property sugar shared with set_node_property, adapted to overrides */
 const NODE_PROPERTY_FORMS = {
+    // Prototype-less: the lookup key is user input, and NODE_PROPERTY_FORMS.toString
+    // used to pass the "unknown property" guard as a form (a function).
+    __proto__: null,
     name: '_name', _name: '_name',
     active: '_active', _active: '_active',
     layer: '_layer', _layer: '_layer',
@@ -371,6 +374,7 @@ const NODE_PROPERTY_FORMS = {
 
 /** form → canonical property name understood by normalizeNodeProperty */
 const CANONICAL_BY_FORM = {
+    __proto__: null,
     _name: 'name', _active: 'active', _layer: 'layer', _mobility: 'mobility',
     _lpos: 'position', _lscale: 'scale', rotation: 'rotation'
 };
@@ -404,7 +408,7 @@ export function removeInstanceOverride(doc, op, ctx) {
     if (op.component !== undefined || op.componentIndex !== undefined) {
         const compIdx = findComponent(sourceDoc, targetIdx, op.component, op.componentIndex, ctx);
         localId = componentFileId(sourceDoc, compIdx, label);
-        paths = [overridePathForComponent(sourceDoc.getObject(compIdx), property)];
+        paths = removalPathsForComponent(sourceDoc.getObject(compIdx), property);
         isComponent = true;
     } else {
         localId = nodeFileId(sourceDoc, targetIdx, label);
@@ -568,17 +572,41 @@ export function componentFileId(sourceDoc, compIdx, label) {
 }
 
 /**
- * Property path for a component override, tolerating the serialized
- * underscore prefix ("sizeX" → "_sizeX" when only the latter exists).
+ * Property path for a component override WRITE (removal is lax — see
+ * removalPathsForComponent). The top segment goes through
+ * set_component_property's OWN resolver (operations.js), so the two accept and
+ * reject the same spellings: the engine applies an override with a bare
+ * `targetPropOwner[name] = value` (scene-graph/prefab/utils.ts), so a path
+ * locateProperty would reject is not an error here but a junk JS field — a
+ * silently dead override that leaves the source-prefab value in place.
+ * A single-segment write on a SCRIPT component may name a field the source
+ * prefab omits (the engine fills declared defaults) — locateProperty's
+ * allowCreate rule, same condition.
  * Editor stores every segment as a string (verified: ["_materials", "0"]).
  */
 function overridePathForComponent(component, property) {
     const segments = parsePropertyPath(property);
-    if (typeof segments[0] === 'string' && !(segments[0] in component)) {
-        const underscored = `_${segments[0]}`;
-        if (underscored in component) segments[0] = underscored;
-    }
+    const allowCreate = !String(component.__type__).startsWith('cc.') && segments.length === 1;
+    segments[0] = resolveTopSegment(component, segments[0], { allowCreate });
     return segments.map(String);
+}
+
+/**
+ * Candidate propertyPaths for REMOVING an override — lax where a write is
+ * strict (a stale record naming a property the source lost must stay
+ * removable): the path AS STORED, plus the write form and the underscore twin.
+ */
+function removalPathsForComponent(component, property) {
+    const asGiven = parsePropertyPath(property).map(String);
+    const candidates = [asGiven, [`_${asGiven[0]}`, ...asGiven.slice(1)]];
+    try {
+        candidates.push(overridePathForComponent(component, property));
+    } catch { /* unknown property: only the literal spellings can match a record */ }
+    const paths = [];
+    for (const p of candidates) {
+        if (!paths.some(q => q.join('.') === p.join('.'))) paths.push(p);
+    }
+    return paths;
 }
 
 /** Read a value along a string-segment path, undefined when absent */
@@ -760,6 +788,27 @@ export function mountedChildrenEntries(doc, instance) {
             localID: targetInfoLocalID(doc, e.obj.targetInfo),
             nodeIndices: (e.obj.nodes ?? []).filter(isRef).map(r => r.__id__)
         }));
+}
+
+/**
+ * Mounted-child node index → the instance it hangs on, over the whole document. A mounted child is
+ * serialized with `_parent: null`, so every ancestor walk (world matrix, the screen-space test) has
+ * to hop through this map or the chain ends at the document root.
+ * @returns {Map<number, {stubIdx: number, localID: string[]|null}>}
+ */
+export function mountOwners(doc) {
+    const map = new Map();
+    doc.objects.forEach((obj, idx) => {
+        if (!doc.isNode(obj) || !doc.isInstanceStub(idx)) return;
+        const instance = doc.instanceOf(idx);
+        if (!instance) return;
+        for (const entry of mountedChildrenEntries(doc, instance)) {
+            for (const nodeIdx of entry.nodeIndices) {
+                if (!map.has(nodeIdx)) map.set(nodeIdx, { stubIdx: idx, localID: entry.localID });
+            }
+        }
+    });
+    return map;
 }
 
 function targetInfoLocalID(doc, ref) {

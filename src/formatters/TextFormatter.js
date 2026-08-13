@@ -38,6 +38,8 @@ export class TextFormatter extends Formatter {
         // Node header
         let header = `${prefix}${marker} ${node.name}`;
         if (node.pos) header += ` @(${node.pos.join(',')})`;
+        if (node.scale) header += ` scale(${node.scale.join(',')})`;
+        if (node.euler) header += ` rot(${node.euler.join(',')})`;
         if (node.prefab) header += node.prefabSource ? ` [P→${node.prefabSource}]` : ' [P]';
         lines.push(header);
 

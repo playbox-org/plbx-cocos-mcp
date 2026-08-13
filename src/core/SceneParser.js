@@ -64,10 +64,13 @@ export class SceneParser {
 
     /**
      * Collapsed prefab-instance info for a node, or null for regular nodes.
-     * Instance stubs keep _name empty: the editor stores the visible name as a
-     * CCPropertyOverrideInfo on the source root (localID = [PrefabInfo.fileId]).
+     * Instance stubs keep _name empty and carry NO transform fields of their own: the editor
+     * stores both the visible name and the placement as CCPropertyOverrideInfo objects on the
+     * source root (localID = [PrefabInfo.fileId]). `overrides` is that root's own single-segment
+     * overrides, keyed by property — read for the transform, which otherwise reads as identity.
      * @param {object} node
-     * @returns {{nameOverride: string|null, assetUuid: string|null}|null}
+     * @returns {{nameOverride: string|null, assetUuid: string|null,
+     *   overrides: Record<string, unknown>}|null}
      */
     getInstanceInfo(node) {
         const prefabInfo = node?._prefab?.__id__ !== undefined
@@ -76,19 +79,26 @@ export class SceneParser {
             ? this.getObject(prefabInfo.instance.__id__) : null;
         if (!instance) return null;
 
-        let nameOverride = null;
+        // Prototype-less: the keys come from the file, so a serialized override
+        // named `toString` must not read as already-present, and `__proto__` must
+        // become a key instead of re-parenting this object.
+        const overrides = Object.create(null);
         for (const ref of instance.propertyOverrides ?? []) {
             const override = ref?.__id__ !== undefined ? this.getObject(ref.__id__) : ref;
             if (!override?.propertyPath || override.propertyPath.length !== 1) continue;
-            if (override.propertyPath[0] !== '_name') continue;
             const target = override.targetInfo?.__id__ !== undefined
                 ? this.getObject(override.targetInfo.__id__) : override.targetInfo;
-            if (target?.localID?.length === 1 && target.localID[0] === prefabInfo.fileId) {
-                nameOverride = override.value;
-                break;
-            }
+            if (target?.localID?.length !== 1 || target.localID[0] !== prefabInfo.fileId) continue;
+            const value = override.value?.__id__ !== undefined
+                ? this.getObject(override.value.__id__) : override.value;
+            const key = override.propertyPath[0];
+            if (!Object.hasOwn(overrides, key)) overrides[key] = value;
         }
-        return { nameOverride, assetUuid: prefabInfo.asset?.__uuid__ ?? null };
+        return {
+            nameOverride: typeof overrides._name === 'string' ? overrides._name : null,
+            assetUuid: prefabInfo.asset?.__uuid__ ?? null,
+            overrides
+        };
     }
 
     findSceneRoot() {

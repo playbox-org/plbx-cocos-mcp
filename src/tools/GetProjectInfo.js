@@ -5,8 +5,11 @@
  * assistant needs before placing or scaling anything in a scene.
  */
 
+import * as fs from 'fs';
+import * as path from 'path';
 import { BaseTool } from './BaseTool.js';
 import { ProjectInfoReader } from '../core/ProjectInfoReader.js';
+import { AssetIndex } from '../core/AssetIndex.js';
 
 export class GetProjectInfo extends BaseTool {
     get name() {
@@ -15,7 +18,10 @@ export class GetProjectInfo extends BaseTool {
 
     get description() {
         return 'Get Cocos Creator project configuration: engine version, design resolution, ' +
-               'custom layers, physics engine and collision groups, enabled engine modules (2D/3D). ' +
+               'custom layers, physics engine and collision groups, enabled engine modules (2D/3D), ' +
+               'plus a self-check of the resolved project root (assets/ and library/ present, how ' +
+               'many assets are indexed) — the one place that says out loud whether the server is ' +
+               'pointed at the project you are editing. ' +
                'Call this first when starting work on a project. Args: {format?: "text"|"json"}.';
     }
 
@@ -36,25 +42,30 @@ export class GetProjectInfo extends BaseTool {
     async execute(args, projectRoot) {
         try {
             const info = new ProjectInfoReader(projectRoot).read();
+            const root = selfCheck(projectRoot);
 
             if (!info.engineVersion && !info.designResolution) {
                 return this.error(
                     `No Cocos Creator project found at ${projectRoot}. ` +
-                    'Check the COCOS_PROJECT_ROOT environment variable.'
+                    'Check the COCOS_PROJECT_ROOT environment variable.' +
+                    (root.hasAssets
+                        ? ''
+                        : ` There is no assets/ directory under that path either, so this is ` +
+                          'almost certainly the wrong root.')
                 );
             }
 
             if (args?.format === 'json') {
-                return this.success(JSON.stringify(info, null, 2));
+                return this.success(JSON.stringify({ ...info, root }, null, 2));
             }
 
-            return this.success(this.#formatText(info));
+            return this.success(this.#formatText(info, root));
         } catch (err) {
             return this.error(err.message);
         }
     }
 
-    #formatText(info) {
+    #formatText(info, root) {
         const lines = ['# Project Info', ''];
 
         lines.push(`Project: ${info.projectName ?? 'unknown'}`);
@@ -96,6 +107,53 @@ export class GetProjectInfo extends BaseTool {
             .join(', ');
         lines.push(`Collision groups: ${groups}`);
 
+        lines.push('', '## Project root');
+        lines.push(`Resolved root: ${root.projectRoot} (COCOS_PROJECT_ROOT, else the server's cwd)`);
+        lines.push(
+            root.hasAssets
+                ? `assets/: ${root.assetCount} asset(s) indexed` +
+                  (root.assetCount === 0
+                      ? ' — an empty assets/ means every UUID will fail to resolve'
+                      : '')
+                : 'assets/: MISSING — is COCOS_PROJECT_ROOT set to the project you are editing? ' +
+                  'Read tools DEGRADE QUIETLY on the wrong root (UUIDs print raw, every mesh AABB ' +
+                  'comes back "unavailable", validate_document invents broken-reference warnings), ' +
+                  'while the assets/-scoped writers refuse loudly'
+        );
+        lines.push(
+            root.hasLibrary
+                ? 'library/: present (mesh AABBs and model-prefab reads work)'
+                : 'library/: MISSING — open the project in the editor once to import it; ' +
+                  'without it mesh AABBs (get_node_bounds, compute_fit_scale) and model-derived ' +
+                  'prefab reads are unavailable, silently'
+        );
+
         return lines.join('\n');
     }
+}
+
+/**
+ * Whether the resolved root really is the project being edited — a mismatch fails asymmetrically
+ * (writers refuse loudly, read tools degrade quietly), so it has to be said out loud.
+ */
+function selfCheck(projectRoot) {
+    const exists = (rel) => {
+        try {
+            return fs.statSync(path.join(projectRoot, rel)).isDirectory();
+        } catch {
+            return false;
+        }
+    };
+    const hasAssets = exists('assets');
+    let assetCount = 0;
+    if (hasAssets) {
+        try {
+            // Directories carry a .meta too
+            assetCount = AssetIndex.shared(projectRoot).entries
+                .filter(e => e.importer !== 'directory').length;
+        } catch {
+            assetCount = 0;
+        }
+    }
+    return { projectRoot, hasAssets, hasLibrary: exists('library'), assetCount };
 }

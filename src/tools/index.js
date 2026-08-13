@@ -8,6 +8,7 @@ import { ListSceneScripts } from './ListSceneScripts.js';
 import { FindSceneNodes } from './FindSceneNodes.js';
 import { QueryPrefabGraph } from './QueryPrefabGraph.js';
 import { QueryAnimGraph } from './QueryAnimGraph.js';
+import { QueryTerrain } from './QueryTerrain.js';
 import { InspectNode } from './InspectNode.js';
 import { GetProjectInfo } from './GetProjectInfo.js';
 import { GetAssetInfo } from './GetAssetInfo.js';
@@ -16,6 +17,8 @@ import { ApplyEdits } from './ApplyEdits.js';
 import { ValidateDocument } from './ValidateDocument.js';
 import { BuildPrefab } from './BuildPrefab.js';
 import { BuildAnimGraph } from './BuildAnimGraph.js';
+import { BuildTerrain } from './BuildTerrain.js';
+import { EditTerrain } from './EditTerrain.js';
 import { GetNodeBounds } from './GetNodeBounds.js';
 import { ComputeFitScale } from './ComputeFitScale.js';
 import { ComputeRotation } from './ComputeRotation.js';
@@ -25,8 +28,8 @@ import { CreateAssetMeta } from './CreateAssetMeta.js';
 
 export {
     BaseTool, QuerySceneGraph, ListSceneScripts, FindSceneNodes, QueryPrefabGraph,
-    QueryAnimGraph, InspectNode, GetProjectInfo, GetAssetInfo, ListAssets,
-    ApplyEdits, ValidateDocument, BuildPrefab, BuildAnimGraph,
+    QueryAnimGraph, QueryTerrain, InspectNode, GetProjectInfo, GetAssetInfo, ListAssets,
+    ApplyEdits, ValidateDocument, BuildPrefab, BuildAnimGraph, BuildTerrain, EditTerrain,
     GetNodeBounds, ComputeFitScale, ComputeRotation, FindAssetReferences, LintAssets,
     CreateAssetMeta
 };
@@ -42,6 +45,7 @@ export function createTools() {
         new FindSceneNodes(),
         new QueryPrefabGraph(),
         new QueryAnimGraph(),
+        new QueryTerrain(),
         new InspectNode(),
         new GetProjectInfo(),
         new GetAssetInfo(),
@@ -50,6 +54,8 @@ export function createTools() {
         new ValidateDocument(),
         new BuildPrefab(),
         new BuildAnimGraph(),
+        new BuildTerrain(),
+        new EditTerrain(),
         new GetNodeBounds(),
         new ComputeFitScale(),
         new ComputeRotation(),

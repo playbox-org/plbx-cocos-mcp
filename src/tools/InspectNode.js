@@ -215,9 +215,9 @@ export class InspectNode extends BaseTool {
         // This instance's overrides, resolved to target paths via fileIds
         // (memoized on the cached prefab entry — see listMountedComponents)
         const targets = source.fileIdTargets ??= fileIdTargets(source.doc);
-        const overrides = this.#collectOverrides(doc, nodeId, targets, assetIndex);
+        const overrides = this.#collectOverrides(doc, nodeId, targets, assetIndex, scriptNames);
         const incomingRefs = this.#collectIncomingRefs(doc, nodeId, targets, scriptNames);
-        const removedComponents = this.#collectRemovedComponents(doc, nodeId, targets);
+        const removedComponents = this.#collectRemovedComponents(doc, nodeId, targets, scriptNames);
         resolveMountTargets(mounted, targets);
 
         return {
@@ -294,14 +294,14 @@ export class InspectNode extends BaseTool {
     }
 
     /** removedComponents entries resolved to source-prefab paths */
-    #collectRemovedComponents(doc, stubIdx, targets) {
+    #collectRemovedComponents(doc, stubIdx, targets, scriptNames) {
         const instance = doc.instanceOf(stubIdx);
         if (!instance) return [];
         return removedComponentEntries(doc, instance).map(({ obj }) => {
             const hit = obj.localID.length === 1 ? targets.get(obj.localID[0]) : null;
             return {
                 target: hit?.target ?? null,
-                component: hit?.component ?? null,
+                component: componentLabel(hit?.component, scriptNames),
                 localID: hit ? undefined : obj.localID
             };
         });
@@ -322,8 +322,7 @@ export class InspectNode extends BaseTool {
             if (obj.sourceInfo === null && isRef(obj.source)) {
                 const comp = doc.getObject(obj.source.__id__);
                 const nodePath = isRef(comp?.node) ? doc.nodePath(comp.node.__id__) : null;
-                const type = comp ? (scriptNames.get(comp.__type__) ?? comp.__type__) : '?';
-                source = `${nodePath ?? '?'} ▸ ${type}`;
+                source = `${nodePath ?? '?'} ▸ ${componentLabel(comp?.__type__, scriptNames) ?? '?'}`;
             } else if (isRef(obj.source)) {
                 // Source lives inside an instance (sourceInfo form) — when it
                 // is THIS instance, its localID resolves through the same map
@@ -332,7 +331,8 @@ export class InspectNode extends BaseTool {
                     const sInfo = isRef(obj.sourceInfo) ? doc.getObject(obj.sourceInfo.__id__) : null;
                     const sHit = Array.isArray(sInfo?.localID) && sInfo.localID.length === 1
                         ? targets.get(sInfo.localID[0]) : null;
-                    if (sHit) detail = ` "${sHit.target}"${sHit.component ? ` ▸ ${sHit.component}` : ''}`;
+                    const sType = componentLabel(sHit?.component, scriptNames);
+                    if (sHit) detail = ` "${sHit.target}"${sType ? ` ▸ ${sType}` : ''}`;
                 }
                 source = `${doc.nodePath(obj.source.__id__) ?? '?'}${detail} (inside instance)`;
             }
@@ -344,14 +344,14 @@ export class InspectNode extends BaseTool {
                 source,
                 property: Array.isArray(obj.propertyPath) ? obj.propertyPath.join('.') : '?',
                 target: hit?.target ?? null,
-                component: hit?.component ?? null,
+                component: componentLabel(hit?.component, scriptNames),
                 localID: hit ? undefined : localID
             });
         }
         return refs;
     }
 
-    #collectOverrides(doc, stubIdx, targets, assetIndex) {
+    #collectOverrides(doc, stubIdx, targets, assetIndex, scriptNames) {
         const overrides = [];
         const instance = doc.instanceOf(stubIdx);
         for (const ref of instance?.propertyOverrides ?? []) {
@@ -363,7 +363,7 @@ export class InspectNode extends BaseTool {
             const hit = localID.length === 1 ? targets.get(localID[0]) : null;
             overrides.push({
                 target: hit?.target ?? null,
-                component: hit?.component ?? null,
+                component: componentLabel(hit?.component, scriptNames),
                 localID: hit ? undefined : localID,
                 property: o.propertyPath.join('.'),
                 value: formatOverrideValue(o.value, assetIndex, doc)
@@ -531,6 +531,15 @@ function annotateTargets(graph) {
         }
     };
     walk(graph, '');
+}
+
+/**
+ * Readable component label — a script's serialized `__type__` is its compressed
+ * uuid, and fileIdTargets keeps it raw; every label site resolves it here.
+ */
+function componentLabel(type, scriptNames) {
+    if (typeof type !== 'string') return null;
+    return scriptNames?.get(type) ?? type;
 }
 
 /** Fill mount target paths from the source prefab's fileId map */

@@ -1,7 +1,7 @@
 /**
  * LintAssets - MCP tool: project hygiene checks
  *
- * Four checks (mechanics here, policy in the SKILL):
+ * Five checks (mechanics here, policy in the SKILL):
  * - names:     cryptic/auto-generated asset names (mesh_001, Sprite(2), …);
  *              renaming is safe — the UUID lives in .meta
  * - scales:    model import sizes scattered orders of magnitude apart
@@ -12,6 +12,11 @@
  *              another usage of the same mesh uses a project material — the
  *              mesh renders (no missing-material warning) but doesn't match
  *              the project's look; someone probably forgot to assign it
+ * - terrain:   a .terrain layer whose detail/normal texture no longer resolves,
+ *              or a layer a block assigns but whose weight channel is 0
+ *              everywhere — both render as silent nothing, and neither is
+ *              visible to validate_document (the ids live in the binary, not
+ *              in the scene's __uuid__ graph)
  */
 
 import * as fs from 'fs';
@@ -22,8 +27,9 @@ import { loadSourcePrefabByUuid } from '../document/instances.js';
 import { AssetIndex } from '../core/AssetIndex.js';
 import { AssetInspector } from '../core/AssetInspector.js';
 import { VISUAL_ROOT_TYPES, MESH_RENDERERS } from '../document/componentTypes.js';
+import { maxLayerIndex, terrainWarningText } from '../utils/terrainBin.js';
 
-const CHECKS = ['names', 'scales', 'wrappers', 'materials'];
+const CHECKS = ['names', 'scales', 'wrappers', 'materials', 'terrain'];
 const NAMED_TYPES = ['fbx', 'gltf', 'image', 'prefab', 'material', 'audio-clip', 'scene'];
 
 /** Auto-generated / meaningless name patterns (checked against the basename without extension) */
@@ -45,10 +51,13 @@ export class LintAssets extends BaseTool {
         return 'Lint project assets: cryptic auto-generated names (mesh_001, Sprite(2) — renaming is safe, ' +
                'the UUID lives in .meta), model import sizes scattered more than N× apart, prefabs ' +
                'violating the wrapper convention (renderer or non-identity scale on the prefab ROOT), ' +
-               'and material consistency (a mesh rendered with its embedded fbx material in one place ' +
-               'but a project material elsewhere — likely a forgotten assignment). ' +
-               'Checks: names, scales, wrappers, materials (default: all). ' +
-               'Args: {checks?: array of "names"|"scales"|"wrappers"|"materials", folder?, scaleRatio?: number}.';
+               'material consistency (a mesh rendered with its embedded fbx material in one place ' +
+               'but a project material elsewhere — likely a forgotten assignment), and terrain ' +
+               'layers (a .terrain layer whose detail/normal texture no longer resolves, or a layer ' +
+               'assigned to blocks with zero weight coverage — invisible either way). ' +
+               'Checks: names, scales, wrappers, materials, terrain (default: all). ' +
+               'Args: {checks?: array of "names"|"scales"|"wrappers"|"materials"|"terrain", folder?, ' +
+               'scaleRatio?: number}.';
     }
 
     get inputSchema() {
@@ -84,6 +93,7 @@ export class LintAssets extends BaseTool {
         if (checks.includes('scales')) sections.push(this.#lintScales(index, inspector, folder, args.scaleRatio ?? 10));
         if (checks.includes('wrappers')) sections.push(this.#lintWrappers(index, projectRoot, folder));
         if (checks.includes('materials')) sections.push(this.#lintMaterials(index, projectRoot, folder));
+        if (checks.includes('terrain')) sections.push(this.#lintTerrains(index, inspector, folder));
 
         const total = sections.reduce((n, s) => n + s.count, 0);
         const lines = [`# Asset lint — ${total} finding(s)`, ''];
@@ -323,6 +333,82 @@ export class LintAssets extends BaseTool {
     #isEmbeddedMaterial(index, materialUuid) {
         if (!materialUuid?.includes('@')) return false;
         return index.resolve(materialUuid)?.subAsset?.importer === 'gltf-material';
+    }
+
+    /**
+     * Terrain layers that cannot render, project-wide — the same silent-invisible
+     * family as the materials check:
+     * - a layer whose detail/normal map id no longer resolves to a project asset
+     *   (deleted texture, re-imported image with different sub-asset ids, missing
+     *   .meta); the block still draws, with the effect's fallback texture;
+     * - a layer a block assigns whose weight channel is 0 across every texel, so
+     *   the layer contributes nothing to the blend.
+     *
+     * Neither is reachable from `validate_document`: layer texture ids live as
+     * plain strings inside the `.terrain` binary, not as `__uuid__` values in the
+     * scene graph, so #checkAssetRefs cannot see them.
+     *
+     * Reads through AssetInspector rather than `readTerrainInfo` directly — the
+     * inspector memoizes per file identity and already resolves the ids to labels
+     * (`detailMapName === null` ⇔ unresolvable), which is exactly the pair of
+     * facts this check needs.
+     */
+    #lintTerrains(index, inspector, folder) {
+        const lines = [];
+        for (const entry of this.#list(index, folder, 'terrain')) {
+            let card;
+            try {
+                card = inspector.inspect(entry.uuid)?.terrain;
+            } catch (err) {
+                // One unreadable binary must never abort the whole lint
+                lines.push(`- ${entry.path} — cannot read: ${err.message}`);
+                continue;
+            }
+            if (!card) continue; // listed by importer, so only an index/asset race gets here
+            if (card.error) {
+                lines.push(`- ${entry.path} — cannot read: ${card.error}`);
+                continue;
+            }
+
+            for (const layer of card.layers ?? []) {
+                for (const [field, id, name] of [
+                    ['detailMap', layer.detailMapId, layer.detailMapName],
+                    ['normalMap', layer.normalMapId, layer.normalMapName]
+                ]) {
+                    if (!id || name !== null) continue;
+                    // terrainBin's registered wording, so query_terrain and get_asset_info
+                    // spell this finding identically; only the per-file prefix is ours
+                    lines.push(`- ${entry.path} — ` +
+                        terrainWarningText('unresolvedTexture', { slot: layer.slot, field, id }));
+                }
+            }
+
+            for (const usage of card.layerUsage ?? []) {
+                if (usage.texels === 0 || usage.nonZeroTexels !== 0) continue;
+                // Zero weight is harmless where the engine IGNORES the weight map, and that
+                // rule is per BLOCK: a block with a single assigned channel draws detailMap0
+                // flat (TerrainBlock.getMaxLayer() === 0). Same suppression as the per-file
+                // warning in terrainInfoFromData — only blocks that blend >1 layer count.
+                const blended = usage.blocks.filter(
+                    b => maxLayerIndex(card.blockLayers?.[b] ?? []) !== 0
+                );
+                if (blended.length === 0) continue;
+                const layer = (card.layers ?? []).find(l => l.slot === usage.slot);
+                const label = layer
+                    ? (layer.detailMapName ?? layer.detailMapId ?? 'no detail map')
+                    : 'no layer record';
+                lines.push(
+                    `- ${entry.path} — layer slot ${usage.slot} (${label}) is assigned to ` +
+                    `${usage.blocks.length} block(s) but its weight channel is 0 in all ` +
+                    `${usage.texels} texel(s) — it never shows up (${blended.length} of those ` +
+                    'block(s) blend more than one layer, so their weight map IS sampled). Paint ' +
+                    'it with edit_terrain paint_layer or drop it with remove_layer'
+                );
+            }
+        }
+
+        if (!lines.length) lines.push('OK — every terrain layer resolves and contributes weight.');
+        return { title: 'Terrain layers', count: lines[0].startsWith('OK') ? 0 : lines.length, lines };
     }
 }
 

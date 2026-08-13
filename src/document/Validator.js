@@ -11,10 +11,14 @@
  * on definition components). Node _id must be unique file-wide.
  */
 
+import * as path from 'path';
 import { isRef } from './SceneDocument.js';
 import { isBuiltin } from '../core/builtins.js';
+import { readTerrainLayout } from '../utils/terrainBin.js';
 import { loadSourcePrefabByUuid } from './instances.js';
-import { fileIdTargets, overrideDeadReasons, mountedChildNodeIdxs } from './targetOverrides.js';
+import {
+    fileIdTargets, overrideDeadReasons, mountedChildNodeIdxs, deadOverrideShellNodes
+} from './targetOverrides.js';
 import { eulerToQuat, quatApproxEquals } from '../utils/math3d.js';
 import { VISUAL_ROOT_TYPES } from './componentTypes.js';
 
@@ -56,6 +60,7 @@ export class Validator {
             this.#checkRotations(warnings);
             this.#checkWrapperRule(warnings);
             this.#checkInstanceRegistry(warnings);
+            this.#checkTerrain(warnings);
             if (this.#assetIndex) this.#checkAssetRefs(warnings);
         }
         return { errors, warnings };
@@ -180,9 +185,12 @@ export class Validator {
         });
 
         if (doc.isScene) {
+            // Shells behind a dead override are not scene nodes: erroring on their missing _id
+            // would block apply_edits on a scene that opens and runs (deadOverrideShellNodes)
+            const shells = deadOverrideShellNodes(doc);
             doc.objects.forEach((obj, idx) => {
                 if (obj.__type__ === 'cc.Node' && (!obj._id || obj._id === '') &&
-                    !doc.isInstanceStub(idx)) {
+                    !doc.isInstanceStub(idx) && !shells.has(idx)) {
                     errors.push(`scene node #${idx} "${obj._name}" has no _id`);
                 }
             });
@@ -526,6 +534,143 @@ export class Validator {
                 `e.g. "${doc.nodePath(missing[0])}"`
             );
         }
+    }
+
+    /**
+     * cc.Terrain / cc.TerrainCollider conventions — WARNINGS ONLY.
+     *
+     * Everything here is of the silent-invisible class: the document stays
+     * structurally valid and the engine loads it, the terrain just does not
+     * look (or collide) the way the data says it should. Asset EXISTENCE is
+     * already covered by #checkAssetRefs.
+     *
+     * The layer-data checks need the .terrain binary and therefore both an
+     * assetIndex and a projectRoot; the rest runs unguarded.
+     */
+    #checkTerrain(warnings) {
+        const doc = this.#doc;
+        const infoCache = new Map(); // asset uuid → readTerrainLayout result | null
+
+        doc.objects.forEach((obj, idx) => {
+            if (obj.__type__ === 'cc.TerrainCollider') {
+                this.#checkTerrainCollider(obj, idx, warnings);
+                return;
+            }
+            if (obj.__type__ !== 'cc.Terrain') return;
+            const at = `cc.Terrain on "${this.#componentOwnerLabel(obj, idx)}"`;
+
+            // The serialized asset key is `__asset` (double underscore) — the
+            // @serializable member; `_asset` is only a getter/setter facade.
+            const assetUuid = obj.__asset?.__uuid__;
+            if (typeof assetUuid !== 'string') {
+                warnings.push(
+                    `${at}: __asset is null — the component renders nothing. Attach a ` +
+                    `.terrain with apply_edits set_asset_ref {property: "asset"}`
+                );
+                return;
+            }
+
+            const resolved = this.#assetIndex?.resolve(assetUuid);
+            if (resolved && resolved.entry.importer !== 'terrain') {
+                warnings.push(
+                    `${at}: __asset "${resolved.entry.path}" is a ${resolved.entry.importer} ` +
+                    `asset, not a terrain — cc.Terrain expects a cc.TerrainAsset (.terrain)`
+                );
+                return;
+            }
+
+            const info = this.#terrainAssetInfo(assetUuid, infoCache);
+            if (!info) return; // unresolvable/unreadable — #checkAssetRefs covers missing assets
+
+            const blocks = info.blockCount[0] * info.blockCount[1];
+            const lightmaps = obj._lightmapInfos;
+            if (Array.isArray(lightmaps) && lightmaps.length !== 0 && lightmaps.length !== blocks) {
+                warnings.push(
+                    `${at}: _lightmapInfos has ${lightmaps.length} entries but the asset has ` +
+                    `${blocks} block(s) (${info.blockCount[0]}x${info.blockCount[1]}) — stale bake ` +
+                    `data after a resize; clear it (set_component_property _lightmapInfos: []) ` +
+                    `and re-bake in the editor`
+                );
+            }
+
+            const withNormal = info.layers.filter(l => l.normalMapId);
+            if (withNormal.length > 0 && obj._useNormalmap !== true) {
+                warnings.push(
+                    `${at}: ${withNormal.length} terrain layer(s) carry a normal map but ` +
+                    `_useNormalmap is false — the normal maps are ignored at runtime; set ` +
+                    `_useNormalmap: true (or drop the normal maps)`
+                );
+            }
+
+            // Engine defaults are roughness 1 / metallic 0; anything else is only
+            // fed to the shader through the USE_PBR branch.
+            const withPbr = info.layers.filter(l => l.roughness !== 1 || l.metallic !== 0);
+            if (withPbr.length > 0 && obj._usePBR !== true) {
+                warnings.push(
+                    `${at}: ${withPbr.length} terrain layer(s) set non-default roughness/metallic ` +
+                    `but _usePBR is false — those values are ignored at runtime; set _usePBR: true ` +
+                    `(or reset the layers to roughness 1 / metallic 0)`
+                );
+            }
+        });
+    }
+
+    /**
+     * cc.TerrainCollider: the engine refuses to attach a heightfield shape to a
+     * DYNAMIC body (warnID 9630, terrain-collider.ts:82-90). ERigidBodyType
+     * DYNAMIC = 1 and RigidBody._type DEFAULTS to it, so an absent field is
+     * dynamic — checking only for the presence of a RigidBody would over-report,
+     * reading `_type` as "static unless stated" would never fire.
+     */
+    #checkTerrainCollider(obj, idx, warnings) {
+        const doc = this.#doc;
+        const at = `cc.TerrainCollider on "${this.#componentOwnerLabel(obj, idx)}"`;
+
+        if (!obj._terrain || typeof obj._terrain.__uuid__ !== 'string') {
+            warnings.push(
+                `${at}: _terrain is null — the collider has no heightfield and collides with ` +
+                `nothing; attach the same .terrain with set_asset_ref {property: "terrain"}`
+            );
+        }
+
+        if (!isRef(obj.node)) return;
+        for (const compIdx of doc.componentIndices(obj.node.__id__)) {
+            const comp = doc.getObject(compIdx);
+            if (comp.__type__ !== 'cc.RigidBody') continue;
+            if ((comp._type ?? 1) !== 1) continue; // 1 = ERigidBodyType.DYNAMIC (the default)
+            warnings.push(
+                `${at}: the node also has a DYNAMIC cc.RigidBody — the engine does not support ` +
+                `a terrain collider on a dynamic body (warnID 9630); use a static body ` +
+                `(_type: 2) or remove the cc.RigidBody`
+            );
+        }
+    }
+
+    /**
+     * Geometry + layers of a terrain asset by uuid, cached; null when unavailable. Layout, not the
+     * full card: these checks read blockCount + layers, and `validate()` runs on every batch.
+     */
+    #terrainAssetInfo(assetUuid, cache) {
+        if (cache.has(assetUuid)) return cache.get(assetUuid);
+        let info = null;
+        if (this.#assetIndex && this.#projectRoot) {
+            const resolved = this.#assetIndex.resolve(assetUuid);
+            if (resolved?.entry.importer === 'terrain') {
+                try {
+                    info = readTerrainLayout(path.resolve(this.#projectRoot, resolved.entry.path));
+                } catch {
+                    info = null;
+                }
+            }
+        }
+        cache.set(assetUuid, info);
+        return info;
+    }
+
+    /** "node path" of a component, falling back to its object index */
+    #componentOwnerLabel(comp, idx) {
+        const nodeIdx = isRef(comp.node) ? comp.node.__id__ : null;
+        return (nodeIdx === null ? null : this.#doc.nodePath(nodeIdx)) ?? `#${idx}`;
     }
 
     /**

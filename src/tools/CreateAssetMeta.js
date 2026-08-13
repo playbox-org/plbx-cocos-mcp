@@ -17,6 +17,7 @@ import { AssetIndex } from '../core/AssetIndex.js';
 import {
     writeMetaFile, ensureParentDirMetas
 } from '../document/MetaGenerator.js';
+import { realpathOrSelf, isInsideAssets } from '../utils/assetPaths.js';
 
 export class CreateAssetMeta extends BaseTool {
     get name() {
@@ -27,7 +28,8 @@ export class CreateAssetMeta extends BaseTool {
         return 'Generate .meta file(s) offline for assets created outside the editor, so scripts/assets ' +
                'written by tools are immediately importable — the editor keeps the UUID on next open. ' +
                'Idempotent: existing .meta files are never touched. Parent folders get metas too. ' +
-               'Supported: .ts/.js scripts, .scene, .prefab, .mtl, .pmtl, .anim, .animgraph, .json, ' +
+               'Supported: .ts/.js/.cjs/.mjs scripts, .scene, .prefab, .mtl, .pmtl, .anim, .animgraph, ' +
+               '.terrain, .json, ' +
                '.effect, .rt, .ttf, audio (.mp3/.wav/.ogg/...), images (.png/.jpg/... — imageType ' +
                '"texture" default, or "sprite-frame" for UI sprites), directories. ' +
                'NOT supported: models (.fbx/.glb/.gltf) — those still need one editor import. ' +
@@ -64,15 +66,15 @@ export class CreateAssetMeta extends BaseTool {
     }
 
     async execute(args, projectRoot) {
-        // realpath BOTH sides: the containment check must compare resolved
-        // paths, else a symlink under assets/ pointing outside the project
-        // passes it and .meta files get written wherever it leads.
-        const assetsRoot = this.#realpath(path.resolve(projectRoot, 'assets'));
+        // Containment is checked on RESOLVED paths (assetPaths.js), else a symlink under
+        // assets/ pointing outside the project passes it and .meta files get written
+        // wherever it leads. assets/ itself is a legal target (its content gets metas).
+        const assetsRoot = realpathOrSelf(path.resolve(projectRoot, 'assets'));
         const abs = this.#resolve(args.path, projectRoot);
         if (!abs) {
             return this.error(`Path not found: ${args.path} (relative to project root or assets/)`);
         }
-        if (abs !== assetsRoot && !abs.startsWith(assetsRoot + path.sep)) {
+        if (!isInsideAssets(abs, assetsRoot, { allowRoot: true })) {
             return this.error('Path must be inside the project\'s assets/ directory — ' +
                 'the editor only imports (and needs .meta for) files under assets/.');
         }
@@ -89,44 +91,48 @@ export class CreateAssetMeta extends BaseTool {
         const created = [];
         const skipped = [];
         const refused = [];
-        // Ancestors first: every folder on the way needs a meta before its content
-        for (const { dir, meta } of ensureParentDirMetas(abs, assetsRoot)) {
-            created.push({ path: dir, uuid: meta.uuid, dir: true });
+        const rel = p => path.relative(projectRoot, p).replaceAll('\\', '/');
+        // Ancestors first: every folder on the way needs a meta before its content. A refused
+        // folder meta is that FOLDER's entry, not the run's — escaping execute() cost the
+        // per-target list, the ## Refused section AND every remaining target. Reported through
+        // the callback, so the metas already written up the chain are still listed as created.
+        try {
+            ensureParentDirMetas(abs, assetsRoot, {
+                onCreated: ({ dir, meta }) => created.push({ path: dir, uuid: meta.uuid, dir: true }),
+            });
+        } catch (err) {
+            refused.push({ path: rel(err.assetPath ?? abs), reason: err.message });
         }
         for (const target of targets) {
-            const rel = path.relative(projectRoot, target).replaceAll('\\', '/');
             try {
                 const { meta, created: isNew } = writeMetaFile(target, { imageType: args.imageType });
                 if (isNew) created.push({ path: target, uuid: meta.uuid });
-                else skipped.push(rel);
+                else skipped.push(rel(target));
             } catch (err) {
                 // Any per-target failure (broken symlink → ENOENT, EACCES,
                 // ERR_FS_FILE_TOO_LARGE) is that target's problem, not the run's.
-                refused.push({ path: rel, reason: err.message });
+                refused.push({ path: rel(target), reason: err.message });
             }
         }
 
         if (created.length > 0) AssetIndex.invalidate(projectRoot);
 
         // A single explicitly named file that cannot get a meta is a plain error
-        // (parent-folder metas created above are idempotent and stay — harmless)
-        if (!isDir && refused.length === 1) {
+        // (parent-folder metas created above are idempotent and stay — harmless). A refusal in
+        // the FOLDER chain is not: the file's own meta may well have landed, and only the
+        // report says so — hence the identity test rather than a bare count.
+        if (!isDir && refused.length === 1 && refused[0].path === rel(abs)) {
             return this.error(refused[0].reason);
         }
 
         return this.success(this.#report(created, skipped, refused, projectRoot));
     }
 
-    /** Canonical path (symlinks resolved); the input itself when it does not exist */
-    #realpath(p) {
-        try { return fs.realpathSync(p); } catch { return p; }
-    }
-
     /** Resolve relative to project root, falling back to assets/<path> */
     #resolve(ref, projectRoot) {
         for (const rel of [ref, path.join('assets', ref)]) {
             const abs = path.resolve(projectRoot, rel);
-            if (fs.existsSync(abs)) return this.#realpath(abs);
+            if (fs.existsSync(abs)) return realpathOrSelf(abs);
         }
         return null;
     }

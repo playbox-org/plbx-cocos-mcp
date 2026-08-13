@@ -6,6 +6,12 @@
  */
 
 import { PropertyExtractor } from './PropertyExtractor.js';
+import { quatToEulerYZX } from '../utils/math3d.js';
+
+/** Below these a transform component counts as its default and is not rendered */
+const POS_EPS = 0.1;
+const SCALE_EPS = 0.001;
+const EULER_EPS = 0.05;
 
 export class NodeTreeBuilder {
     #sceneParser;
@@ -15,6 +21,7 @@ export class NodeTreeBuilder {
     #propExtractor;
     #detailed;
     #assetNameResolver;
+    #transforms;
 
     /**
      * @param {SceneParser} sceneParser
@@ -30,6 +37,8 @@ export class NodeTreeBuilder {
         this.#nodeFilter = nodeFilter;
         this.#detailed = options.detailed || false;
         this.#assetNameResolver = options.assetNameResolver || null;
+        // 'shallow': only near the top of the tree (token budget); 'all': every depth
+        this.#transforms = options.transforms === 'all' ? 'all' : 'shallow';
         this.#propExtractor = new PropertyExtractor(sceneParser, {
             detailed: this.#detailed,
             // Richer labels for property values ("file@subId (embedded)");
@@ -180,15 +189,25 @@ export class NodeTreeBuilder {
             active: node._active !== false
         };
 
-        // Add position for top-level nodes
-        if (depth <= 2 && node._lpos) {
-            const p = node._lpos;
-            if (Math.abs(p.x) > 0.1 || Math.abs(p.y) > 0.1 || Math.abs(p.z) > 0.1) {
-                minNode.pos = [
-                    Math.round(p.x * 10) / 10,
-                    Math.round(p.y * 10) / 10,
-                    Math.round(p.z * 10) / 10
-                ];
+        // Position, scale and euler wherever they are non-default. A collapsed instance stub has
+        // no transform fields of its own — its placement is a propertyOverride on the source root,
+        // and reading the node would print every stub of a scene at its parent's origin.
+        if (this.#transforms === 'all' || depth <= 2) {
+            const ov = instance?.overrides ?? {};
+            const p = ov._lpos ?? node._lpos;
+            if (p && (Math.abs(p.x) > POS_EPS || Math.abs(p.y) > POS_EPS || Math.abs(p.z) > POS_EPS)) {
+                minNode.pos = round(p, 10);
+            }
+            const s = ov._lscale ?? node._lscale;
+            if (s && (Math.abs(s.x - 1) > SCALE_EPS || Math.abs(s.y - 1) > SCALE_EPS
+                || Math.abs(s.z - 1) > SCALE_EPS)) {
+                minNode.scale = round(s, 1000);
+            }
+            // Prefer `_lrot` (what the runtime reads) over a possibly stale `_euler`
+            const rot = ov._lrot ?? node._lrot;
+            const e = rot ? quatToEulerYZX(rot) : (ov._euler ?? node._euler);
+            if (e && (Math.abs(e.x) > EULER_EPS || Math.abs(e.y) > EULER_EPS || Math.abs(e.z) > EULER_EPS)) {
+                minNode.euler = round(e, 10);
             }
         }
 
@@ -200,4 +219,13 @@ export class NodeTreeBuilder {
 
         return minNode;
     }
+}
+
+/** `{x, y, z}` → a rounded `[x, y, z]` triple (`scale` 10 = one decimal) */
+function round(v, scale) {
+    return [
+        Math.round(v.x * scale) / scale,
+        Math.round(v.y * scale) / scale,
+        Math.round(v.z * scale) / scale
+    ];
 }

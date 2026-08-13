@@ -36,8 +36,10 @@ export function normalizeArgs(args, schema, aliases = {}) {
     // different values are a conflict — neither outranks the other.
     const mergedFrom = new Map(); // canonical → alias that filled it
     for (const [alias, canonical] of Object.entries(aliases)) {
-        if (!(alias in normalized)) continue;
-        if (!(canonical in normalized)) {
+        // Object.hasOwn for the same reason as below: `in` sees Object.prototype
+        // members as arguments the caller never passed.
+        if (!Object.hasOwn(normalized, alias)) continue;
+        if (!Object.hasOwn(normalized, canonical)) {
             normalized[canonical] = normalized[alias];
             mergedFrom.set(canonical, alias);
         } else if (mergedFrom.has(canonical) &&
@@ -50,8 +52,11 @@ export function normalizeArgs(args, schema, aliases = {}) {
         delete normalized[alias];
     }
 
+    // Object.hasOwn, not `key in props`: `in` walks Object.prototype, so a schema-less
+    // argument named constructor/toString/valueOf/hasOwnProperty/__proto__ would be
+    // silently accepted (and then read back as a function) instead of corrected.
     for (const key of Object.keys(normalized)) {
-        if (key in props) continue;
+        if (Object.hasOwn(props, key)) continue;
         const hint = suggestParam(key, props);
         problems.push(`unknown parameter "${key}"${hint ? ` — did you mean "${hint}"?` : ''}`);
     }
@@ -59,20 +64,22 @@ export function normalizeArgs(args, schema, aliases = {}) {
     // Some MCP clients serialize scalar arguments as strings — coerce
     // unambiguous cases instead of failing the type check
     for (const [key, value] of Object.entries(normalized)) {
-        const prop = props[key];
+        const prop = Object.hasOwn(props, key) ? props[key] : undefined;
         if (prop && value !== undefined) {
             normalized[key] = coerceScalar(value, prop);
         }
     }
 
     for (const key of required) {
-        if (normalized[key] === undefined) {
+        // hasOwn first: a required name like "toString" reads back off
+        // Object.prototype, so an argument nobody passed looked present.
+        if (!Object.hasOwn(normalized, key) || normalized[key] === undefined) {
             problems.push(`missing required parameter "${key}"`);
         }
     }
 
     for (const [key, value] of Object.entries(normalized)) {
-        const prop = props[key];
+        const prop = Object.hasOwn(props, key) ? props[key] : undefined;
         if (!prop || value === undefined) continue;
         problems.push(...checkValue(key, value, prop));
     }
@@ -103,18 +110,19 @@ function coerceScalar(value, prop) {
             typeof e === 'string' && e.toLowerCase() === value.toLowerCase());
         if (relaxed !== undefined) return relaxed;
 
-        const synonym = ENUM_SYNONYMS[value.toLowerCase()];
+        const synonym = ENUM_SYNONYMS.get(value.toLowerCase());
         if (synonym !== undefined && prop.enum.includes(synonym)) return synonym;
     }
     return value;
 }
 
 // Values callers habitually carry over from other tools ("format: compact"
-// on a text|json enum) — mapped instead of bounced when unambiguous
-const ENUM_SYNONYMS = {
-    compact: 'text',
-    plain: 'text'
-};
+// on a text|json enum) — mapped instead of bounced when unambiguous.
+// A Map, so a value named after an Object.prototype member cannot look up.
+const ENUM_SYNONYMS = new Map([
+    ['compact', 'text'],
+    ['plain', 'text']
+]);
 
 function checkValue(key, value, prop) {
     const check = TYPE_OK[prop.type];

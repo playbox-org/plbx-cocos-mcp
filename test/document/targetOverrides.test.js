@@ -6,8 +6,10 @@
  * target = the instance stub, single-hop localID, serialized value null.
  */
 
-import { test, describe } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { SceneDocument, isRef } from '../../src/document/SceneDocument.js';
@@ -412,21 +414,47 @@ function deskOverridesFor(doc, localId) {
 }
 
 describe('set_instance_property with reference values (sourceInfo form)', () => {
-    const MESH_RENDERER = () => sourceComponentFileId('Table', 'cc.MeshRenderer');
+    // The source component must be a SCRIPT: @property reference fields live on
+    // scripts, and an override is only applied for a property the source
+    // component really has (set_instance_property shares set_component_property's
+    // resolver — an unknown one is a dead override, not an edit). The mock
+    // prefabs carry no script, so add one to a disposable project copy.
+    let projectRoot;
+    const scriptCtx = () => ({ assetIndex: new AssetIndex(projectRoot), projectRoot });
+    const SCRIPT = () => {
+        const src = SceneDocument.load(path.join(projectRoot, 'assets/Prefabs/TableCash.prefab'));
+        const idx = src.componentIndices(src.resolveNode('Table'))
+            .find(i => !src.getObject(i).__type__.startsWith('cc.'));
+        return src.getObject(src.getObject(idx).__prefab.__id__).fileId;
+    };
+
+    before(() => {
+        projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cocos-target-overrides-'));
+        fs.cpSync(MOCK_PROJECT, projectRoot, { recursive: true });
+        const srcPath = path.join(projectRoot, 'assets/Prefabs/TableCash.prefab');
+        const src = SceneDocument.load(srcPath);
+        applyOperations(src, [
+            { op: 'add_component', node: 'Table', type: 'PlayerController' }
+        ], scriptCtx());
+        src.renumber();
+        src.save(srcPath);
+    });
+
+    after(() => fs.rmSync(projectRoot, { recursive: true, force: true }));
 
     test('$node into the SAME instance: no property override, golden-shaped TargetOverrideInfo', () => {
-        const ctx = makeCtx();
+        const ctx = scriptCtx();
         const doc = sceneWithDeskAndHolder(ctx);
         applyOperations(doc, [{
             op: 'set_instance_property', node: 'Desk', target: 'Table',
-            component: 'cc.MeshRenderer', property: 'anchorNode',
+            component: 'PlayerController', property: 'anchorNode',
             value: { $node: 'Desk/Table/CashRegister' }
         }], ctx);
 
         const stubIdx = doc.resolveNode('Desk');
         // The editor writes NO CCPropertyOverrideInfo for a whole-value
         // reference — the TargetOverrideInfo alone carries the wiring
-        assert.strictEqual(deskOverridesFor(doc, MESH_RENDERER())
+        assert.strictEqual(deskOverridesFor(doc, SCRIPT())
             .filter(o => o.propertyPath[0] === 'anchorNode').length, 0);
 
         const ovs = instanceSourcedOverrides(doc, stubIdx);
@@ -436,7 +464,7 @@ describe('set_instance_property with reference values (sourceInfo form)', () => 
         assert.deepStrictEqual(Object.keys(obj),
             ['__type__', 'source', 'sourceInfo', 'propertyPath', 'target', 'targetInfo']);
         assert.strictEqual(obj.source.__id__, stubIdx);
-        assert.deepStrictEqual(ovs[0].sourceLocalID, [MESH_RENDERER()]);
+        assert.deepStrictEqual(ovs[0].sourceLocalID, [SCRIPT()]);
         assert.deepStrictEqual(ovs[0].path, ['anchorNode']);
         assert.strictEqual(ovs[0].targetIdx, stubIdx);
         assert.deepStrictEqual(ovs[0].localID, [sourceNodeFileId('Table/CashRegister')]);
@@ -451,34 +479,34 @@ describe('set_instance_property with reference values (sourceInfo form)', () => 
     });
 
     test('$component into ANOTHER instance (cross-instance wiring)', () => {
-        const ctx = makeCtx();
+        const ctx = scriptCtx();
         const doc = sceneWithDeskAndHolder(ctx);
         applyOperations(doc, [
             { op: 'instantiate_prefab', parent: '/', prefab: 'Prefabs/Sprite(2).prefab', name: 'Box' },
             {
                 op: 'set_instance_property', node: 'Desk', target: 'Table',
-                component: 'cc.MeshRenderer', property: 'other',
+                component: 'PlayerController', property: 'other',
                 value: { $component: { node: 'Box', type: 'cc.MeshRenderer' } }
             }
         ], ctx);
 
         const [ov] = instanceSourcedOverrides(doc, doc.resolveNode('Desk'));
-        assert.deepStrictEqual(ov.sourceLocalID, [MESH_RENDERER()]);
+        assert.deepStrictEqual(ov.sourceLocalID, [SCRIPT()]);
         assert.strictEqual(ov.targetIdx, doc.resolveNode('Box'));
         assertValid(doc);
         assertFixedPoint(doc);
     });
 
     test('plain scene reference stays {__id__} in the override value (golden playerGoldStorage form)', () => {
-        const ctx = makeCtx();
+        const ctx = scriptCtx();
         const doc = sceneWithDeskAndHolder(ctx);
         applyOperations(doc, [{
             op: 'set_instance_property', node: 'Desk', target: 'Table',
-            component: 'cc.MeshRenderer', property: 'lightRef',
+            component: 'PlayerController', property: 'lightRef',
             value: { $node: 'Main Light' }
         }], ctx);
 
-        const [ov] = deskOverridesFor(doc, MESH_RENDERER())
+        const [ov] = deskOverridesFor(doc, SCRIPT())
             .filter(o => o.propertyPath[0] === 'lightRef');
         assert.deepStrictEqual(ov.value, { __id__: doc.resolveNode('Main Light') });
         assert.strictEqual(instanceSourcedOverrides(doc, doc.resolveNode('Desk')).length, 0);
@@ -487,11 +515,11 @@ describe('set_instance_property with reference values (sourceInfo form)', () => 
     });
 
     test('upsert replaces the entry; a plain overwrite drops it', () => {
-        const ctx = makeCtx();
+        const ctx = scriptCtx();
         const doc = sceneWithDeskAndHolder(ctx);
         const setRef = (target) => ({
             op: 'set_instance_property', node: 'Desk', target: 'Table',
-            component: 'cc.MeshRenderer', property: 'anchorNode', value: { $node: target }
+            component: 'PlayerController', property: 'anchorNode', value: { $node: target }
         });
         applyOperations(doc, [setRef('Desk/Table/CashRegister'), setRef('Desk/Table')], ctx);
         const stubIdx = doc.resolveNode('Desk');
@@ -501,10 +529,10 @@ describe('set_instance_property with reference values (sourceInfo form)', () => 
 
         applyOperations(doc, [{
             op: 'set_instance_property', node: 'Desk', target: 'Table',
-            component: 'cc.MeshRenderer', property: 'anchorNode', value: 5
+            component: 'PlayerController', property: 'anchorNode', value: 5
         }], ctx);
         assert.strictEqual(instanceSourcedOverrides(doc, stubIdx).length, 0);
-        const [plain] = deskOverridesFor(doc, MESH_RENDERER())
+        const [plain] = deskOverridesFor(doc, SCRIPT())
             .filter(o => o.propertyPath[0] === 'anchorNode');
         assert.strictEqual(plain.value, 5);
         assertValid(doc);
@@ -512,16 +540,16 @@ describe('set_instance_property with reference values (sourceInfo form)', () => 
     });
 
     test('remove_instance_override drops the reference override too', () => {
-        const ctx = makeCtx();
+        const ctx = scriptCtx();
         const doc = sceneWithDeskAndHolder(ctx);
         applyOperations(doc, [{
             op: 'set_instance_property', node: 'Desk', target: 'Table',
-            component: 'cc.MeshRenderer', property: 'anchorNode',
+            component: 'PlayerController', property: 'anchorNode',
             value: { $node: 'Desk/Table/CashRegister' }
         }], ctx);
         const [result] = applyOperations(doc, [{
             op: 'remove_instance_override', node: 'Desk', target: 'Table',
-            component: 'cc.MeshRenderer', property: 'anchorNode'
+            component: 'PlayerController', property: 'anchorNode'
         }], ctx);
         assert.match(result.summary, /removed 1 override/);
         assert.strictEqual(instanceSourcedOverrides(doc, doc.resolveNode('Desk')).length, 0);
@@ -530,15 +558,15 @@ describe('set_instance_property with reference values (sourceInfo form)', () => 
     });
 
     test('mixed array: plain elements serialize, instance elements become element overrides', () => {
-        const ctx = makeCtx();
+        const ctx = scriptCtx();
         const doc = sceneWithDeskAndHolder(ctx);
         applyOperations(doc, [{
             op: 'set_instance_property', node: 'Desk', target: 'Table',
-            component: 'cc.MeshRenderer', property: 'points',
+            component: 'PlayerController', property: 'points',
             value: [{ $node: 'Desk/Table/CashRegister' }, { $node: 'Main Light' }]
         }], ctx);
 
-        const [ov] = deskOverridesFor(doc, MESH_RENDERER())
+        const [ov] = deskOverridesFor(doc, SCRIPT())
             .filter(o => o.propertyPath[0] === 'points');
         assert.deepStrictEqual(ov.value,
             [null, { __id__: doc.resolveNode('Main Light') }]);
@@ -547,6 +575,28 @@ describe('set_instance_property with reference values (sourceInfo form)', () => 
         assert.strictEqual(refs.length, 1);
         assert.deepStrictEqual(refs[0].path, ['points', '0']); // segments are strings
         assert.deepStrictEqual(refs[0].localID, [sourceNodeFileId('Table/CashRegister')]);
+        assertValid(doc);
+        assertFixedPoint(doc);
+    });
+
+    test('a script field is overridable, a prototype-named one is not', () => {
+        // A script serializes sparsely, so "anchorNode" is a legal override target
+        // (the tests above rely on it) — but "toString" is not: the engine assigns
+        // it with a bare `targetPropOwner[name] = value`, shadowing the real member.
+        const ctx = scriptCtx();
+        const doc = sceneWithDeskAndHolder(ctx);
+        const overrideOp = (property) => ({
+            op: 'set_instance_property', node: 'Desk', target: 'Table',
+            component: 'PlayerController', property, value: 1
+        });
+        applyOperations(doc, [overrideOp('speed')], ctx);
+        assert.deepStrictEqual(deskOverridesFor(doc, SCRIPT()).map(o => o.propertyPath), [['speed']]);
+
+        for (const property of ['toString', 'constructor', 'valueOf']) {
+            assert.throws(() => applyOperations(doc, [overrideOp(property)], ctx),
+                /has no property/, property);
+        }
+        assert.deepStrictEqual(deskOverridesFor(doc, SCRIPT()).map(o => o.propertyPath), [['speed']]);
         assertValid(doc);
         assertFixedPoint(doc);
     });
@@ -628,10 +678,10 @@ describe('prune_dangling_overrides', () => {
         corrupt(doc, 'Desk');
 
         const { errors, warnings } = new Validator(doc).validate();
-        // The dead override itself is only a warning (engine ignores it); the
-        // orphan target node it left behind is the genuine blocking error.
+        // Neither half blocks a write: the engine ignores the record, and the shell it left is
+        // exempt from the _id rule for that same reason — prune stays opt-in cleanup
         assert.ok(warnings.some(w => /engine ignores this override.*source is null/.test(w)), warnings.join('\n'));
-        assert.ok(errors.some(e => /has no _id/.test(e)), errors.join('\n'));
+        assert.deepStrictEqual(errors, []);
 
         const dangling = findDanglingOverrides(doc);
         assert.strictEqual(dangling.length, 1);
