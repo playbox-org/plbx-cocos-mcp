@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A written object value keeps its Cocos type.** `set_component_property` / `build_prefab` wrote
+  the merge form `{width: 184, height: 184}` verbatim wherever the file had no typed value to take
+  the tag from — a `null` field, or any field of a script component `build_prefab` had just created
+  (it starts with no fields at all). The engine rebuilds a value from its `__type__`, so an untyped
+  one deserializes as a plain object and the component keeps its DEFAULT (`Size(0, 0)`,
+  `Color(0, 0, 0, 255)`, an empty array) while `validate_document` reported the file as valid — the
+  corruption was silent on both sides. Such a write is now REFUSED, naming the type that fits the
+  keys and the spelling that works; merging into a value the file already types is unchanged. The
+  same refusal covers an array or scalar written over a typed value (`_contentSize: [184, 184]`),
+  and `{"$plain": {…}}` marks a field that really is an untyped dictionary.
+- **A custom `@ccclass` value is hoisted into its own object.** The editor serializes a user class
+  as a standalone entry of the flat array with an `{__id__}` reference from the owning field
+  (verified: `cc.ClickEvent` in `test/fixtures/real-prefabs/Toilets.prefab`); a property write
+  inlined it instead, at any nesting depth, so a nested `AnimationSet` → `DirectionFrames` chain
+  never deserialized. `set_component_property`, `add_component`/`build_prefab` properties,
+  `insert_array_element` values and instance overrides now all produce the editor's shape — only
+  the engine's value types (`cc.Vec3`, `cc.Color`, …) stay inline. A `__type__` naming a node,
+  scene or prefab-plumbing object is refused rather than minted as a value.
+- **`validate_document` finds files written before the fix**: a `cc.*` component field holding an
+  untyped object or an array where the 3.8.7 template declares a typed value is reported as a
+  warning naming the type and the op that rewrites it.
+- **A rotation/position/scale write with no existing value merges onto a TYPED zero.** A node that
+  carries only `_lrot` (no `_euler`), or an instance override being created for the first time, used
+  to produce an untyped `{y: 90}`.
+
 ## [2.0.0] - 2026-08-07
 
 ### Breaking

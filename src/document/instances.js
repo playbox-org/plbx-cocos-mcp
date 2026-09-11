@@ -29,6 +29,7 @@ import {
     findComponent, normalizeNodeProperty, describeComponentType, REQUIRED_COMPANIONS,
     childInsertIndex, componentTypeMatcher, resolveTopSegment
 } from './operations.js';
+import { materializeTypedValue } from './typedValues.js';
 import {
     transformValueTracked, upsertTargetOverride, dropTargetOverrides,
     dropTargetOverridesInto, listTargetOverrides, fileIdTargets
@@ -515,7 +516,11 @@ function setComponentOverride(doc, op, ctx, { instance, sourceDoc, targetIdx, la
     // Plain scene references stay {__id__} in the value (golden:
     // playerGoldStorage).
     const refs = [];
-    const value = transformValueTracked(doc, op.value, ctx, refs);
+    // Same serialization rules as a plain component write: custom @ccclass
+    // objects in an override value are standalone objects of THIS document,
+    // referenced by {__id__} (typedValues.js rule 2).
+    const value = materializeTypedValue(
+        doc, transformValueTracked(doc, op.value, ctx, refs), property);
 
     // Any write supersedes the reference overrides it covers — a stale
     // TargetOverrideInfo would silently overwrite the new value on load.

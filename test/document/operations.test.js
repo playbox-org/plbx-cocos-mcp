@@ -10,7 +10,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { SceneDocument } from '../../src/document/SceneDocument.js';
+import { SceneDocument, isRef } from '../../src/document/SceneDocument.js';
 import { applyOperations, OperationError } from '../../src/document/operations.js';
 import { Validator } from '../../src/document/Validator.js';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
@@ -644,7 +644,7 @@ describe('set_component_property / set_asset_ref', () => {
             /componentIndex 2 out of range.*1 "cc\.MeshRenderer"/);
     });
 
-    test('$node forms nested inside plain objects are resolved', () => {
+    test('$node forms nested inside typed objects are resolved (element hoisted)', () => {
         const doc = loadScene();
         applyOperations(doc, [
             { op: 'add_node', parent: '/', name: 'Btn', layer: 'ui_2d' },
@@ -660,8 +660,14 @@ describe('set_component_property / set_asset_ref', () => {
         ]);
         const btn = doc.getObject(doc.componentIndices(doc.resolveNode('Btn'))
             .find(i => doc.getObject(i).__type__ === 'cc.Button'));
-        assert.deepStrictEqual(btn.clickEvents[0].target, { __id__: doc.resolveNode('Btn') });
-        assert.strictEqual(btn.clickEvents[0].handler, 'onClick');
+        // cc.ClickEvent is a CCClass, not a value type: the editor stores it as
+        // a standalone object referenced by {__id__} (verified in
+        // test/fixtures/real-prefabs/Toilets.prefab), and so do we.
+        assert.ok(isRef(btn.clickEvents[0]), 'clickEvents element is a reference');
+        const event = doc.getObject(btn.clickEvents[0].__id__);
+        assert.strictEqual(event.__type__, 'cc.ClickEvent');
+        assert.deepStrictEqual(event.target, { __id__: doc.resolveNode('Btn') });
+        assert.strictEqual(event.handler, 'onClick');
     });
 
     test('dotted numeric segments behave like bracket indices', () => {

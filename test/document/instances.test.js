@@ -365,6 +365,30 @@ describe('set_instance_property', () => {
         assertFixedPoint(doc);
     });
 
+    test('an untyped object override is refused, a typed one is written', () => {
+        const ctx = makeCtx();
+        const doc = sceneWithDesk(ctx);
+        // bakeSettings is a reference to a standalone value object in the SOURCE
+        // prefab: an untyped object override there deserializes as a plain object
+        // and the engine keeps the default (typedValues.js rule 1).
+        assert.throws(() => applyOperations(doc, [{
+            op: 'set_instance_property', node: 'Desk', target: 'Table',
+            component: 'cc.MeshRenderer', property: 'bakeSettings', value: { bakeable: false }
+        }], ctx), /no "__type__".*dotted path/s);
+        const { instance } = stubParts(doc, 'Desk');
+        assert.ok(!overrides(doc, instance).some(o => o.path[0] === 'bakeSettings'));
+
+        // The dotted form the message points at reaches the field itself.
+        applyOperations(doc, [{
+            op: 'set_instance_property', node: 'Desk', target: 'Table',
+            component: 'cc.MeshRenderer', property: 'bakeSettings.bakeable', value: false
+        }], ctx);
+        const written = overrides(doc, instance).find(o => o.path.join('.') === 'bakeSettings.bakeable');
+        assert.strictEqual(written.value, false);
+        assertValid(doc);
+        assertFixedPoint(doc);
+    });
+
     test('component overrides use the CompPrefabInfo fileId and string paths', () => {
         const ctx = makeCtx();
         const doc = sceneWithDesk(ctx);
