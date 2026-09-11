@@ -30,6 +30,7 @@
 
 import { isRef } from './SceneDocument.js';
 import { OperationError, findComponent, resolveAssetValue } from './operations.js';
+import { markPlainValue, plainPayload } from './typedValues.js';
 import {
     loadSourcePrefabByUuid, registryInfo, nodeFileId, componentFileId,
     findMountedComponent
@@ -192,6 +193,9 @@ export function transformValueTracked(doc, value, ctx, refs, path = []) {
     }
     if ('$asset' in value) {
         return resolveAssetValue(ctx, value.$asset, value.$type);
+    }
+    if ('$plain' in value) {
+        return markPlainValue(plainPayload(value, transformValueTracked(doc, value.$plain, ctx, refs, path)));
     }
     // Plain object (e.g. a cc.ClickEvent literal): $-forms may hide inside
     const out = {};

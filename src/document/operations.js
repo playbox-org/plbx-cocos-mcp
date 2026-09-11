@@ -24,7 +24,11 @@ import {
     dropTargetOverrides, upsertTargetOverride, transformValueTracked, pruneDanglingOverrides,
     remapTargetOverridesForSplice, listTargetOverrides, overrideDeadReasons, mountedChildNodeIdxs
 } from './targetOverrides.js';
-import { VALUE_TYPE_FIELDS } from '../core/valueTypes.js';
+import {
+    INLINE_VALUE_TYPES, materializeTypedValue, materializeTypedFields,
+    isUntypedObjectWrite, untypedValueError, isTypeClobberWrite, typeClobberError,
+    isPlainValue, markPlainValue, plainPayload, plainOverTypedError
+} from './typedValues.js';
 import { collectComponentIndices, INTERNAL_STRUCT_TYPES } from '../core/componentIndices.js';
 import {
     createComponent, createScriptComponent, resolveTemplateType, templateTypes
@@ -208,7 +212,9 @@ function isRefArrayClobber(existing, given) {
  * array Cocos actually uses one of: a custom @ccclass array (CardEntry[]) needs
  * standalone `{__id__}` references, and an inline value-type array (cc.Vec2[])
  * needs a `__type__` tag. The engine finds neither and silently DROPS the
- * element (the legendary empty-array symptom).
+ * element (the legendary empty-array symptom). A TAGGED element is fine either
+ * way — materializeTypedValue has already turned a custom @ccclass into its
+ * standalone object + reference by the time this guard runs (typedValues.js).
  *
  * This is the EMPTY/untyped-slot counterpart to isRefArrayClobber: that guard
  * only sees the hazard once the existing array still holds a live `{__id__}`,
@@ -233,9 +239,11 @@ function untaggedArrayError(what, opts = {}) {
         ? `This is a collapsed prefab instance — its internal arrays cannot be edited through ` +
           `overrides. Edit the source prefab asset (${opts.sourcePrefab ?? 'the .prefab this ' +
           'instance was created from'}) with apply_edits, then the instance inherits the change.`
-        : `Use op "insert_array_element" for each element (pass "type" with the element's ` +
-          `__type__ for a custom @ccclass array), or include "__type__" on every element for an ` +
-          `inline value-type array (cc.Vec2[], …).`;
+        : `Tag every element with its "__type__" — a value type (cc.Vec2, cc.Color, …) is written ` +
+          `inline, a custom @ccclass is hoisted into its own object with an {__id__} reference, ` +
+          `exactly as the editor serializes it. Or add elements one at a time with op ` +
+          `"insert_array_element" (pass "type" with the element's __type__), which clones a ` +
+          `neighbour and so fills in the fields you omit.`;
     return new OperationError(
         `"${what}" is a typed array, but "value" contains a bare object with no "__type__", ` +
         `"__id__" or "__uuid__". A leaf write serializes it inline and untyped, so the engine ` +
@@ -271,8 +279,25 @@ export function mergeTyped(existing, given, what, opts = {}) {
     // Empty/untyped-slot variant: a bare-object array into an array that has no
     // live {__id__} for isRefArrayClobber to key off (an empty CardEntry[]).
     if (isUntaggedObjectArrayWrite(existing, given)) throw untaggedArrayError(what, opts);
+    // An array/scalar over an inline typed value (_contentSize: [184, 184]) is
+    // the same silent default as an untyped object, one spelling further out.
+    if (isTypeClobberWrite(existing, given)) throw typeClobberError(what, given, existing);
     if (given === null || typeof given !== 'object' || Array.isArray(given)) return given;
     if (given.__type__) return given; // caller provided a full serialized value
+    // {"$plain": {…}}: the caller asserts an untyped dictionary. Written as
+    // given — but never OVER a value the file types, which the mark would only
+    // strip (the corruption this guard family exists to stop).
+    if (isPlainValue(given)) {
+        if (existing !== null && typeof existing === 'object' && !Array.isArray(existing) &&
+            typeof existing.__type__ === 'string') {
+            throw plainOverTypedError(what, existing.__type__);
+        }
+        return given;
+    }
+    // Scalar counterpart of the array guard: an object with no `__type__` and
+    // nothing in the file to read the type FROM deserializes untyped, and the
+    // component silently keeps its default (docs: typedValues.js rule 1).
+    if (isUntypedObjectWrite(existing, given)) throw untypedValueError(what, given, existing, opts);
     if (existing === null || typeof existing !== 'object' || !existing.__type__) return given;
     const allowed = new Set(Object.keys(existing));
     const merged = { ...existing };
@@ -306,6 +331,12 @@ export function mergeTyped(existing, given, what, opts = {}) {
                 `(e.g. "${what}.${rawKey}.<field>").`
             );
         }
+        // Same "no type to inherit" case one level down: a typed struct whose
+        // own field is serialized null cannot type the object written into it.
+        if (isUntypedObjectWrite(cur, val)) {
+            throw untypedValueError(`${what}.${rawKey}`, val, cur, opts);
+        }
+        if (isTypeClobberWrite(cur, val)) throw typeClobberError(`${what}.${rawKey}`, val, cur);
         const recurse = cur && typeof cur === 'object' && cur.__type__ &&
             val && typeof val === 'object' && !Array.isArray(val) && !val.__type__;
         merged[key] = recurse ? mergeTyped(cur, val, `${what}.${rawKey}`, opts) : val;
@@ -643,6 +674,9 @@ export function transformValue(doc, value, ctx) {
     if ('$asset' in value) {
         return resolveAssetValue(ctx, value.$asset, value.$type);
     }
+    if ('$plain' in value) {
+        return markPlainValue(plainPayload(value, transformValue(doc, value.$plain, ctx)));
+    }
     // Plain object (e.g. a cc.ClickEvent literal): $-forms may hide inside
     const out = {};
     for (const [key, v] of Object.entries(value)) out[key] = transformValue(doc, v, ctx);
@@ -661,6 +695,20 @@ export function transformValue(doc, value, ctx) {
  * @param {object} [base] - current _lpos/_euler/_lscale for value-type merges
  * @returns {Array<{field: string, value: *}>}
  */
+const VEC3_ZERO = { __type__: 'cc.Vec3', x: 0, y: 0, z: 0 };
+const VEC3_ONE = { __type__: 'cc.Vec3', x: 1, y: 1, z: 1 };
+
+/**
+ * A transform base to merge {x?, y?, z?} into. A node that never moved may
+ * carry no `_euler` at all (the editor stores `_lrot` alone), and an override
+ * being created has no previous value either — without a typed fallback the
+ * merge would produce an UNTYPED {y: 90}, which the engine cannot rebuild into
+ * a Vec3 (typedValues.js rule 1) and which mergeTyped now refuses outright.
+ */
+function transformBase(base, fallback) {
+    return base !== null && typeof base === 'object' ? base : fallback;
+}
+
 export function normalizeNodeProperty(property, value, base) {
     switch (property) {
         case 'name':
@@ -677,11 +725,11 @@ export function normalizeNodeProperty(property, value, base) {
             if (![0, 1, 2].includes(value)) throw new OperationError('mobility must be 0, 1 or 2');
             return [{ field: '_mobility', value }];
         case 'position':
-            return [{ field: '_lpos', value: mergeTyped(base, value, 'position') }];
+            return [{ field: '_lpos', value: mergeTyped(transformBase(base, VEC3_ZERO), value, 'position') }];
         case 'scale':
-            return [{ field: '_lscale', value: mergeTyped(base, value, 'scale') }];
+            return [{ field: '_lscale', value: mergeTyped(transformBase(base, VEC3_ONE), value, 'scale') }];
         case 'rotation': {
-            const euler = mergeTyped(base, value, 'rotation (euler degrees)');
+            const euler = mergeTyped(transformBase(base, VEC3_ZERO), value, 'rotation (euler degrees)');
             // _lrot is what the runtime reads — always derive it from euler
             return [
                 { field: '_euler', value: euler },
@@ -1266,7 +1314,12 @@ function setPropertyOnComponent(doc, compIdx, property, rawValue, ctx, { isScrip
     // cannot serialize as {__id__} — they become null + a TargetOverrideInfo
     // in the document registry (golden-scene shape, sourceInfo: null).
     const refs = [];
-    const value = transformValueTracked(doc, rawValue, ctx, refs);
+    // Custom @ccclass objects in the value become standalone objects + {__id__}
+    // references, the shape the editor writes and the engine reads (typedValues.js
+    // rule 2). Value types stay inline. Done BEFORE the guards below so a typed
+    // array element is a reference by the time they judge it.
+    const value = materializeTypedValue(
+        doc, transformValueTracked(doc, rawValue, ctx, refs), property);
     const existing = container[key];
     const isReference = value && typeof value === 'object' &&
         ('__id__' in value || '__uuid__' in value);
@@ -1287,6 +1340,9 @@ function setPropertyOnComponent(doc, compIdx, property, rawValue, ctx, { isScrip
                 `set its fields instead (e.g. "${property}.constant") or pass an object to merge`
             );
         }
+        // The standalone object behind the ref is typed by definition — the
+        // same refusal mergeTyped makes for an inline one.
+        if (isPlainValue(value)) throw plainOverTypedError(property, standalone.__type__);
         const merged = mergeTyped(standalone, value, property);
         doc.objects[existing.__id__] = merged;
         // Getter/setter twins live on the standalone object (keyed by its own
@@ -1403,13 +1459,6 @@ function setAssetRef(doc, op, ctx) {
 // FIELDS of existing elements (it follows the ref), but changing the SET of
 // elements needs object allocation + a reference, which a leaf-value writer
 // cannot do — these two ops are that missing half.
-
-/**
- * cc value-types serialized INLINE inside an array (no {__id__} indirection).
- * Derived from the shared registry so the write side can never accept a type
- * the read side does not render (review #8).
- */
-const INLINE_VALUE_TYPES = new Set(Object.keys(VALUE_TYPE_FIELDS));
 
 /**
  * __type__s of the objects an array's {__id__} elements point at, INCLUDING
@@ -1631,9 +1680,13 @@ function insertArrayElement(doc, op, ctx) {
     // resolves INSIDE a collapsed instance tracks to null + a ref record, and
     // serializes as a null hole plus a cc.TargetOverrideInfo (emitted below).
     const refs = [];
+    // `value` is a bag of FIELDS for the element this op constructs, so only
+    // its fields are materialized — a custom @ccclass nested in one becomes a
+    // standalone object + {__id__} (typedValues.js rule 2), while the element
+    // itself is built by the branches below (cloned, inline or from `type`).
     const value = op.value === undefined
         ? undefined
-        : transformValueTracked(doc, op.value, ctx, refs);
+        : materializeTypedFields(doc, transformValueTracked(doc, op.value, ctx, refs), property);
     const valueIsReference = value !== null && typeof value === 'object' && '__id__' in value;
     // A top-level reference that resolved inside an instance: value is null and a
     // ref was collected at the root path. It fills a reference slot as a null hole.

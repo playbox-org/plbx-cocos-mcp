@@ -6,7 +6,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { SceneDocument } from '../../src/document/SceneDocument.js';
+import { SceneDocument, isRef } from '../../src/document/SceneDocument.js';
 import { PrefabBuilder, PrefabBuildError } from '../../src/document/PrefabBuilder.js';
 import { Validator } from '../../src/document/Validator.js';
 import { AssetIndex } from '../../src/core/AssetIndex.js';
@@ -144,6 +144,45 @@ describe('PrefabBuilder', () => {
         assert.ok(doc.resolveNode('Trigger/Marker') > 0);
         const trigger = doc.getObject(doc.componentIndices(doc.resolveNode('Trigger'))[0]);
         assert.strictEqual(trigger._isTrigger, true);
+    });
+
+    test('a nested @ccclass property becomes standalone objects + references', () => {
+        // The reported build_prefab repro: moveAnim → AnimationSet → DirectionFrames.
+        // Inlining it (the old behaviour) left the engine with no class to build
+        // and the unit played no animation, while validate_document said "valid".
+        const { doc } = new PrefabBuilder(assetIndex).compile({
+            name: 'Prince',
+            root: {
+                components: [{
+                    type: 'PlayerController',
+                    properties: {
+                        moveAnim: {
+                            __type__: 'AnimationSet',
+                            directions: [{ __type__: 'DirectionFrames', frames: [] }]
+                        }
+                    }
+                }]
+            }
+        }, 'Prince');
+        const { errors } = new Validator(doc, assetIndex).validate();
+        assert.deepStrictEqual(errors, []);
+        const comp = doc.getObject(doc.componentIndices(doc.root.idx)[0]);
+        assert.ok(isRef(comp.moveAnim), 'moveAnim holds an {__id__} reference');
+        const set = doc.getObject(comp.moveAnim.__id__);
+        assert.strictEqual(set.__type__, 'AnimationSet');
+        assert.strictEqual(doc.getObject(set.directions[0].__id__).__type__, 'DirectionFrames');
+    });
+
+    test('an untyped object property is refused with the spelling that works', () => {
+        assert.throws(() => new PrefabBuilder(assetIndex).compile({
+            name: 'Prince',
+            root: {
+                components: [{
+                    type: 'PlayerController',
+                    properties: { moveAnim: { directions: [{ frames: [] }] } }
+                }]
+            }
+        }, 'Prince'), /no "__type__".*@ccclass name/s);
     });
 
     test('compiled prefab is a canonical fixed point', () => {

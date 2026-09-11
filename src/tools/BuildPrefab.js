@@ -42,7 +42,12 @@ export class BuildPrefab extends BaseTool {
                '3D (MeshRenderer, SkinnedMeshRenderer, SpriteRenderer, Camera, lights, Line, Billboard, Terrain), ' +
                'physics 3D+2D (RigidBody, colliders incl. TerrainCollider), particles (ParticleSystem, ParticleSystem2D), ' +
                'Animation/SkeletalAnimation/AnimationController/AudioSource — or custom script names ' +
-               '(an unknown type returns the full template list).';
+               '(an unknown type returns the full template list). ' +
+               'Component `properties` take the same value forms as apply_edits set_component_property: an ' +
+               'object value needs its "__type__" ({"__type__": "cc.Size", width, height} — a script ' +
+               'component starts with no fields, so there is nothing for the type to be read from), and a ' +
+               'custom @ccclass value is hoisted into its own object with an {__id__} reference like the ' +
+               'editor does.';
     }
 
     get inputSchema() {

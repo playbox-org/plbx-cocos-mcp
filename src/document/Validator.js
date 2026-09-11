@@ -20,6 +20,7 @@ import {
     fileIdTargets, overrideDeadReasons, mountedChildNodeIdxs, deadOverrideShellNodes
 } from './targetOverrides.js';
 import { eulerToQuat, quatApproxEquals } from '../utils/math3d.js';
+import { createComponent } from './ComponentTemplates.js';
 import { VISUAL_ROOT_TYPES } from './componentTypes.js';
 
 export class Validator {
@@ -60,6 +61,7 @@ export class Validator {
             this.#checkRotations(warnings);
             this.#checkWrapperRule(warnings);
             this.#checkInstanceRegistry(warnings);
+            this.#checkTypedValues(warnings);
             this.#checkTerrain(warnings);
             if (this.#assetIndex) this.#checkAssetRefs(warnings);
         }
@@ -534,6 +536,60 @@ export class Validator {
                 `e.g. "${doc.nodePath(missing[0])}"`
             );
         }
+    }
+
+    /**
+     * A component field that holds an object with NO `__type__` where the
+     * engine expects a typed value (cc.Size, cc.Color, cc.Vec3, …). Cocos
+     * rebuilds a value from that tag; without one it deserializes an untyped
+     * object and the component keeps its DEFAULT — a content size of 0, a
+     * black color, an empty array — while every structural invariant above
+     * still holds. Older MCP versions wrote exactly this shape (the merge form
+     * `{width, height}` into a field the file could not supply a type for), so
+     * the check exists to FIND those files; the write path now refuses them
+     * (typedValues.js rule 1).
+     *
+     * The expected type comes from the 3.8.7 component templates — a registry,
+     * not a guess — so only cc.* components are checked. A user script's field
+     * types live in its .ts source and are unknowable here.
+     */
+    #checkTypedValues(warnings) {
+        const doc = this.#doc;
+        const templates = new Map(); // __type__ → default field values (memoized)
+        const fieldsOf = (type) => {
+            if (!templates.has(type)) {
+                let fields = null;
+                try {
+                    fields = createComponent(type).component;
+                } catch {
+                    fields = null; // script component or a type we have no template for
+                }
+                templates.set(type, fields);
+            }
+            return templates.get(type);
+        };
+
+        doc.objects.forEach((obj, idx) => {
+            if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
+            if (typeof obj.__type__ !== 'string' || !obj.__type__.startsWith('cc.')) return;
+            const template = fieldsOf(obj.__type__);
+            if (!template) return;
+            for (const [key, value] of Object.entries(obj)) {
+                const expected = template[key];
+                if (!expected || typeof expected !== 'object' || typeof expected.__type__ !== 'string') continue;
+                if (value === null || typeof value !== 'object') continue;
+                const untypedObject = !Array.isArray(value) && !isRef(value) &&
+                    !Object.hasOwn(value, '__uuid__') && !Object.hasOwn(value, '__type__');
+                if (!untypedObject && !Array.isArray(value)) continue;
+                warnings.push(
+                    `${obj.__type__} #${idx}: "${key}" holds ` +
+                    `${Array.isArray(value) ? 'an array' : 'an untyped object'} where ` +
+                    `${expected.__type__} is expected — the engine cannot rebuild it and the ` +
+                    `component falls back to its default. Rewrite it with apply_edits ` +
+                    `(set_component_property, value {"__type__": "${expected.__type__}", …}).`
+                );
+            }
+        });
     }
 
     /**
